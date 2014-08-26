@@ -928,6 +928,14 @@ contains
         string = trim(string) // ' ndpp-chi-p'
       case (SCORE_NDPP_CHI_D)
         string = trim(string) // ' ndpp-chi-d'
+       case (SCORE_RPT_NU_SCATT_PN)
+        pn_string = ' rpt-nu-scatter'
+        string = trim(string) // pn_string
+        do n = 1, t % moment_order(j)
+          pn_string = ' rpt-nu-scatter-' // trim(to_str(n))
+          string = trim(string) // pn_string
+        end do
+        j = j + n - 1
       case (SCORE_TRANSPORT)
         string = trim(string) // ' transport'
       case (SCORE_N_1N)
@@ -1755,6 +1763,7 @@ contains
     score_names(abs(SCORE_NDPP_CHI))         = "Total Fission Prod. Rate"
     score_names(abs(SCORE_NDPP_CHI_P))       = "Prompt Fission Prod. Rate"
     score_names(abs(SCORE_NDPP_CHI_D))       = "Delayed Fission Prod. Rate"
+    score_names(abs(SCORE_RPT_NU_SCATT_PN))  = "Scattering Prod. Rate Moment"
 
     ! Create filename for tally output
     filename = trim(path_output) // "tallies.out"
@@ -1889,7 +1898,8 @@ contains
                 repeat(" ", indent), score_name, &
                 to_str(t % results(score_index,filter_index) % sum), &
                 trim(to_str(t % results(score_index,filter_index) % sum_sq))
-            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATT_PN, SCORE_NDPP_NU_SCATT_PN)
+            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATT_PN, &
+                  SCORE_NDPP_NU_SCATT_PN, SCORE_RPT_NU_SCATT_PN)
               score_index = score_index - 1
               do n_order = 0, t % moment_order(k)
                 score_index = score_index + 1

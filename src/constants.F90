@@ -280,7 +280,7 @@ module constants
        EVENT_ABSORB  =  2
 
   ! Tally score type
-  integer, parameter :: N_SCORE_TYPES = 29
+  integer, parameter :: N_SCORE_TYPES = 30
   integer, parameter :: &
        SCORE_FLUX             = -1,  & ! flux
        SCORE_TOTAL            = -2,  & ! total reaction rate
@@ -310,17 +310,19 @@ module constants
        SCORE_NDPP_NU_SCATT_YN = -26, & ! pre-integrated version of score_nu_scatter_yn
        SCORE_NDPP_CHI         = -27, & ! pre-integrated total fission spectra
        SCORE_NDPP_CHI_P       = -28, & ! pre-integrated prompt fission spectra
-       SCORE_NDPP_CHI_D       = -29    ! pre-integrated delayed fission spectra
+       SCORE_NDPP_CHI_D       = -29, & ! pre-integrated delayed fission spectra
+       SCORE_RPT_NU_SCATT_PN  = -30    ! repeated version of score_nu_scatter_pn
 
   ! Maximum scattering order supported
   integer, parameter :: MAX_ANG_ORDER = 10
 
   ! Names of *-PN & *-YN scores (MOMENT_STRS) and *-N moment scores
   character(*), parameter :: &
-       MOMENT_STRS(10)   = (/ "scatter-p        ",   &
+       MOMENT_STRS(11)   = (/ "scatter-p        ",   &
                               "nu-scatter-p     ",   &
                               "ndpp-scatter-p   ",   &
                               "ndpp-nu-scatter-p",   &
+                              "rpt-nu-scatter-p ",   &
                               "flux-y           ",   &
                               "total-y          ",   &
                               "scatter-y        ",   &
@@ -333,7 +335,11 @@ module constants
                               "ndpp-nu-scatter-"/)
 
   ! Location in MOMENT_STRS where the YN data begins
-  integer, parameter :: YN_LOC = 5
+  integer, parameter :: YN_LOC = 6
+
+  ! Number of repeats to perform
+  integer, parameter :: N_RPT = 8
+  real(8), parameter :: W_RPT = ONE / 8.0_8
 
   ! Tally map bin finding
   integer, parameter :: NO_BIN_FOUND = -1

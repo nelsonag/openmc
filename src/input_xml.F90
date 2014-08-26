@@ -2496,6 +2496,14 @@ contains
             t % moment_order(j : j + n_bins - 1) = n_order
             j = j + n_bins - 1
 
+          case ('rpt-nu-scatter-pn')
+            ! Allow to use tracklength estimator
+            t % estimator = ESTIMATOR_TRACKLENGTH
+            ! Setup P0:Pn
+            t % score_bins(j : j + n_bins - 1) = SCORE_RPT_NU_SCATT_PN
+            t % moment_order(j : j + n_bins - 1) = n_order
+            j = j + n_bins - 1
+
           case ('scatter-yn')
             t % estimator = ESTIMATOR_ANALOG
             ! Setup Y0:Yn

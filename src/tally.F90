@@ -13,6 +13,7 @@ module tally
                               ndpp_tally_scatt_yn, ndpp_tally_chi
   use output,           only: header
   use particle_header,  only: LocalCoord, Particle
+  use physics,          only: scatter
   use search,           only: binary_search
   use string,           only: to_str
   use tally_header,     only: TallyResult, TallyMapItem, TallyMapElement
@@ -506,6 +507,18 @@ contains
 
             cycle SCORE_LOOP
 
+          case (SCORE_RPT_NU_SCATT_PN)
+            ! Skip any event where the particle didn't scatter
+            if (p % event == EVENT_SCATTER) then
+              ! For the case of analog NDPP nu-scatter-pn tallying, filter_index needs
+              ! to be adjusted to point to the first energyout filter
+              call tally_rpt_pn(p, t, p % event_nuclide, score_index, &
+                                t % moment_order(j), last_wgt, .True., .False.)
+            end if
+
+            j = j + t % moment_order(j)
+            cycle SCORE_LOOP
+
           case (SCORE_TRANSPORT)
             ! Skip any event where the particle didn't scatter
             if (p % event /= EVENT_SCATTER) cycle SCORE_LOOP
@@ -997,6 +1010,13 @@ contains
 
                 cycle SCORE_LOOP
 
+              case (SCORE_RPT_NU_SCATT_PN)
+                call tally_rpt_pn(p, t, i_nuclide, score_index, &
+                                  t % moment_order(j), atom_density * flux, &
+                                  .True., .True.)
+                j = j + t % moment_order(j)
+                cycle SCORE_LOOP
+
               case (SCORE_ABSORPTION)
                 ! Absorption cross section is pre-calculated
                 score = micro_xs(i_nuclide) % absorption * &
@@ -1200,6 +1220,14 @@ contains
                   matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, flux, &
                   p % E, score_bin, t % results)
 
+                cycle SCORE_LOOP
+
+              case (SCORE_RPT_NU_SCATT_PN)
+                mat => materials(p % material)
+                call tally_macro_rpt_pn(p, t, mat, score_index, &
+                                        t % moment_order(j), flux, .True.)
+
+                j = j + t % moment_order(j)
                 cycle SCORE_LOOP
 
               case (SCORE_ABSORPTION)
@@ -1489,6 +1517,12 @@ contains
 
           cycle SCORE_LOOP
 
+        case (SCORE_RPT_NU_SCATT_PN)
+          call tally_rpt_pn(p, t, i_nuclide, score_index, &
+                            t % moment_order(j), atom_density * flux, .True., &
+                            .True.)
+          j = j + t % moment_order(j)
+          cycle SCORE_LOOP
         case (SCORE_ABSORPTION)
           score = micro_xs(i_nuclide) % absorption * atom_density * flux
 
@@ -1700,6 +1734,14 @@ contains
           matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, flux, &
           p % E, score_bin, t % results)
 
+        cycle MATERIAL_SCORE_LOOP
+
+      case (SCORE_RPT_NU_SCATT_PN)
+        mat => materials(p % material)
+        call tally_macro_rpt_pn(p, t, mat, score_index, &
+                                t % moment_order(j), flux, .True.)
+
+        j = j + t % moment_order(j)
         cycle MATERIAL_SCORE_LOOP
 
       case (SCORE_ABSORPTION)
@@ -2155,6 +2197,12 @@ contains
                     atom_density * flux, .false., p % E, score_bin, t % results)
 
                   cycle SCORE_LOOP
+                case (SCORE_RPT_NU_SCATT_PN)
+                  call tally_rpt_pn(p, t, i_nuclide, score_index, &
+                                    t % moment_order(j), atom_density * flux, &
+                                    .True., .True.)
+                  j = j + t % moment_order(j)
+                  cycle SCORE_LOOP
                 case (SCORE_ABSORPTION)
                   score = micro_xs(i_nuclide) % absorption * &
                        atom_density * flux
@@ -2293,6 +2341,13 @@ contains
                   call tally_macro_ndpp_chi(mat, score_index, filter_index - &
                     matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, flux, &
                     p % E, score_bin, t % results)
+                  cycle SCORE_LOOP
+                case (SCORE_RPT_NU_SCATT_PN)
+                  mat => materials(p % material)
+                  call tally_macro_rpt_pn(p, t, mat, score_index, &
+                                          t % moment_order(j), flux, .True.)
+
+                  j = j + t % moment_order(j)
                   cycle SCORE_LOOP
                 case (SCORE_ABSORPTION)
                   score = material_xs % absorption * flux
@@ -3422,5 +3477,132 @@ contains
     end do
 
   end subroutine tally_macro_ndpp_chi
+
+!===============================================================================
+! TALLY_RPT_PN
+!===============================================================================
+
+  subroutine tally_rpt_pn(p_orig, t, i_nuclide, init_score_index, t_order, &
+                          mult, nuscatt, is_tl)
+    type(Particle), intent(in) :: p_orig
+    type(TallyObject), pointer :: t
+    integer, intent(in) :: i_nuclide ! index into nuclides array
+    integer, intent(in) :: init_score_index ! dim = 1 starting index in results
+    integer, intent(in) :: t_order ! # of scattering orders to tally
+    real(8), intent(in) :: mult ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: nuscatt ! Is this a nu-scatter rxn or not
+    logical, intent(in) :: is_tl   ! Is this a track-length tally?
+
+    type(Particle) :: p
+    integer        :: score_index
+    integer        :: n
+    integer        :: i_rpt
+
+    integer :: i             ! index of outgoing energy filter
+    integer :: nE            ! number of energies on filter
+    integer :: bin_energyout ! original outgoing energy bin
+    integer :: i_filter      ! index for matching filter bin combination
+    real(8) :: score         ! actual score
+    real(8) :: wgt           ! Weight to apply to legendre moment
+
+    ! save original outgoing energy bin and score index
+    i = t % find_filter(FILTER_ENERGYOUT)
+    bin_energyout = matching_bins(i)
+
+    ! Get number of energies on filter
+    nE = size(t % filters(i) % real_bins)
+
+    ! Initialize the particle
+    call p % initialize()
+
+    ! Here we have to sample a scattering reaction for this nuclide N_RPT times
+    ! and score it with weight mult * W_RPT.
+    do i_rpt = 1, N_RPT
+      ! First build our virtual particle
+      ! If it is a TL, then we use our current info,
+      ! if we are a collision tally, then need the post-collision info.
+      if (is_tl) then
+        p % wgt = p_orig % wgt
+        p % last_wgt = p_orig % last_wgt
+        p % E = p_orig % E
+        p % coord0 % uvw = p_orig % coord0 % uvw
+      else
+        p % wgt = p_orig % last_wgt
+        p % last_wgt = p_orig % last_wgt
+        p % E = p_orig % last_E
+        p % coord0 % uvw = p_orig % last_uvw
+      end if
+
+      call scatter(p, i_nuclide)
+
+      ! check if outgoing energy is within specified range on filter
+      if (p % E < t % filters(i) % real_bins(1) .or. &
+           p % E > t % filters(i) % real_bins(nE)) cycle
+
+      ! change outgoing energy bin
+      matching_bins(i) = binary_search(t % filters(i) % real_bins, nE, p % E)
+
+      ! determine scoring index
+      i_filter = sum((matching_bins(1:t%n_filters) - 1) * t % stride) + 1
+
+      score_index = init_score_index - 1
+
+      if (nuscatt) then
+        wgt = mult * p % wgt * W_RPT
+      else
+        wgt = mult * p % last_wgt * W_RPT
+      end if
+
+      if (is_tl) then
+        wgt = wgt * (micro_xs(i_nuclide) % total - micro_xs(i_nuclide) % absorption)
+      end if
+
+      do n = 0, t_order
+        ! determine scoring bin index
+        score_index = score_index + 1
+        ! get the score and tally it
+        score = wgt * calc_pn(n, p % mu)
+
+!$omp atomic
+        t % results(score_index, i_filter) % value = &
+          t % results(score_index, i_filter) % value + score
+!$omp end atomic
+      end do
+    end do
+
+    ! reset outgoing energy bin and score index
+    matching_bins(i) = bin_energyout
+
+    ! deallocate our particle
+    call p % clear()
+
+  end subroutine tally_rpt_pn
+
+!===============================================================================
+! TALLY_MACRO_RPT_PN
+!===============================================================================
+
+  subroutine tally_macro_rpt_pn(p, t, mat, score_index, t_order, flux, nuscatt)
+
+    type(Particle), intent(in) :: p
+    type(TallyObject), pointer :: t
+    type(Material), pointer, intent(in) :: mat ! Working material
+    integer, intent(in) :: score_index ! dim = 1 starting index in results
+    integer, intent(in) :: t_order ! # of scattering orders to tally
+    real(8), intent(in) :: flux ! flux
+    logical, intent(in) :: nuscatt ! Is this a nu-scatter rxn or not
+
+    integer :: i ! index in nuclide list of materials
+    integer :: i_nuclide ! index in nuclides array of our working nuclide
+    real(8) :: N_flux ! atom_density * flux
+
+    do i = 1, mat % n_nuclides
+      i_nuclide = mat % nuclide(i)
+      N_flux = mat % atom_density(i) * flux
+      call tally_rpt_pn(p, t, i_nuclide, score_index, t_order, N_flux, nuscatt, &
+                        .true.)
+    end do
+
+  end subroutine tally_macro_rpt_pn
 
 end module tally
