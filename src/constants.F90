@@ -338,8 +338,8 @@ module constants
   integer, parameter :: YN_LOC = 6
 
   ! Number of repeats to perform
-  integer, parameter :: N_RPT = 8
-  real(8), parameter :: W_RPT = ONE / 8.0_8
+  integer, parameter :: N_RPT = 4
+  real(8), parameter :: W_RPT = ONE / 4.0_8
 
   ! Tally map bin finding
   integer, parameter :: NO_BIN_FOUND = -1
