@@ -2,12 +2,15 @@ module ndpp_ops
 
   use ace_header,   only: XsListing
   use constants
+  use cross_section, only: calculate_xs
   use dict_header,  only: DictCharInt, DICT_NULL
   use error,        only: fatal_error
   use global
   use list_header,  only: ListElemInt
+  use material_header, only: Material
   use math,         only: calc_rn
   use ndpp_header,  only: GrpTransfer, Ndpp
+  use particle_header, only: Particle
   use search
   use string,       only: ends_with, to_lower, starts_with, to_str
   use tally_header, only: TallyResult
@@ -463,6 +466,179 @@ module ndpp_ops
   end subroutine ndpp_read
 
 !===============================================================================
+! BUILD_MATERIAL_NDPP Combines multiple NDPP Objects from a material in to one.
+!===============================================================================
+
+  function build_material_ndpp(this_mat, i_mat, ndpp_nuc, ndpp_sab, order, groups, bounds) &
+    result(ndpp_mat)
+
+    type(Material), intent(in)          :: this_mat    ! The working material
+    integer, intent(in)                 :: i_mat       ! Current Index of materials
+    type(Ndpp), allocatable, intent(in) :: ndpp_nuc(:) ! Reference nuclidic data
+    type(Ndpp), allocatable, intent(in) :: ndpp_sab(:) ! Reference sab data
+    integer, intent(in)                 :: order       ! Scattering moment size
+    integer, intent(in)                 :: groups      ! Total # of outgoing groups
+    real(8), intent(in)                 :: bounds(:)   ! Group boundaries
+    type(Ndpp)                          :: ndpp_mat    ! The result of this method
+
+    integer :: i, i_nuc ! Nuclide index
+    integer :: i_sabnuc, i_sab ! Sab index
+    type(Ndpp) :: ndpp_temp ! Temporary ndpp object used in the building
+    real(8):: temp_out(order, groups) ! Scratch Outgoing transfer probabilities
+    real(8), allocatable :: elEin(:), Ein(:), chiEin(:), tempchiEin(:) ! Combined Incoming E grid
+    logical, allocatable :: has_sab(:) ! Nuclide has_sab data
+    integer, allocatable :: sab_loc(:) ! Location in sab table of the data
+    real(8), allocatable :: sab_thresh(:)  ! Highest sab data energy value
+    integer, allocatable :: sab_ithresh(:) ! Highest sab data energy value index
+    integer :: NE, iE
+    real(8) :: atom_density  ! atom density of a nuclide
+    type(Particle) :: p
+    integer :: gin,g         ! in & outgoing energy group index
+    integer :: g_filter  ! outgoing energy group index
+    integer :: i_score   ! index of score dimension of results
+    integer :: l         ! legendre moment index
+    real(8) :: norm      ! Interpolation constant, multiplied by sigS (if in TL)
+    integer :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer :: gmax      ! Maximum group transfer in ndpp_outgoing
+    real(8) :: sigs_el   ! Elastic x/s
+    real(8) :: sigs_inel ! Inelastic x/s
+    logical :: nuscatt_flag
+
+    ! Initialize the ndpp object with what we know off bat.
+    ! First, kT will be the same as all the nuclides so just take the first one's
+    ! value:
+    ndpp_mat % kT = ndpp_nuc(this_mat % nuclide(1)) % zaid
+    ! ndpp % zaid has no meaning for this but we can store the material index here
+    ndpp_mat % zaid = this_mat % id
+    ! is_nuc will be false, since we are not a nuclide
+    ndpp_mat % is_nuc = .False.
+
+    ! Go through and create a combined energy grid to store in the inelastic
+    ! slot of Ndpp (and nuinel)
+    ! Will also do the same operations for chi_Ein at the same time
+    allocate(has_sab(this_mat % n_nuclides))
+    allocate(sab_loc(this_mat % n_nuclides))
+    allocate(sab_thresh(this_mat % n_nuclides))
+    allocate(sab_ithresh(this_mat % n_nuclides))
+    has_sab = .False.
+    sab_loc = 0
+    sab_thresh = ZERO
+    sab_ithresh = 0
+
+    do i = 1, this_mat % n_nuclides
+      i_nuc = this_mat % nuclide(i)
+      ! Need to get s(a,b) grid if its needed for i_nuc and use its values
+      ! with the nuc values appended at higher energies for elastic
+      if (this_mat % n_sab > 0) then
+        i_sab = -1
+        do i_sabnuc = 1, this_mat % n_sab
+          if (i_nuc == this_mat % i_sab_nuclides(i_sabnuc)) then
+            i_sab = this_mat % i_sab_tables(i_sabnuc)
+            sab_loc(i) = i_sab
+          end if
+        end do
+        if (i_sab /= -1) then
+          has_sab(i) = .True.
+          sab_thresh(i) = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
+          sab_ithresh(i) = binary_search(ndpp_nuc(i_nuc) % el_Ein,&
+                                             size(ndpp_nuc(i_nuc) % el_Ein), &
+                                             sab_thresh(i)) + 1
+        ! Otherwise nothing needed since this nuc doesnt have sab data
+        end if
+      end if
+
+      if (has_sab(i)) then
+        NE = size(ndpp_sab(i_sab) % el_Ein) + &
+          size(ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):))
+        allocate(elEin(NE))
+        elEin(1:size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
+        elEin(size(ndpp_sab(i_sab) % el_Ein):) = &
+          ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
+      else
+        NE = size(ndpp_nuc(i_nuc) % el_Ein)
+        allocate(elEin(NE))
+        elEin = ndpp_nuc(i_nuc) % el_Ein
+      end if
+
+      ! Now build combined inelastic grid with elastic grid
+      ! (Assuming all inelastic data above sab data threshold so just take
+      !  All of the inelastic grid)
+      call merge(elEin, ndpp_nuc(i_nuc) % inel_Ein, Ein)
+
+      ! Now do chi
+      if (this_mat % fissionable) then
+        if (i == 1) then
+          ! This is our first time through, but we have nothing to merge with
+          allocate(chiEin(size(ndpp_nuc(i_nuc) % chi_Ein)))
+        else
+          allocate(tempchiEin(size(chiEin)))
+          tempchiEin = chiEin
+          call merge(ndpp_nuc(i_nuc) % chi_Ein, tempchiEin, chiEin)
+          deallocate(tempchiEin)
+        end if
+      end if
+    end do
+
+    ! We have our grids.  Now we have to go through each incoming
+    ! energy point and build the outgoing data, wihch will combine
+    ! elastic and inelastic scattering data
+    NE = size(Ein)
+    do iE = 1, NE
+      ! Build a particle so we can calculate the cross sections
+      p % material = this_mat % id
+      p % E = Ein(iE)
+      ! Calculate those xs
+      call calculate_xs(p)
+      ! Zero out the outgoing data
+      temp_out = ZERO
+
+      gin = binary_search(bounds, groups + 1, Ein(iE))
+
+      ! Now add in the contribution of elastic and inelastic for each
+      do i = 1, this_mat % n_nuclides
+        i_nuc = this_mat % nuclide(i)
+        atom_density = this_mat % atom_density(i)
+
+        if (Ein(iE) < sab_thresh(i)) then
+          ! Do the below for sab only
+          ! (again, b/c assuming no inelastic and sab overlap)
+        else
+          ! Get our specific x/s needed
+          call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
+
+          if (associated(ndpp_nuc(i_nuc) % nuinel)) then
+            nuscatt_flag = .True.
+          else
+            nuscatt_flag = .False.
+          end if
+
+          ! Now combine the elastic and inelastic distributions to one set,
+          ! which will be in ndpp_outgoing(thread_id,:,:)
+          call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
+                                        order - 1, Ein(iE), sigs_el, sigs_inel, &
+                                        norm, gmin, gmax)
+
+          ! Add this component to our temporary output, temp_out, weighted
+          ! by atom_density
+          temp_out = temp_out + atom_density * ndpp_outgoing(thread_id,:,:)
+
+        end if
+
+      end do
+
+    end do
+
+
+
+
+
+
+
+    ! And now we are officially initialized, lets make it so
+    ndpp_mat % is_init = .True.
+  end function build_material_ndpp
+
+!===============================================================================
 ! NDPP_TALLY_NDPP_SCATT_N determines the scattering moments which were
 ! previously calculated with a pre-processor such as NDPP;
 ! this can be used for analog and tracklength estimators;
@@ -645,7 +821,7 @@ module ndpp_ops
     call generate_ndpp_distrib_pn(this, nuscatt_flag, gin, t_order, Ein, sigs_el, sigs_inel, &
                                   norm, gmin, gmax)
 
-    ! Apply mult to the n ormalization constant, norm
+    ! Apply mult to the normalization constant, norm
     norm = norm * mult
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
@@ -1079,5 +1255,105 @@ module ndpp_ops
     end if
 
   end subroutine generate_ndpp_distrib_pn
+
+!===============================================================================
+! MERGE combines two arrays in to one longer array, maintaining the sorted order
+!===============================================================================
+
+    subroutine merge(a, b, result)
+      real(8), target, intent(in)    :: a(:)
+      real(8), target, intent(in)    :: b(:)
+      real(8), allocatable, intent(inout) :: result(:)
+
+      real(8), allocatable :: merged(:)
+      integer :: ndata1, ndata2, nab
+      integer :: idata1, idata2, ires
+      logical :: no_exit = .true.
+      real(8), pointer :: data1(:), data2(:)
+
+      if (a(size(a)) > b(size(b))) then
+        data1 => b
+        data2 => a
+      else
+        data1 => a
+        data2 => b
+      end if
+
+      ndata1 = size(data1)
+      ndata2 = size(data2)
+      nab = ndata1 + ndata2
+      allocate(merged(nab))
+
+      idata1 = 1
+      idata2 = 1
+      do ires = 1, nab
+        if (idata1 <= ndata1 .and. idata2 <= ndata2) then
+          if (data1(idata1) < data2(idata2)) then
+            ! take data2 info, unless it is zero
+            ! a zero Ein results in zero scattering, which is not a useful
+            ! point to interpolate to.  MC codes will extrapolate in this case
+            ! from the bottom-two points. This is more desirable than interpolating
+            ! between 0 and the next highest Ein.
+            ! Even more desirable, perhaps, would be interpolating between
+            ! a suitably low, but non-zero Ein, and the next highest Ein
+            if (data1(idata1) == 0.0_8) then
+              merged(ires) = 1.0E-11_8
+            else
+              merged(ires) = data1(idata1)
+            end if
+            idata1 = idata1 + 1
+          else if (data1(idata1) == data2(idata2)) then
+            ! take data1 info, but increment both
+            merged(ires) = data1(idata1)
+            idata1 = idata1 + 1
+            idata2 = idata2 + 1
+          else
+            ! take data2 info, unless it is zero
+            ! a zero Ein results in zero scattering, which is not a useful
+            ! point to interpolate to.  MC codes will extrapolate in this case
+            ! from the bottom-two points. This is more desirable than interpolating
+            ! between 0 and the next highest Ein.
+            ! Even more desirable, perhaps, would be interpolating between
+            ! a suitably low, but non-zero Ein, and the next highest Ein
+            if (data2(idata2) == 0.0_8) then
+              merged(ires) = 1.0E-11_8
+            else
+              merged(ires) = data2(idata2)
+            end if
+            idata2 = idata2 + 1
+          end if
+        else if (idata1 <= ndata1) then
+          ! There are more data1 data than data2s
+          ! Take an data1 and then stop building array
+          merged(ires) = data1(idata1)
+          idata1 = idata1 + 1
+          no_exit = .false.
+          exit
+        else if (idata2 <= ndata2) then
+          ! There are more data2s than data1 data
+          merged(ires) = data2(idata2)
+          idata2 = idata2 + 1
+        else
+          no_exit = .false.
+          exit
+        end if
+      end do
+
+      ! Clear result if it has values (as it will when it gets here)
+      if (allocated(result)) then
+        deallocate(result)
+      end if
+
+      ! Adjust ires
+      if ((.not. no_exit) .or. (ires > nab)) then
+        ires = ires - 1
+      end if
+
+      ! Store our results
+      allocate(result(ires))
+      result = merged(1: ires)
+      ! Clean up
+      deallocate(merged)
+    end subroutine merge
 
 end module ndpp_ops
