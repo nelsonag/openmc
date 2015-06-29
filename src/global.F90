@@ -159,6 +159,7 @@ module global
   ! and sab_tables(:)
   type(Ndpp), allocatable, target :: ndpp_nuc_data(:)
   type(Ndpp), allocatable, target :: ndpp_sab_data(:)
+  type(Ndpp), allocatable, target :: ndpp_mat_data(:)
 
   ! ============================================================================
   ! EIGENVALUE SIMULATION VARIABLES

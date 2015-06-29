@@ -6,7 +6,7 @@ module ndpp_initialize
   use error,        only: fatal_error, warning
   use global
   use ndpp_header,  only: Ndpp
-  use ndpp_ops,     only: ndpp_read
+  use ndpp_ops,     only: ndpp_read, build_material_ndpp
   use output,       only: write_message
   use search
   use string,       only: ends_with, to_lower, starts_with, to_str
@@ -40,18 +40,22 @@ contains
     logical :: get_chi_d     ! Flag for whether or not to get delayed chi data
     integer :: scatt_order   ! Number of moments requested in tallies for scatter
     integer :: ndpp_groups   ! Number of groups in the NDPP library
+    real(8), allocatable :: ndpp_bounds(:) ! Group Boundaries
+    logical :: get_macro     ! Condense the macroscopic data
+    integer :: i_mat         ! Material index
+    type(Material), pointer :: mat => null()
 
     ! allocate arrays for NDPP data storage
     allocate(ndpp_nuc_data(n_nuclides_total))
     allocate(ndpp_sab_data(n_sab_tables))
 
     ! Read the ndpp_lib.xml file
-    call read_ndpp_xml(scatt_type, ndpp_groups)
+    call read_ndpp_xml(scatt_type, ndpp_groups, ndpp_bounds)
 
     ! Determine which data is required to be stored as well as the maximum orders
     ! for scatt and nuscatt
     call which_data(scatt_type, get_scatt, get_nuscatt, get_chi_t, get_chi_p, &
-                    get_chi_d, scatt_order)
+                    get_chi_d, scatt_order, get_macro)
 
     ! Parse through each nuclide in the model and read in the corresponding
     ! NDPP data.
@@ -63,7 +67,7 @@ contains
       i_listing = ndpp_listing_dict % get_key(adjustl(trim(nuc % name)))
       if (i_listing == DICT_NULL) then
         ! Could not find ndpp_lib.xml file
-        call fatal_error(trim(nuc % name) // " does not exist in " // & 
+        call fatal_error(trim(nuc % name) // " does not exist in " // &
              "NDPP XML file: '" // trim(ndpp_lib) // "'!")
       end if
       ! Read the NDPP data and also check that the temperatures match
@@ -109,6 +113,22 @@ contains
     ! and interpolated elastic + inelastic data.  This is program global and has
     ! been declared threadprivate.
     allocate(ndpp_outgoing(0: n_threads, scatt_order, ndpp_groups))
+
+    ! Finally check to see if we have only material-wise tallies.
+    ! If we do, then we can condense and remove
+    if (get_macro) then
+      ! Allocate our material array
+      allocate(ndpp_mat_data(n_materials))
+
+      ! Loop through each material, and build the data
+      do i_mat = 1, n_materials
+        mat => materials(i_mat)
+        ndpp_mat_data(i_mat) = build_material_ndpp(mat, i_mat, ndpp_nuc_data, &
+                                                   ndpp_sab_data, scatt_order, &
+                                                   ndpp_groups, ndpp_bounds)
+      end do
+    end if
+
 
   end subroutine read_ndpp_data
 
@@ -186,7 +206,7 @@ contains
 !===============================================================================
 
   subroutine which_data(scatt_type, get_scatt, get_nuscatt, get_chi_t, &
-                        get_chi_p, get_chi_d, scatt_order)
+                        get_chi_p, get_chi_d, scatt_order, get_macro)
     integer, intent(in)  :: scatt_type  ! Whether or not legendre or tabular data
     logical, intent(out) :: get_scatt   ! Flag for whether or not to get scatt data
     logical, intent(out) :: get_nuscatt ! Flag for whether or not to get nuscatt data
@@ -194,6 +214,7 @@ contains
     logical, intent(out) :: get_chi_p   ! Flag for whether or not to get prompt chi data
     logical, intent(out) :: get_chi_d   ! Flag for whether or not to get delayed chi data
     integer, intent(out) :: scatt_order ! Number of moments requested in tallies for scatter
+    logical, intent(out) :: get_macro   ! Do we have macroscopic tallies?
 
     type(TallyObject), pointer :: t => null()
     integer :: i ! Tally index
@@ -207,6 +228,7 @@ contains
     get_chi_p = .false.
     get_chi_d = .false.
     scatt_order = 0
+    get_macro = .false.
 
     ! Step through each tally and score and determine which types are present
     ! and the orders for scatt and nuscatt
@@ -262,6 +284,11 @@ contains
             cycle SCORE_LOOP
         end select
       end do SCORE_LOOP
+
+      ! Check to see if we need macroscopic data
+      if (any(t % nuclide_bins == -1)) then
+        get_macro = .true.
+      end if
     end do TALLY_LOOP
 
     ! Adjust the order so array sizing is correct
@@ -276,10 +303,11 @@ contains
 ! file contains a listing of the ACE cross sections that may be used.
 !===============================================================================
 
-  subroutine read_ndpp_xml(scatt_type, ndpp_groups)
+  subroutine read_ndpp_xml(scatt_type, ndpp_groups, ndpp_energy_bins)
 
     integer, intent(out)  :: scatt_type  ! Whether or not legendre or tabular data
     integer, intent(out)  :: ndpp_groups ! number of groups in NDPP data
+    real(8), allocatable, intent(out) :: ndpp_energy_bins(:) ! Group boundary
 
     integer :: i, j, k     ! loop indices
     logical :: file_exists ! does ndpp_lib.xml exist?
@@ -296,7 +324,6 @@ contains
     type(Node), pointer      :: doc => null()
     type(Node), pointer      :: node_ndpp => null()
     type(NodeList), pointer  :: node_ndpp_list => null()
-    real(8), allocatable     :: ndpp_energy_bins(:)
     integer                  :: order       ! ndpp_lib.xml's scattering order
 
     ! Check if ndpp_lib.xml exists
@@ -345,7 +372,7 @@ contains
     if (check_for_node(doc, "scatt_type")) &
       call get_node_value(doc, "scatt_type", scatt_type)
     if (scatt_type /= SCATT_TYPE_LEGENDRE) then
-      call fatal_error("Invalid Scattering Type represented in NDPP " // & 
+      call fatal_error("Invalid Scattering Type represented in NDPP " // &
            "data. Rerun NDPP with the Legendre scattering type set.")
     end if
 
@@ -437,7 +464,7 @@ contains
                    "match that requested in tally!")
             end if
             if (all(t % filters(i_filter) % real_bins /= ndpp_energy_bins)) then
-              call fatal_error("NDPP Library group structure does not " // & 
+              call fatal_error("NDPP Library group structure does not " // &
                    "match that requested in tally!")
             end if
           case (SCORE_NDPP_SCATT_PN, SCORE_NDPP_NU_SCATT_PN)
