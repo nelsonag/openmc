@@ -125,7 +125,8 @@ contains
         mat => materials(i_mat)
         ndpp_mat_data(i_mat) = build_material_ndpp(mat, i_mat, ndpp_nuc_data, &
                                                    ndpp_sab_data, scatt_order, &
-                                                   ndpp_groups, ndpp_bounds)
+                                                   ndpp_groups, ndpp_bounds, &
+                                                   get_nuscatt)
       end do
     end if
 
