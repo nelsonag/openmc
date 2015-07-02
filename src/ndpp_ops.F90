@@ -1245,9 +1245,6 @@ module ndpp_ops
       sigs_el   = micro_xs(i_nuclide) % elastic
       sigs_inel = micro_xs(i_nuclide) % total - micro_xs(i_nuclide) % absorption - &
         sigs_el
-      if (sigs_inel < ZERO) then
-        sigs_inel = ZERO
-      end if
     end if
 
   end subroutine calc_scatter_xs
