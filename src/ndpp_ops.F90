@@ -10,6 +10,7 @@ module ndpp_ops
   use material_header, only: Material
   use math,         only: calc_rn
   use ndpp_header,  only: GrpTransfer, Ndpp
+  use output,       only: write_message
   use particle_header, only: Particle
   use search
   use string,       only: ends_with, to_lower, starts_with, to_str
@@ -522,6 +523,10 @@ module ndpp_ops
     logical :: nuscatt_flag
     logical :: use_nuinel
 
+    ! display message
+    call write_message("Combining NDPP data for material " // &
+         to_str(this_mat % id), 6)
+
     ! Initialize the ndpp object with what we know off bat.
     ! First, kT will be the same as all the nuclides so just take the first one's
     ! value:
@@ -554,7 +559,8 @@ module ndpp_ops
       if (this_mat % n_sab > 0) then
         i_sab = -1
         do i_sabnuc = 1, this_mat % n_sab
-          if (i_nuc == this_mat % i_sab_nuclides(i_sabnuc)) then
+          if (i_nuc == &
+              this_mat % nuclide(this_mat % i_sab_nuclides(i_sabnuc))) then
             i_sab = this_mat % i_sab_tables(i_sabnuc)
             sab_loc(i) = i_sab
           end if
@@ -573,9 +579,9 @@ module ndpp_ops
         NE = size(ndpp_sab(i_sab) % el_Ein) + &
           size(ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):))
         allocate(elEin(NE))
-        elEin(1:size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
-        elEin(size(ndpp_sab(i_sab) % el_Ein):) = &
-          ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
+        elEin(1 : size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
+        elEin(size(ndpp_sab(i_sab) % el_Ein) + 1:) = &
+             ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
       else
         NE = size(ndpp_nuc(i_nuc) % el_Ein)
         allocate(elEin(NE))
@@ -585,7 +591,13 @@ module ndpp_ops
       ! Now build combined inelastic grid with elastic grid
       ! (Assuming all inelastic data above sab data threshold so just take
       !  All of the inelastic grid)
-      call merge(elEin, ndpp_nuc(i_nuc) % inel_Ein, Ein)
+      if (associated(ndpp_nuc(i_nuc) % inel_Ein)) then
+        call merge(elEin, ndpp_nuc(i_nuc) % inel_Ein, Ein)
+      else
+        ! No inelastic grid, (hydrgen), therefore dont bother
+        allocate(Ein(size(elEin)))
+        Ein = elEin
+      end if
       deallocate(elEin)
 
       ! Now do chi
@@ -602,18 +614,23 @@ module ndpp_ops
       ! end if
     end do
 
+    ! Store the energy grid
+    NE = size(Ein)
+    allocate(ndpp_mat % inel_Ein(NE))
+    ndpp_mat % inel_Ein = Ein
+
     ! We have our grids.  Now we have to go through each incoming
     ! energy point and build the outgoing data, wihch will combine
     ! elastic and inelastic scattering data
-    NE = size(Ein)
     allocate(ndpp_mat % inel(NE))
     if (use_nuinel) then
       allocate(ndpp_mat % nuinel(NE))
     end if
-    do iE = 1, NE
+    do iE = 1, NE - 1
       ! Build a particle so we can calculate the cross sections
-      p % material = this_mat % id
+      p % material = i_mat
       p % E = Ein(iE)
+
       ! Calculate those xs
       call calculate_xs(p)
       ! Zero out the outgoing data
@@ -645,7 +662,8 @@ module ndpp_ops
 
             ! Add this component to our temporary output, temp_out, weighted
             ! by atom_density
-            nu_temp_out = nu_temp_out + atom_density * ndpp_outgoing(1,:,:)
+            nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
+                 ndpp_outgoing(thread_id,:,gmin:gmax)
           else
             nuscatt_flag = .False.
             ! Now combine the elastic and inelastic distributions to one set,
@@ -655,7 +673,8 @@ module ndpp_ops
                                           norm, gmin, gmax)
             ! Add this component to our temporary output, temp_out, weighted
             ! by atom_density
-            temp_out = temp_out + atom_density * ndpp_outgoing(1,:,:)
+            temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
+                 ndpp_outgoing(thread_id,:,gmin:gmax)
 
           end if
 
@@ -674,7 +693,8 @@ module ndpp_ops
 
           ! Add this component to our temporary output, temp_out, weighted
           ! by atom_density
-          temp_out = temp_out + atom_density * ndpp_outgoing(1,:,:)
+          temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
+            ndpp_outgoing(thread_id,:,gmin:gmax)
 
         end if
 
@@ -704,19 +724,31 @@ module ndpp_ops
         gmax = 1
       end if
 
-      allocate(ndpp_mat % inel(iE) % outgoing(order, gmax - gmin + 1))
-      allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmax - gmin + 1))
-
+      allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
       ndpp_mat % inel(iE) % outgoing = temp_out(:,gmin:gmax)
-      ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:,gmin:gmax)
+
+      if (use_nuinel) then
+        allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
+        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:,gmin:gmax)
+      end if
 
     end do
+
+    ! Set last data point to the same as last - 1 data point
+    allocate(ndpp_mat % inel(NE) % outgoing(order, gmin:gmax))
+    ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
+
+    if (use_nuinel) then
+      allocate(ndpp_mat % nuinel(NE) % outgoing(order, gmin:gmax))
+      ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
+    end if
 
     !!!TODO: Chi Data
 
     ! Now we need to set inel_Ein_srch
     allocate(ndpp_mat % inel_Ein_srch(groups + 1))
-    do g = 1, groups
+    ndpp_mat % inel_Ein_srch(1) = 1
+    do g = 2, groups
       ndpp_mat % inel_Ein_srch(g) = binary_search(Ein,size(Ein),bounds(g))
     end do
     ndpp_mat % inel_Ein_srch(groups + 1) = size(Ein)
@@ -939,7 +971,7 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_n(this, gin, score_index, filter_index, &
-                                    t_order, mult, sigS, Ein, results, &
+                                    t_order, mult, Ein, results, &
                                     nuscatt)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
@@ -947,7 +979,6 @@ module ndpp_ops
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
-    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
     logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
@@ -967,7 +998,7 @@ module ndpp_ops
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
+    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult, &
                                      gmin, gmax)
 
     ! Add the combined distribution to our tally
@@ -976,7 +1007,7 @@ module ndpp_ops
 !$omp atomic
       results(score_index, g_filter) % value = &
         results(score_index, g_filter) % value + &
-        ndpp_outgoing(thread_id, l, g) * mult
+        ndpp_outgoing(thread_id, l, g)
     end do
   end subroutine ndpp_tally_mat_scatt_n
 
@@ -986,15 +1017,14 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_pn(this, gin, score_index, filter_index, &
-                                    t_order, mult, sigS, Ein, results, &
-                                    nuscatt)
+                                     t_order, mult, Ein, results, &
+                                     nuscatt)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
-    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
     logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
@@ -1015,8 +1045,8 @@ module ndpp_ops
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
-                                     gmin, gmax)
+    call generate_ndpp_mat_distrib_pn(this, nuscatt_flag, gin, l, Ein, mult, &
+                                      gmin, gmax)
 
     ! Add the combined distribution to our tally
     do g = gmin, gmax
@@ -1036,19 +1066,18 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_yn(this, gin, score_index, filter_index, &
-                                    t_order, mult, sigS, Ein, uvw, results, &
-                                    nuscatt)
+                                     t_order, mult, Ein, uvw, results, &
+                                     nuscatt)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
-    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
     real(8), intent(in) :: Ein          ! Incoming energy
     real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
+    logical, optional, intent(in)    :: nuscatt      ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
@@ -1067,8 +1096,8 @@ module ndpp_ops
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
-                                     gmin, gmax)
+    call generate_ndpp_mat_distrib_pn(this, nuscatt_flag, gin, l, Ein, mult, &
+                                      gmin, gmax)
 
     ! Add the combined distribution to our tally for each order
     do g = gmin, gmax
@@ -1196,6 +1225,9 @@ module ndpp_ops
       sigs_el   = micro_xs(i_nuclide) % elastic
       sigs_inel = micro_xs(i_nuclide) % total - micro_xs(i_nuclide) % absorption - &
         sigs_el
+      if (sigs_inel < ZERO) then
+        sigs_inel = ZERO
+      end if
     end if
 
   end subroutine calc_scatter_xs
@@ -1552,30 +1584,28 @@ module ndpp_ops
       gmin = lbound(inel(igrid) % outgoing, dim=2)
       gmax = ubound(inel(igrid) % outgoing, dim=2)
     else if (allocated(inel(igrid + 1) % outgoing)) then
-      gmin = lbound(inel(igrid+1) % outgoing, dim=2)
-      gmax = ubound(inel(igrid+1) % outgoing, dim=2)
+      gmin = lbound(inel(igrid + 1) % outgoing, dim=2)
+      gmax = ubound(inel(igrid + 1) % outgoing, dim=2)
     end if
 
     ! Set up our distribution storage so we can add the components up
     ndpp_outgoing(thread_id, l, gmin: gmax) = ZERO
 
-    if (gmin /= huge(0)) then
-      ! Do lower point
-      if (allocated(inel(igrid) % outgoing)) then
-        do g = lbound(inel(igrid) % outgoing, dim=2), &
-               ubound(inel(igrid) % outgoing, dim=2)
-          ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
-            inel(igrid) % outgoing(l, g) * one_f
-        end do
-      end if
-      ! Do upper point
-      if (allocated(inel(igrid + 1) % outgoing)) then
-        do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
-               ubound(inel(igrid + 1) % outgoing, dim=2)
-          ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
-            inel(igrid + 1) % outgoing(l, g) * f
-        end do
-      end if
+    ! Do lower point
+    if (allocated(inel(igrid) % outgoing)) then
+      do g = lbound(inel(igrid) % outgoing, dim=2), &
+             ubound(inel(igrid) % outgoing, dim=2)
+        ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
+          inel(igrid) % outgoing(l, g) * one_f
+      end do
+    end if
+    ! Do upper point
+    if (allocated(inel(igrid + 1) % outgoing)) then
+      do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
+             ubound(inel(igrid + 1) % outgoing, dim=2)
+        ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
+          inel(igrid + 1) % outgoing(l, g) * f
+      end do
     end if
 
   end subroutine generate_ndpp_mat_distrib_n
@@ -1638,25 +1668,23 @@ module ndpp_ops
     ! Set up our distribution storage so we can add the components up
     ndpp_outgoing(thread_id, l, gmin: gmax) = ZERO
 
-    if (gmin /= huge(0)) then
-      ! Do lower point
-      if (allocated(inel(igrid) % outgoing)) then
-        do g = lbound(inel(igrid) % outgoing, dim=2), &
-               ubound(inel(igrid) % outgoing, dim=2)
-          ndpp_outgoing(thread_id, 1: l + 1, g) = &
-               ndpp_outgoing(thread_id, 1: l + 1, g) + &
-               inel(igrid) % outgoing(1: l + 1, g) * one_f
-        end do
-      end if
-      ! Do upper point
-      if (allocated(inel(igrid + 1) % outgoing)) then
-        do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
-               ubound(inel(igrid + 1) % outgoing, dim=2)
-          ndpp_outgoing(thread_id, 1: l + 1, g) = &
-               ndpp_outgoing(thread_id, 1: l + 1, g) + &
-               inel(igrid + 1) % outgoing(1: l + 1, g) * f
-        end do
-      end if
+    ! Do lower point
+    if (allocated(inel(igrid) % outgoing)) then
+      do g = lbound(inel(igrid) % outgoing, dim=2), &
+             ubound(inel(igrid) % outgoing, dim=2)
+        ndpp_outgoing(thread_id, 1: l, g) = &
+             ndpp_outgoing(thread_id, 1: l, g) + &
+             inel(igrid) % outgoing(1: l, g) * one_f
+      end do
+    end if
+    ! Do upper point
+    if (allocated(inel(igrid + 1) % outgoing)) then
+      do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
+             ubound(inel(igrid + 1) % outgoing, dim=2)
+        ndpp_outgoing(thread_id, 1: l, g) = &
+             ndpp_outgoing(thread_id, 1: l, g) + &
+             inel(igrid + 1) % outgoing(1: l, g) * f
+      end do
     end if
 
   end subroutine generate_ndpp_mat_distrib_pn

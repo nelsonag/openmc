@@ -10,8 +10,7 @@ module tally
                               get_mesh_indices, mesh_indices_to_bin, &
                               mesh_intersects_2d, mesh_intersects_3d
   use mesh_header,      only: StructuredMesh
-  use ndpp_ops,         only: ndpp_tally_scatt_n, ndpp_tally_scatt_pn, &
-                              ndpp_tally_scatt_yn, ndpp_tally_chi
+  use ndpp_ops
   use output,           only: header
   use particle_header,  only: LocalCoord, Particle, deallocate_coord
   use search,           only: binary_search
@@ -528,7 +527,6 @@ contains
         end do
         i = i + (t % moment_order(i) + 1)**2 - 1
 
-
       case(SCORE_FLUX_YN, SCORE_TOTAL_YN)
         score_index = score_index - 1
         num_nm = 1
@@ -591,12 +589,19 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_n(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_n(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, t % results)
+            call tally_macro_ndpp_n2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, t % results)
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, t % results)
           end if
         end if
 
@@ -620,12 +625,19 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_pn(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_pn(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, t % results)
+            call tally_macro_ndpp_pn2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, t % results)
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, t % results)
           end if
         end if
         i = i + t % moment_order(i)
@@ -650,12 +662,20 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, p % coord0 % uvw, t % results)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_yn(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_yn(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, p % coord0 % uvw, &
+            !      t % results)
+            call tally_macro_ndpp_yn2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, p % coord0 % uvw, &
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, p % coord0 % uvw, &
                  t % results)
           end if
         end if
@@ -681,12 +701,19 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results, .true.)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_n(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_n(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, t % results, .true.)
+            call tally_macro_ndpp_n2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, t % results, .true.)
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, t % results, .true.)
           end if
         end if
 
@@ -710,12 +737,19 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results, .true.)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_pn(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_pn(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, t % results, .true.)
+            call tally_macro_ndpp_pn2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, t % results, .true.)
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, t % results, .true.)
           end if
         end if
       i = i + t % moment_order(i)
@@ -740,12 +774,20 @@ contains
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, p % coord0 % uvw, t % results, .true.)
           else
-            mat => materials(p % material)
-            call tally_macro_ndpp_yn(mat, &
+            ! mat => materials(p % material)
+            ! call tally_macro_ndpp_yn(mat, &
+            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+            !      score_index, filter_index - &
+            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+            !      t % moment_order(i), flux, p % E, p % coord0 % uvw, &
+            !      t % results, .true.)
+            call tally_macro_ndpp_yn2(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), flux, p % E, p % coord0 % uvw, &
+                 t % moment_order(i), &
+                 flux * (material_xs % total - material_xs % absorption), &
+                 p % E, p % coord0 % uvw, &
                  t % results, .true.)
           end if
         end if
@@ -2215,7 +2257,7 @@ contains
 !===============================================================================
 
   subroutine tally_macro_ndpp_n(mat, gin, score_index, filter_index, t_order, flux, &
-    Ein, results, nuscatt)
+                                Ein, results, nuscatt)
     type(Material), pointer, intent(in) :: mat ! Working material
     integer, intent(in) :: gin       ! Incoming group index
     integer, intent(in) :: score_index ! dim = 1 starting index in results
@@ -2246,6 +2288,35 @@ contains
       end do
     end if
   end subroutine tally_macro_ndpp_n
+
+!===============================================================================
+! TALLY_MACRO_NDPP_N2 determines the macroscopic scattering moments which were
+! previously calculated with a pre-processor such as NDPP.
+! This method applies to ndpp-scatter-n tally types and utilizes pre-combined
+! macroscopic data.
+!===============================================================================
+
+  subroutine tally_macro_ndpp_n2(i_mat, gin, score_index, filter_index, &
+                                 t_order, mult, Ein, results, nuscatt)
+    integer, intent(in) :: i_mat     ! Working material index in materials
+    integer, intent(in) :: gin       ! Incoming group index
+    integer, intent(in) :: score_index ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: t_order ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! applied multiplier (flux or flux*sigS)
+    real(8), intent(in) :: Ein ! Incoming energy
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+
+    if (present(nuscatt)) then
+      call ndpp_tally_mat_scatt_n(ndpp_mat_data(i_mat), gin, score_index, &
+                                  filter_index, t_order, mult, Ein, results, &
+                                  nuscatt)
+    else
+      call ndpp_tally_mat_scatt_n(ndpp_mat_data(i_mat), gin, score_index, &
+                                  filter_index, t_order, mult, Ein, results)
+    end if
+  end subroutine tally_macro_ndpp_n2
 
 !===============================================================================
 ! TALLY_NDPP_PN determines the scattering moments which were
@@ -2327,6 +2398,37 @@ contains
     end if
 
   end subroutine tally_macro_ndpp_pn
+
+!===============================================================================
+! TALLY_MACRO_NDPP_PN2 determines the macroscopic scattering moments which were
+! previously calculated with a pre-processor such as NDPP;
+! This method applies to ndpp-scatter-pn tally types and utilizes pre-combined
+! macroscopic data.
+!===============================================================================
+
+  subroutine tally_macro_ndpp_pn2(i_mat, gin, score_index, filter_index, &
+                                  t_order, mult, Ein, results, nuscatt)
+
+    integer, intent(in) :: i_mat        ! Working material index in materials
+    integer, intent(in) :: gin          ! Incoming energy group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! applied multiplier (flux or flux*sigS)
+    real(8), intent(in) :: Ein          ! Incoming energy
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+
+    if (present(nuscatt)) then
+      call ndpp_tally_mat_scatt_pn(ndpp_mat_data(i_mat), gin, score_index, &
+                                   filter_index, t_order, mult, Ein, results, &
+                                   nuscatt)
+    else
+      call ndpp_tally_mat_scatt_pn(ndpp_mat_data(i_mat), gin, score_index, &
+                                   filter_index, t_order, mult, Ein, results)
+    end if
+
+  end subroutine tally_macro_ndpp_pn2
 
 !===============================================================================
 ! TALLY_NDPP_YN determines the scattering moments with angular flux moment
@@ -2412,6 +2514,38 @@ contains
     end if
 
   end subroutine tally_macro_ndpp_yn
+
+!===============================================================================
+! TALLY_MACRO_NDPP_YN2 determines the macroscopic scattering moments
+! with angular flux moment weighting which were
+! previously calculated with a pre-processor such as NDPP;
+! this method applies to ndpp-scatter-yn tally types
+!===============================================================================
+
+  subroutine tally_macro_ndpp_yn2(i_mat, gin, score_index, filter_index, &
+                                  t_order, mult, Ein, uvw, results, nuscatt)
+    integer, intent(in) :: i_mat        ! Working material index in materials
+    integer, intent(in) :: gin          ! Incoming energy group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! applied multiplier (flux or flux*sigS)
+    real(8), intent(in) :: Ein          ! Incoming energy
+    real(8), intent(in) :: uvw(3)       ! direction coordinates
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+
+    if (present(nuscatt)) then
+      call ndpp_tally_mat_scatt_yn(ndpp_mat_data(i_mat), gin, score_index, &
+                                   filter_index, t_order, mult, Ein, uvw, &
+                                   results, nuscatt)
+    else
+      call ndpp_tally_mat_scatt_yn(ndpp_mat_data(i_mat), gin, score_index, &
+                                   filter_index, t_order, mult, Ein, uvw, &
+                                   results)
+    end if
+
+  end subroutine tally_macro_ndpp_yn2
 
 !===============================================================================
 ! TALLY_NDPP_CHI determines the fission spectra which were

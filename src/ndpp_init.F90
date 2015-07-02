@@ -259,6 +259,11 @@ contains
           get_chi_d = .true.
 
         end select
+
+        ! Find if we need macroscopic data
+        if (any(t % nuclide_bins(:) == -1)) then
+          get_macro = .True.
+        end if
       end do SCORE_LOOP
     end do TALLY_LOOP
 
