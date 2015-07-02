@@ -520,8 +520,16 @@ module ndpp_ops
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
+    real(8) :: sigs      ! Total scattering x/s
     logical :: nuscatt_flag
     logical :: use_nuinel
+    real(8) :: Ethresh
+    logical :: urr_initial
+
+    ! Store urr_ptables_on setting and turn it off so URR is not tainting the
+    ! cross sections we use here.
+    urr_initial = urr_ptables_on
+    urr_ptables_on = .False.
 
     ! display message
     call write_message("Combining NDPP data for material " // &
@@ -570,18 +578,30 @@ module ndpp_ops
           sab_thresh(i) = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
           sab_ithresh(i) = binary_search(ndpp_nuc(i_nuc) % el_Ein,&
                                              size(ndpp_nuc(i_nuc) % el_Ein), &
-                                             sab_thresh(i)) + 1
+                                             sab_thresh(i))
         ! Otherwise nothing needed since this nuc doesnt have sab data
         end if
       end if
 
       if (has_sab(i)) then
-        NE = size(ndpp_sab(i_sab) % el_Ein) + &
-          size(ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):))
-        allocate(elEin(NE))
-        elEin(1 : size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
-        elEin(size(ndpp_sab(i_sab) % el_Ein) + 1:) = &
-             ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
+        ! NE = size(ndpp_sab(i_sab) % el_Ein) + &
+        !   size(ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):))
+        ! allocate(elEin(NE))
+        ! elEin(1 : size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
+        ! elEin(size(ndpp_sab(i_sab) % el_Ein) + 1:) = &
+        !      ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
+
+        ! Simply merge all the sab and nuc grids together
+        !!! If we do this as our final way, then we can delete alot of the
+        !!! S(a,b) checking code above too!!!
+        ! Add in a point just slightly above the last sab
+        ! point to help with interpolation on the nuclide grid
+        Ethresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein)) + 1E-11_8
+        call merge(ndpp_sab(i_sab) % el_Ein, (/Ethresh/), Ein)
+
+        call merge(Ein, ndpp_nuc(i_nuc) % el_Ein, elEin)
+        deallocate(Ein)
+
       else
         NE = size(ndpp_nuc(i_nuc) % el_Ein)
         allocate(elEin(NE))
@@ -633,6 +653,7 @@ module ndpp_ops
 
       ! Calculate those xs
       call calculate_xs(p)
+
       ! Zero out the outgoing data
       temp_out = ZERO
       nu_temp_out = ZERO
@@ -646,6 +667,7 @@ module ndpp_ops
 
         ! Get our specific x/s needed
         call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
+        sigs = micro_xs(i_nuc) % total - micro_xs(i_nuc) % absorption
 
         if (Ein(iE) >= sab_thresh(i)) then
 
@@ -660,7 +682,7 @@ module ndpp_ops
             ! Add this component to our temporary output, temp_out, weighted
             ! by atom_density
             nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
-                 ndpp_outgoing(thread_id,:,gmin:gmax)
+                 ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
           else
             nuscatt_flag = .False.
             ! Now combine the elastic and inelastic distributions to one set,
@@ -671,7 +693,7 @@ module ndpp_ops
             ! Add this component to our temporary output, temp_out, weighted
             ! by atom_density
             temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-                 ndpp_outgoing(thread_id,:,gmin:gmax)
+                 ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
 
           end if
 
@@ -691,7 +713,7 @@ module ndpp_ops
           ! Add this component to our temporary output, temp_out, weighted
           ! by atom_density
           temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-            ndpp_outgoing(thread_id,:,gmin:gmax)
+            ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
 
         end if
 
@@ -747,6 +769,9 @@ module ndpp_ops
       ndpp_mat % inel_Ein_srch(g) = binary_search(Ein,size(Ein),bounds(g))
     end do
     ndpp_mat % inel_Ein_srch(groups + 1) = size(Ein)
+
+    ! Restore ptables settings
+    urr_ptables_on = urr_initial
 
     ! And now we are officially initialized, lets make it so
     ndpp_mat % is_init = .True.
@@ -1661,7 +1686,7 @@ module ndpp_ops
     end if
 
     ! Set up our distribution storage so we can add the components up
-    ndpp_outgoing(thread_id, l, gmin: gmax) = ZERO
+    ndpp_outgoing(thread_id, 1: l, gmin: gmax) = ZERO
 
     ! Do lower point
     if (allocated(inel(igrid) % outgoing)) then
