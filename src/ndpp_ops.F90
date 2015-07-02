@@ -934,6 +934,160 @@ module ndpp_ops
   end subroutine ndpp_tally_scatt_yn
 
 !===============================================================================
+! NDPP_TALLY_NDPP_MAT_SCATT_N does the same as NDPP_TALLY_NDPP_SCATT_N, but
+! uses the material-wise data instead of nuclidic data.
+!===============================================================================
+
+  subroutine ndpp_tally_mat_scatt_n(this, gin, score_index, filter_index, &
+                                    t_order, mult, sigS, Ein, results, &
+                                    nuscatt)
+    type(Ndpp), intent(in) :: this      ! Ndpp object to act on
+    integer, intent(in) :: gin          ! Incoming group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
+    real(8), intent(in) :: Ein          ! Incoming energy
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
+
+    integer :: g         ! outgoing energy group index
+    integer :: g_filter  ! outgoing energy group index
+    integer :: l         ! tally order index to score
+    integer :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer :: gmax      ! Maximum group transfer in ndpp_outgoing
+    logical :: nuscatt_flag
+
+    if (present(nuscatt)) then
+      nuscatt_flag = nuscatt
+    else
+      nuscatt_flag = .false.
+    end if
+
+    l = t_order + 1
+
+    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
+                                     gmin, gmax)
+
+    ! Add the combined distribution to our tally
+    do g = gmin, gmax
+      g_filter = filter_index + g - 1
+!$omp atomic
+      results(score_index, g_filter) % value = &
+        results(score_index, g_filter) % value + &
+        ndpp_outgoing(thread_id, l, g) * mult
+    end do
+  end subroutine ndpp_tally_mat_scatt_n
+
+!===============================================================================
+! NDPP_TALLY_NDPP_MAT_SCATT_PN does the same as NDPP_TALLY_NDPP_SCATT_PN, but
+! uses the material-wise data instead of nuclidic data.
+!===============================================================================
+
+  subroutine ndpp_tally_mat_scatt_pn(this, gin, score_index, filter_index, &
+                                    t_order, mult, sigS, Ein, results, &
+                                    nuscatt)
+    type(Ndpp), intent(in) :: this      ! Ndpp object to act on
+    integer, intent(in) :: gin          ! Incoming group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
+    real(8), intent(in) :: Ein          ! Incoming energy
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
+
+    integer :: i_score   ! index of score dimension of results
+    integer :: g         ! outgoing energy group index
+    integer :: g_filter  ! outgoing energy group index
+    integer :: l         ! tally order index to score
+    integer :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer :: gmax      ! Maximum group transfer in ndpp_outgoing
+    logical :: nuscatt_flag
+
+    if (present(nuscatt)) then
+      nuscatt_flag = nuscatt
+    else
+      nuscatt_flag = .false.
+    end if
+
+    l = t_order + 1
+
+    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
+                                     gmin, gmax)
+
+    ! Add the combined distribution to our tally
+    do g = gmin, gmax
+      g_filter = filter_index + g - 1
+      do l = 1, t_order + 1
+        i_score = score_index + l - 1
+!$omp atomic
+        results(i_score, g_filter) % value = &
+          results(i_score, g_filter) % value + ndpp_outgoing(thread_id, l, g)
+      end do
+    end do
+  end subroutine ndpp_tally_mat_scatt_pn
+
+!===============================================================================
+! NDPP_TALLY_NDPP_MAT_SCATT_YN does the same as NDPP_TALLY_NDPP_SCATT_YN, but
+! uses the material-wise data instead of nuclidic data.
+!===============================================================================
+
+  subroutine ndpp_tally_mat_scatt_yn(this, gin, score_index, filter_index, &
+                                    t_order, mult, sigS, Ein, uvw, results, &
+                                    nuscatt)
+    type(Ndpp), intent(in) :: this      ! Ndpp object to act on
+    integer, intent(in) :: gin          ! Incoming group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    real(8), intent(in) :: sigS         ! Scattering x/s (is 1 if analog)
+    real(8), intent(in) :: Ein          ! Incoming energy
+    real(8), intent(in) :: uvw(3)       ! direction coordinates
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
+
+    integer :: g         ! outgoing energy group index
+    integer :: g_filter  ! outgoing energy group index
+    integer :: l         ! tally order index to score
+    integer :: num_lm    ! Number of m for this l
+    integer :: i_score   ! index of score dimension of results
+    integer :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer :: gmax      ! Maximum group transfer in ndpp_outgoing
+    logical :: nuscatt_flag
+
+    if (present(nuscatt)) then
+      nuscatt_flag = nuscatt
+    else
+      nuscatt_flag = .false.
+    end if
+
+    l = t_order + 1
+
+    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult * sigS, &
+                                     gmin, gmax)
+
+    ! Add the combined distribution to our tally for each order
+    do g = gmin, gmax
+      g_filter = filter_index + g - 1
+      i_score = score_index
+      do l = 0, t_order
+        num_lm = 2 * l + 1
+!$omp critical (ndpp_tally_mat_scatt_yn)
+        results(i_score: i_score + num_lm - 1, g_filter) % value = &
+          results(i_score: i_score + num_lm - 1, g_filter) % value + &
+          ndpp_outgoing(thread_id, l + 1, g) * calc_rn(l, uvw)
+!$omp end critical (ndpp_tally_mat_scatt_yn)
+
+        i_score = i_score + num_lm
+      end do
+    end do
+  end subroutine ndpp_tally_mat_scatt_yn
+
+!===============================================================================
 ! TALLY_NDPP_CHI determines the fission spectra which were
 ! previously calculated with a pre-processor such as NDPP;
 ! this can be used for analog and tracklength estimators;
@@ -1173,7 +1327,7 @@ module ndpp_ops
   subroutine generate_ndpp_distrib_n(this, nuscatt, gin, l, Ein, sigs_el, &
                                      sigs_inel, norm, gmin, gmax)
     type(Ndpp), intent(in) :: this      ! Ndpp data to use
-    logical, intent(in)    :: nuscatt    ! Is this for nuscatter?
+    logical, intent(in)    :: nuscatt   ! Is this for nuscatter?
     integer, intent(in)    :: gin       ! Incoming group index
     integer, intent(in)    :: l         ! Legendre order to score up to
     real(8), intent(in)    :: Ein       ! Incoming energy
@@ -1342,6 +1496,171 @@ module ndpp_ops
     end if
 
   end subroutine generate_ndpp_distrib_pn
+
+!===============================================================================
+! GENERATE_NDPP_MAT_* do the same as their non-MAT alternatives, but do it for
+! the simplified case of a material-specific NDPP data object.
+!===============================================================================
+
+  subroutine generate_ndpp_mat_distrib_n(this, nuscatt, gin, l, Ein, norm, &
+                                         gmin, gmax)
+    type(Ndpp), intent(in) :: this      ! Ndpp data to use
+    logical, intent(in)    :: nuscatt   ! Is this for nuscatter?
+    integer, intent(in)    :: gin       ! Incoming group index
+    integer, intent(in)    :: l         ! Legendre order to score up to
+    real(8), intent(in)    :: Ein       ! Incoming energy
+    real(8), intent(in) :: norm      ! Total normalization
+    integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp_outgoing
+
+    integer :: srch_lo, srch_hi, g
+    integer :: igrid
+    real(8) :: f, one_f
+    type(GrpTransfer), pointer :: inel(:)
+
+    if (nuscatt) then
+      inel => this % nuinel
+    else
+      inel => this % inel
+    end if
+
+    ! Find the location in the energy array
+    srch_lo = this % inel_Ein_srch(gin)
+    srch_hi = this % inel_Ein_srch(gin + 1)
+    ! Find the grid index and interpolant of ndpp scattering data
+    if (Ein >= this % inel_Ein(size(this % inel_Ein))) then
+      igrid = size(this % inel_Ein) - 1
+      f = ONE
+    else
+      igrid = binary_search(this % inel_Ein(srch_lo: srch_hi), &
+                            srch_hi - srch_lo + 1, Ein) + srch_lo - 1
+      f = log(Ein / this % inel_Ein(igrid)) / &
+          log(this % inel_Ein(igrid + 1) / this % inel_Ein(igrid))
+    end if
+
+    one_f = (ONE - f) * norm
+    f = f * norm
+
+    ! Now find our gmin and gmax terms
+    if ((allocated(inel(igrid) % outgoing)) .and. &
+        (allocated(inel(igrid + 1) % outgoing))) then
+      gmin = min(lbound(inel(igrid) % outgoing, dim=2), &
+                 lbound(inel(igrid + 1) % outgoing, dim=2))
+      gmax = max(ubound(inel(igrid) % outgoing, dim=2), &
+                 ubound(inel(igrid + 1) % outgoing, dim=2))
+    else if (allocated(inel(igrid) % outgoing)) then
+      gmin = lbound(inel(igrid) % outgoing, dim=2)
+      gmax = ubound(inel(igrid) % outgoing, dim=2)
+    else if (allocated(inel(igrid + 1) % outgoing)) then
+      gmin = lbound(inel(igrid+1) % outgoing, dim=2)
+      gmax = ubound(inel(igrid+1) % outgoing, dim=2)
+    end if
+
+    ! Set up our distribution storage so we can add the components up
+    ndpp_outgoing(thread_id, l, gmin: gmax) = ZERO
+
+    if (gmin /= huge(0)) then
+      ! Do lower point
+      if (allocated(inel(igrid) % outgoing)) then
+        do g = lbound(inel(igrid) % outgoing, dim=2), &
+               ubound(inel(igrid) % outgoing, dim=2)
+          ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
+            inel(igrid) % outgoing(l, g) * one_f
+        end do
+      end if
+      ! Do upper point
+      if (allocated(inel(igrid + 1) % outgoing)) then
+        do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
+               ubound(inel(igrid + 1) % outgoing, dim=2)
+          ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
+            inel(igrid + 1) % outgoing(l, g) * f
+        end do
+      end if
+    end if
+
+  end subroutine generate_ndpp_mat_distrib_n
+
+
+  subroutine generate_ndpp_mat_distrib_pn(this, nuscatt, gin, l, Ein, norm, &
+                                          gmin, gmax)
+    type(Ndpp), intent(in) :: this      ! Ndpp data to use
+    logical, intent(in)    :: nuscatt   ! Is this for nuscatter?
+    integer, intent(in)    :: gin       ! Incoming group index
+    integer, intent(in)    :: l         ! Legendre order to score up to
+    real(8), intent(in)    :: Ein       ! Incoming energy
+    real(8), intent(in) :: norm      ! Total normalization
+    integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp_outgoing
+    integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp_outgoing
+
+    integer :: srch_lo, srch_hi, g
+    integer :: igrid
+    real(8) :: f, one_f
+    type(GrpTransfer), pointer :: inel(:)
+
+    if (nuscatt) then
+      inel => this % nuinel
+    else
+      inel => this % inel
+    end if
+
+    ! Find the location in the energy array
+    srch_lo = this % inel_Ein_srch(gin)
+    srch_hi = this % inel_Ein_srch(gin + 1)
+    ! Find the grid index and interpolant of ndpp scattering data
+    if (Ein >= this % inel_Ein(size(this % inel_Ein))) then
+      igrid = size(this % inel_Ein) - 1
+      f = ONE
+    else
+      igrid = binary_search(this % inel_Ein(srch_lo: srch_hi), &
+                            srch_hi - srch_lo + 1, Ein) + srch_lo - 1
+      f = log(Ein / this % inel_Ein(igrid)) / &
+          log(this % inel_Ein(igrid + 1) / this % inel_Ein(igrid))
+    end if
+
+    one_f = (ONE - f) * norm
+    f = f * norm
+
+    ! Now find our gmin and gmax terms
+    if ((allocated(inel(igrid) % outgoing)) .and. &
+        (allocated(inel(igrid + 1) % outgoing))) then
+      gmin = min(lbound(inel(igrid) % outgoing, dim=2), &
+                 lbound(inel(igrid + 1) % outgoing, dim=2))
+      gmax = max(ubound(inel(igrid) % outgoing, dim=2), &
+                 ubound(inel(igrid + 1) % outgoing, dim=2))
+    else if (allocated(inel(igrid) % outgoing)) then
+      gmin = lbound(inel(igrid) % outgoing, dim=2)
+      gmax = ubound(inel(igrid) % outgoing, dim=2)
+    else if (allocated(inel(igrid + 1) % outgoing)) then
+      gmin = lbound(inel(igrid+1) % outgoing, dim=2)
+      gmax = ubound(inel(igrid+1) % outgoing, dim=2)
+    end if
+
+    ! Set up our distribution storage so we can add the components up
+    ndpp_outgoing(thread_id, l, gmin: gmax) = ZERO
+
+    if (gmin /= huge(0)) then
+      ! Do lower point
+      if (allocated(inel(igrid) % outgoing)) then
+        do g = lbound(inel(igrid) % outgoing, dim=2), &
+               ubound(inel(igrid) % outgoing, dim=2)
+          ndpp_outgoing(thread_id, 1: l + 1, g) = &
+               ndpp_outgoing(thread_id, 1: l + 1, g) + &
+               inel(igrid) % outgoing(1: l + 1, g) * one_f
+        end do
+      end if
+      ! Do upper point
+      if (allocated(inel(igrid + 1) % outgoing)) then
+        do g = lbound(inel(igrid + 1) % outgoing, dim=2), &
+               ubound(inel(igrid + 1) % outgoing, dim=2)
+          ndpp_outgoing(thread_id, 1: l + 1, g) = &
+               ndpp_outgoing(thread_id, 1: l + 1, g) + &
+               inel(igrid + 1) % outgoing(1: l + 1, g) * f
+        end do
+      end if
+    end if
+
+  end subroutine generate_ndpp_mat_distrib_pn
+
 
 !===============================================================================
 ! MERGE combines two arrays in to one longer array, maintaining the sorted order

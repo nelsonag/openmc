@@ -129,7 +129,6 @@ contains
       end do
     end if
 
-
   end subroutine read_ndpp_data
 
 !===============================================================================
