@@ -639,9 +639,6 @@ module ndpp_ops
 
       gin = binary_search(bounds, groups + 1, Ein(iE))
 
-      ! Initialize norm so that we can find the sum
-      norm = ZERO
-
       ! Now add in the contribution of elastic and inelastic for each
       do i = 1, this_mat % n_nuclides
         i_nuc = this_mat % nuclide(i)
@@ -698,13 +695,11 @@ module ndpp_ops
 
         end if
 
-        ! Increment norm
-        norm = norm + atom_density * (sigs_el + sigs_inel)
-
       end do
 
       ! Normalize out any non-1 normalized behavior as well (including truncation
       ! and the macro scopic x/s
+      norm = sum(temp_out(1,:))
       temp_out = temp_out / norm
       nu_temp_out = nu_temp_out / norm
 
