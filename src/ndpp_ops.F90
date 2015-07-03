@@ -507,12 +507,10 @@ module ndpp_ops
     integer :: i_sabnuc, i_sab ! Sab index
     real(8):: temp_out(order, groups) ! Scratch Outgoing transfer probabilities
     real(8):: nu_temp_out(order, groups) ! Scratch Outgoing transfer probabilities
-    real(8), allocatable :: elEin(:), Ein(:), chiEin(:), tempchiEin(:) ! Combined Incoming E grid
+    real(8), allocatable :: Ein(:)       ! Combined Nuclidic Incoming E grid
     real(8), allocatable :: tmp_Ein(:), mat_Ein(:) ! Combined Incoming E grid
     logical, allocatable :: has_sab(:) ! Nuclide has_sab data
     integer, allocatable :: sab_loc(:) ! Location in sab table of the data
-    real(8), allocatable :: sab_thresh(:)  ! Highest sab data energy value
-    integer, allocatable :: sab_ithresh(:) ! Highest sab data energy value index
     integer :: NE, iE
     real(8) :: atom_density  ! atom density of a nuclide
     type(Particle) :: p
@@ -527,6 +525,7 @@ module ndpp_ops
     logical :: urr_initial
     real(8), allocatable :: to_keep(:)
     real(8) :: compression, max_err
+    real(8) :: sab_thresh
 
     ! Store urr_ptables_on setting and turn it off so URR is not tainting the
     ! cross sections we use here.
@@ -551,18 +550,13 @@ module ndpp_ops
     ! Will also do the same operations for chi_Ein at the same time
     allocate(has_sab(this_mat % n_nuclides))
     allocate(sab_loc(this_mat % n_nuclides))
-    allocate(sab_thresh(this_mat % n_nuclides))
-    allocate(sab_ithresh(this_mat % n_nuclides))
     has_sab = .False.
     sab_loc = 0
-    sab_thresh = ZERO
-    sab_ithresh = 0
 
     do i = 1, this_mat % n_nuclides
       i_nuc = this_mat % nuclide(i)
 
-      ! Need to get s(a,b) grid if its needed for i_nuc and use its values
-      ! with the nuc values appended at higher energies for elastic
+      ! Need to get s(a,b) grid if its data is needed for this i_nuc
       if (this_mat % n_sab > 0) then
         i_sab = -1
         do i_sabnuc = 1, this_mat % n_sab
@@ -574,52 +568,12 @@ module ndpp_ops
         end do
         if (i_sab /= -1) then
           has_sab(i) = .True.
-          sab_thresh(i) = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
-          sab_ithresh(i) = binary_search(ndpp_nuc(i_nuc) % el_Ein,&
-                                             size(ndpp_nuc(i_nuc) % el_Ein), &
-                                             sab_thresh(i))
         ! Otherwise nothing needed since this nuc doesnt have sab data
         end if
       end if
 
-      if (has_sab(i)) then
-        ! NE = size(ndpp_sab(i_sab) % el_Ein) + &
-        !   size(ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):))
-        ! allocate(elEin(NE))
-        ! elEin(1 : size(ndpp_sab(i_sab) % el_Ein)) = ndpp_sab(i_sab) % el_Ein
-        ! elEin(size(ndpp_sab(i_sab) % el_Ein) + 1:) = &
-        !      ndpp_nuc(i_nuc) % el_Ein(sab_ithresh(i):)
-
-        ! Simply merge all the sab and nuc grids together
-        !!! If we do this as our final way, then we can delete alot of the
-        !!! S(a,b) checking code above too!!!
-        ! Add in a point just slightly above the last sab
-        ! point to help with interpolation on the nuclide grid
-        Ethresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein)) + 1E-11_8
-        call merge(ndpp_sab(i_sab) % el_Ein, (/Ethresh/), Ein)
-
-        ! Now merge the s(a,b) grid with the elastic grid
-        call merge(Ein, ndpp_nuc(i_nuc) % el_Ein, elEin)
-        deallocate(Ein)
-
-      else
-        NE = size(ndpp_nuc(i_nuc) % el_Ein)
-        allocate(elEin(NE))
-        elEin = ndpp_nuc(i_nuc) % el_Ein
-      end if
-
-      ! Now build combined inelastic grid with elastic grid (which is in elEin)
-      if (associated(ndpp_nuc(i_nuc) % inel_Ein)) then
-        call merge(ndpp_nuc(i_nuc) % inel_Ein, elEin, Ein)
-      else
-        ! No inelastic grid, (hydrogen), therefore just copy it over
-        allocate(Ein(size(elEin)))
-        Ein = elEin
-      end if
-      deallocate(elEin)
-
-      ! Finally, merge in the nuclide's grid, store on elEin
-      ! Find bounds of nuclide's energy bins with respect to ours
+      ! Begin grid merging:
+      ! First take in the nuclide's energy grid as our starting point
       if (bounds(1) <= nuclides(i_nuc) % energy(1)) then
         iE = 1
       else
@@ -633,44 +587,56 @@ module ndpp_ops
         NE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
                            bounds(groups + 1))
       end if
-      call merge(Ein, nuclides(i_nuc) % energy(iE:NE), elEin)
-      deallocate(Ein)
-      allocate(Ein(size(elEin)))
-      Ein = elEin
-      deallocate(elEin)
+      allocate(Ein(NE - iE + 1))
+      Ein = nuclides(i_nuc) % energy(iE: NE)
 
-      ! Now I need to merge my new Ein with the material grid
-      if (i == 1) then
-        ! First time through so nothing to merge with
-        allocate(tmp_Ein(size(Ein)))
-        tmp_Ein = Ein
-      else
-        ! Not the first rodeo, so merge it.
-        allocate(mat_Ein(size(tmp_Ein)))
-        mat_Ein = tmp_Ein
-        call merge(Ein, mat_Ein, tmp_Ein)
-        deallocate(mat_Ein)
+      ! Now, if sab data, add in the relevant ACE and NDPP Ein S(a,b) grids
+      if (has_sab(i)) then
+        i_sab = sab_loc(i)
+        ! First do the ACE
+        if (allocated(sab_tables(i_sab) % inelastic_e_in)) then
+          call merge_in_place(sab_tables(i_sab) % inelastic_e_in, Ein)
+        end if
+        if (allocated(sab_tables(i_sab) % elastic_e_in)) then
+          call merge_in_place(sab_tables(i_sab) % elastic_e_in, Ein)
+        end if
+        ! Now the NDPP S(a,b) grid
+        ! To do this, will add in a point just slightly above the last sab
+        ! point to help with interpolation on the nuclide grid
+        Ethresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein)) + 1E-11_8
+        allocate(tmp_Ein(size(ndpp_sab(i_sab) % el_Ein) + 1))
+        tmp_Ein = (/ndpp_sab(i_sab) % el_Ein, Ethresh/)
+        ! Now we can add this in
+        call merge_in_place(tmp_Ein, Ein)
       end if
 
-      ! Now do chi
-      ! if (this_mat % fissionable) then
-      !   if (i == 1) then
-      !     ! This is our first time through, but we have nothing to merge with
-      !     allocate(chiEin(size(ndpp_nuc(i_nuc) % chi_Ein)))
-      !   else
-      !     allocate(tempchiEin(size(chiEin)))
-      !     tempchiEin = chiEin
-      !     call merge(ndpp_nuc(i_nuc) % chi_Ein, tempchiEin, chiEin)
-      !     deallocate(tempchiEin)
-      !   end if
-      ! end if
+      ! Now add in the NDPP elastic grid
+      call merge_in_place(ndpp_nuc(i_nuc) % el_Ein, Ein)
+
+      ! And finally, the NDPP inelastic grid (if exists)
+      if (associated(ndpp_nuc(i_nuc) % inel_Ein)) then
+        call merge_in_place(ndpp_nuc(i_nuc) % inel_Ein, Ein)
+      end if
+
+      ! At this point we have a grid for all the data needed for this nuclide
+      ! Now we must merge it with what we have so far for the material
+      if (i == 1) then
+        ! First time through so nothing to merge with
+        allocate(mat_Ein(size(Ein)))
+        mat_Ein = Ein
+      else
+        ! Not the first rodeo, so merge it.
+        call merge_in_place(Ein, mat_Ein)
+      end if
+      deallocate(Ein)
+
     end do
 
     ! Store the energy grid
-    NE = size(tmp_Ein)
+    NE = size(mat_Ein)
     allocate(ndpp_mat % inel_Ein(NE))
-    ndpp_mat % inel_Ein = tmp_Ein
-    deallocate(tmp_Ein)
+    ndpp_mat % inel_Ein = mat_Ein
+    deallocate(mat_Ein)
 
     ! We have our grids.  Now we have to go through each incoming
     ! energy point and build the outgoing data, wihch will combine
@@ -700,7 +666,14 @@ module ndpp_ops
         ! Get our specific x/s needed
         call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
 
-        if (ndpp_mat % inel_Ein(iE) > sab_thresh(i)) then
+        if (has_sab(i)) then
+          i_sab = sab_loc(i)
+          sab_thresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
+        else
+          sab_thresh = ZERO
+        end if
+
+        if (ndpp_mat % inel_Ein(iE) > sab_thresh) then
 
           nuscatt_flag = .False.
           ! Now combine the elastic and inelastic distributions to one set,
@@ -728,7 +701,6 @@ module ndpp_ops
         else
           ! Do the same as above, but for sab only
           ! (again, b/c assuming no inelastic and sab overlap)
-          i_sab = sab_loc(i)
 
           nuscatt_flag = .False.
 
@@ -755,30 +727,6 @@ module ndpp_ops
       temp_out = temp_out / norm
       nu_temp_out = nu_temp_out / norm
 
-      ! Finally, find the gmin and gmax bounds of this set so we can compress
-      ! the data storage
-
-      ! ! find gmin by checking the P0 moment
-      ! do gmin = 1, size(temp_out, dim = 2)
-      !   if (temp_out(1, gmin) > ZERO) exit
-      ! end do
-      ! ! find gmax by checking the P0 moment
-      ! do gmax = size(temp_out, dim = 2), 1, -1
-      !   if (temp_out(1, gmax) > ZERO) exit
-      ! end do
-      ! if (gmin > gmax) then ! we have effectively all zeros
-      !   gmin = 1
-      !   gmax = 1
-      ! end if
-
-      ! allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
-      ! ndpp_mat % inel(iE) % outgoing = temp_out(:,gmin:gmax)
-
-      ! if (use_nuinel) then
-      !   allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
-      !   ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:,gmin:gmax)
-      ! end if
-
       allocate(ndpp_mat % inel(iE) % outgoing(order, groups))
       ndpp_mat % inel(iE) % outgoing = temp_out
 
@@ -790,13 +738,6 @@ module ndpp_ops
     end do
 
     ! Set last data point to the same as last - 1 data point
-    ! allocate(ndpp_mat % inel(NE) % outgoing(order, gmin:gmax))
-    ! ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
-
-    ! if (use_nuinel) then
-    !   allocate(ndpp_mat % nuinel(NE) % outgoing(order, gmin:gmax))
-    !   ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
-    ! end if
     allocate(ndpp_mat % inel(NE) % outgoing(order, groups))
     ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
 
@@ -804,8 +745,6 @@ module ndpp_ops
       allocate(ndpp_mat % nuinel(NE) % outgoing(order, groups))
       ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
     end if
-
-    !!!TODO: Chi Data
 
     ! Perform grid thinning
     if (tol > ZERO) then
@@ -1797,21 +1736,26 @@ module ndpp_ops
 
   end subroutine generate_ndpp_mat_distrib_pn
 
-
 !===============================================================================
-! MERGE combines two arrays in to one longer array, maintaining the sorted order
+! MERGE_IN_PLACE combines two arrays in to one longer array, maintaining the
+! sorted order. This in_place routine will put the merged a and b back
+! in to b when done
 !===============================================================================
 
-    subroutine merge(a, b, result)
-      real(8), target, intent(in)    :: a(:)
-      real(8), target, intent(in)    :: b(:)
+    subroutine merge_in_place(a, result)
+      real(8), target, intent(in)         :: a(:)
       real(8), allocatable, intent(inout) :: result(:)
 
+      real(8), target, allocatable :: b(:)
       real(8), allocatable :: merged(:)
       integer :: ndata1, ndata2, nab
       integer :: idata1, idata2, ires
       logical :: no_exit = .true.
       real(8), pointer :: data1(:), data2(:)
+
+      allocate(b(size(result)))
+      b = result
+      deallocate(result)
 
       if (a(size(a)) > b(size(b))) then
         data1 => b
@@ -1838,7 +1782,7 @@ module ndpp_ops
             ! between 0 and the next highest Ein.
             ! Even more desirable, perhaps, would be interpolating between
             ! a suitably low, but non-zero Ein, and the next highest Ein
-            if (data1(idata1) == 0.0_8) then
+            if (data1(idata1) == ZERO) then
               merged(ires) = 1.0E-11_8
             else
               merged(ires) = data1(idata1)
@@ -1857,7 +1801,7 @@ module ndpp_ops
             ! between 0 and the next highest Ein.
             ! Even more desirable, perhaps, would be interpolating between
             ! a suitably low, but non-zero Ein, and the next highest Ein
-            if (data2(idata2) == 0.0_8) then
+            if (data2(idata2) == ZERO) then
               merged(ires) = 1.0E-11_8
             else
               merged(ires) = data2(idata2)
@@ -1881,10 +1825,10 @@ module ndpp_ops
         end if
       end do
 
-      ! Clear result if it has values (as it will when it gets here)
-      if (allocated(result)) then
-        deallocate(result)
-      end if
+      ! ! Clear result if it has values (as it will when it gets here)
+      ! if (allocated(result)) then
+      !   deallocate(result)
+      ! end if
 
       ! Adjust ires
       if ((.not. no_exit) .or. (ires > nab)) then
@@ -1896,7 +1840,8 @@ module ndpp_ops
       result = merged(1: ires)
       ! Clean up
       deallocate(merged)
-    end subroutine merge
+      deallocate(b)
+    end subroutine merge_in_place
 
 !===============================================================================
 ! THIN_GRID thins an y(x) and y2(x) grid at the same time to a user-specified
@@ -1974,7 +1919,7 @@ module ndpp_ops
         x2 = xin(khi)
         x  = xin(k)
 
-        x_frac = 1.0_8 / log(x2 / x1) * log(x / x1)  ! Log interp.
+        x_frac = ONE / log(x2 / x1) * log(x / x1)  ! Log interp.
 
         ! Check to see if this x is in the tokeep list, if its not, then check
         ! it for removal. Otherwise, it stays. This is accomplished by leaving
@@ -1988,7 +1933,7 @@ module ndpp_ops
               y  = yin(k) % outgoing(i,j)
               testval = y1 + (y2-y1) * x_frac
               error = abs(testval - y)
-              if (y /= 0.0_8) then
+              if (y /= ZERO) then
                 error = error / y
               end if
               if (error <= tol) then
@@ -2003,7 +1948,7 @@ module ndpp_ops
               y  = yin2(k) % outgoing(i,j)
               testval = y1 + (y2-y1) * x_frac
               error = abs(testval - y)
-              if (y /= 0.0_8) then
+              if (y /= ZERO) then
                 error = error / y
               end if
               if (error <= tol) then
