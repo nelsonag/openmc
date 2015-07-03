@@ -491,7 +491,9 @@ module ndpp_ops
 
   function build_material_ndpp(this_mat, i_mat, ndpp_nuc, ndpp_sab, order, &
                                groups, bounds, use_nuinel, tol, &
-                               get_macro_s, get_macro_c) result(ndpp_mat)
+                               get_macro_s, get_macro_c, &
+                               get_chi_t, get_chi_p, get_chi_d) &
+                              result(ndpp_mat)
 
     type(Material), intent(in)          :: this_mat    ! The working material
     integer, intent(in)                 :: i_mat       ! Current Index of materials
@@ -504,6 +506,9 @@ module ndpp_ops
     real(8), intent(in)                 :: tol         ! Thinning Tolerance
     logical, intent(in)                 :: get_macro_s ! Do this for the scatt data
     logical, intent(in)                 :: get_macro_c ! Do this for the chi data
+    logical, intent(in)                 :: get_chi_t   ! get total chi data?
+    logical, intent(in)                 :: get_chi_p   ! get prompt chi data?
+    logical, intent(in)                 :: get_chi_d   ! get delayed chi data?
     type(Ndpp)                          :: ndpp_mat    ! The result of this method
 
     integer :: i, i_nuc ! Nuclide index
@@ -528,7 +533,8 @@ module ndpp_ops
     logical :: urr_initial
     real(8), allocatable :: to_keep(:)
     real(8) :: compression, max_err
-    real(8) :: sab_thresh
+    real(8) :: sab_thresh, f, one_f
+    integer :: i_grid
 
     ! Store urr_ptables_on setting and turn it off so URR is not tainting the
     ! cross sections we use here.
@@ -552,10 +558,7 @@ module ndpp_ops
     end if
 
     if (get_macro_s) then
-
-      ! Go through and create a combined energy grid to store in the inelastic
-      ! slot of Ndpp (and nuinel)
-      ! Will also do the same operations for chi_Ein at the same time
+      ! Find which S(a,b) data we need and where
       allocate(has_sab(this_mat % n_nuclides))
       allocate(sab_loc(this_mat % n_nuclides))
       has_sab = .False.
@@ -647,7 +650,7 @@ module ndpp_ops
       deallocate(mat_Ein)
 
       ! We have our grids.  Now we have to go through each incoming
-      ! energy point and build the outgoing data, wihch will combine
+      ! energy point and build the outgoing data, which will combine
       ! elastic and inelastic scattering data
       allocate(ndpp_mat % inel(NE))
       allocate(ndpp_mat % nuinel(NE))
@@ -756,7 +759,7 @@ module ndpp_ops
 
       ! Perform grid thinning
       if (tol > ZERO) then
-        call write_message("Thinning NDPP data for material " // &
+        call write_message("  Thinning NDPP data for material " // &
              to_str(this_mat % id), 6)
         allocate(to_keep(groups + 1 + 2))
         to_keep = (/ndpp_mat % inel_Ein(1), bounds(:), &
@@ -797,7 +800,6 @@ module ndpp_ops
         end if
       end do
 
-
       ! Now we need to set inel_Ein_srch
       allocate(ndpp_mat % inel_Ein_srch(groups + 1))
       ndpp_mat % inel_Ein_srch(1) = 1
@@ -807,6 +809,152 @@ module ndpp_ops
                                                     bounds(g))
       end do
       ndpp_mat % inel_Ein_srch(groups + 1) = size(ndpp_mat % inel_Ein)
+    end if
+
+    if (get_macro_c .and. this_mat % fissionable) then
+      do i = 1, this_mat % n_nuclides
+        i_nuc = this_mat % nuclide(i)
+        if (associated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
+            (nuclides(i_nuc) % fissionable)) then
+
+          ! Begin grid merging
+          ! First take in the nuclide's energy grid as our starting point
+          if (bounds(1) <= nuclides(i_nuc) % energy(1)) then
+            iE = 1
+          else
+            iE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                               bounds(1))
+          end if
+          if (bounds(groups + 1) >= &
+              nuclides(i_nuc) % energy(nuclides(i_nuc) % n_grid)) then
+            NE = nuclides(i_nuc) % n_grid
+          else
+            NE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                               bounds(groups + 1))
+          end if
+          allocate(Ein(NE - iE + 1))
+          Ein = nuclides(i_nuc) % energy(iE: NE)
+
+          ! Now add in the NDPP chi grid
+          call merge_in_place(ndpp_nuc(i_nuc) % chi_Ein, Ein)
+
+          ! At this point we have a grid for all the data needed for this nuclide
+          ! Now we must merge it with what we have so far for the material
+          if (i == 1) then
+            ! First time through so nothing to merge with
+            allocate(mat_Ein(size(Ein)))
+            mat_Ein = Ein
+          else
+            ! Not the first rodeo, so merge it.
+            call merge_in_place(Ein, mat_Ein)
+          end if
+          deallocate(Ein)
+        end if
+
+      end do
+
+      ! Store the energy grid
+      NE = size(mat_Ein)
+      allocate(ndpp_mat % chi_Ein(NE))
+      ndpp_mat % chi_Ein = mat_Ein
+      deallocate(mat_Ein)
+
+      ! We have our grids.  Now we have to go through each incoming
+      ! energy point and build the outgoing data.
+      ! Will do this for total, prompt, then delayed
+      if (get_chi_t) then
+        allocate(ndpp_mat % chi(groups,NE))
+        ndpp_mat % chi = ZERO
+      end if
+      if (get_chi_p) then
+        allocate(ndpp_mat % chi_p(groups,NE))
+        ndpp_mat % chi_p = ZERO
+      end if
+      ! if (get_chi_d) then
+      !   allocate(ndpp_mat % chi_d(groups,NE)) !!! Need to have a way to get NP
+      !   ndpp_mat % chi_d = ZERO
+      ! end if
+
+      do iE = 1, NE - 1
+        ! Build a particle so we can calculate the cross sections
+        p % material = i_mat
+        p % E = ndpp_mat % chi_Ein(iE)
+
+        ! Calculate those xs
+        call calculate_xs(p)
+
+        ! Step through each nuclide and add up the contribution
+        do i = 1, this_mat % n_nuclides
+          i_nuc = this_mat % nuclide(i)
+          atom_density = this_mat % atom_density(i)
+
+          if (associated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
+              (nuclides(i_nuc) % fissionable)) then
+
+            ! Find the grid index and interpolant of ndpp scattering data
+            if (p % E <= ndpp_nuc(i_nuc) % chi_Ein(1)) then
+              i_grid = 1
+              f = ZERO
+            else
+              i_grid = binary_search(ndpp_nuc(i_nuc) % chi_Ein, &
+                                     size(ndpp_nuc(i_nuc) % chi_Ein), p % E)
+              f = (p % E - ndpp_nuc(i_nuc) % chi_Ein(i_grid)) / &
+                (ndpp_nuc(i_nuc) % chi_Ein(i_grid + 1) - &
+                 ndpp_nuc(i_nuc) % chi_Ein(i_grid))
+            end if
+
+            ! Calculate 1-f, and apply weighting
+            f = f * micro_xs(i_nuc) % nu_fission * atom_density
+            one_f = one_f * micro_xs(i_nuc) % nu_fission * atom_density
+
+            if (get_chi_t) then
+              ndpp_mat % chi = ndpp_mat % chi + &
+                   ndpp_nuc(i_nuc) % chi(g, i_grid) * one_f + &
+                   ndpp_nuc(i_nuc) % chi(g, i_grid + 1) * f
+            end if
+            if (get_chi_p) then
+              ndpp_mat % chi_p = ndpp_mat % chi_p + &
+                   ndpp_nuc(i_nuc) % chi_p(g, i_grid) * one_f + &
+                   ndpp_nuc(i_nuc) % chi_p(g, i_grid + 1) * f
+            end if
+            ! if (get_chi_d) then
+            !   ndpp_mat % chi_d = ndpp_mat % chi_d + &
+            !        ndpp_nuc(i_nuc) % chi_d(g, i_grid) * one_f + &
+            !        ndpp_nuc(i_nuc) % chi_d(g, i_grid + 1) * f
+            ! end if
+          end if
+        end do
+
+        ! Now normalize the chi values
+        if (get_chi_t) then
+          norm = sum(ndpp_mat % chi(:,iE))
+          if (norm > ZERO) then
+            ndpp_mat % chi(:,iE) = ndpp_mat % chi(:,iE) / norm
+          end if
+        end if
+        if (get_chi_p) then
+          norm = sum(ndpp_mat % chi_p(:,iE))
+          if (norm > ZERO) then
+            ndpp_mat % chi_p(:,iE) = ndpp_mat % chi_p(:,iE) / norm
+          end if
+        end if
+        ! if (get_chi_d) then
+        !   norm = sum(ndpp_mat % chi_d(:,iE))
+        !   if (norm > ZERO) then
+        !     ndpp_mat % chi_d(:,iE) = ndpp_mat % chi_d(:,iE) / norm
+        !   end if
+        ! end if
+
+
+        ! Set last data point to the same as last - 1 data point
+        if (get_chi_t) &
+          ndpp_mat % chi(:,NE) = ndpp_mat % chi(:,NE - 1)
+        if (get_chi_p) &
+          ndpp_mat % chi_p(:,NE) = ndpp_mat % chi_p(:,NE - 1)
+        ! if (get_chi_d) &
+        !   ndpp_mat % chi_d(:,NE) = ndpp_mat % chi_d(:,NE - 1)
+
+      end do
     end if
 
     ! Restore ptables settings

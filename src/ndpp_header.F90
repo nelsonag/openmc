@@ -39,11 +39,11 @@ module ndpp_header
     type(GrpTransfer), pointer :: inel(:) => null()  ! Inelastic Data, Dimension is # of Ein
     type(GrpTransfer), pointer :: nuinel(:) => null()! Inelastic Data, Dimension is # of Ein
     ! Chi data
-    real(8), pointer :: chi_Ein(:) => null()         ! Ein grid for all chi
-    real(8), pointer :: chi(:,:) => null()           ! Data grid for ndpp chi data
+    real(8), pointer :: chi_Ein(:) => null()    ! Ein grid for all chi
+    real(8), pointer :: chi(:,:) => null()      ! Data grid for ndpp chi data
                                                 ! dimensions of chi: (g, Ein)
-    real(8), pointer :: chi_p(:,:) => null()         ! Same for prompt only
-    real(8), pointer :: chi_d(:,:,:) => null()       ! Same, but additional dimension
+    real(8), pointer :: chi_p(:,:) => null()    ! Same for prompt only
+    real(8), pointer :: chi_d(:,:,:) => null()  ! Same, but additional dimension
                                                 ! for precursor group
 
     ! Type-Bound procedures

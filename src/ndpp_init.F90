@@ -132,7 +132,9 @@ contains
                                                    ndpp_sab_data, scatt_order, &
                                                    ndpp_groups, ndpp_bounds, &
                                                    get_nuscatt, ndpp_thin, &
-                                                   get_macro_s, get_macro_c)
+                                                   get_macro_s, get_macro_c, &
+                                                   get_chi_t, get_chi_p, &
+                                                   get_chi_d)
       end do
     end if
 
