@@ -490,7 +490,7 @@ module ndpp_ops
 !===============================================================================
 
   function build_material_ndpp(this_mat, i_mat, ndpp_nuc, ndpp_sab, order, &
-                               groups, bounds, use_nuinel) result(ndpp_mat)
+                               groups, bounds, use_nuinel, tol) result(ndpp_mat)
 
     type(Material), intent(in)          :: this_mat    ! The working material
     integer, intent(in)                 :: i_mat       ! Current Index of materials
@@ -499,12 +499,12 @@ module ndpp_ops
     integer, intent(in)                 :: order       ! Scattering moment size
     integer, intent(in)                 :: groups      ! Total # of outgoing groups
     real(8), intent(in)                 :: bounds(:)   ! Group boundaries
-    logical, intent(in)                 :: use_nuinel
+    logical, intent(in)                 :: use_nuinel  ! Desire nuinel data?
+    real(8), intent(in)                 :: tol         ! Thinning Tolerance
     type(Ndpp)                          :: ndpp_mat    ! The result of this method
 
     integer :: i, i_nuc ! Nuclide index
     integer :: i_sabnuc, i_sab ! Sab index
-    type(Ndpp) :: ndpp_temp ! Temporary ndpp object used in the building
     real(8):: temp_out(order, groups) ! Scratch Outgoing transfer probabilities
     real(8):: nu_temp_out(order, groups) ! Scratch Outgoing transfer probabilities
     real(8), allocatable :: elEin(:), Ein(:), chiEin(:), tempchiEin(:) ! Combined Incoming E grid
@@ -522,17 +522,18 @@ module ndpp_ops
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
-    real(8) :: sigs      ! Total scattering x/s
     logical :: nuscatt_flag
     real(8) :: Ethresh
     logical :: urr_initial
+    real(8), allocatable :: to_keep(:)
+    real(8) :: compression, max_err
 
     ! Store urr_ptables_on setting and turn it off so URR is not tainting the
     ! cross sections we use here.
     urr_initial = urr_ptables_on
     urr_ptables_on = .False.
 
-    ! display message
+    ! display status message
     call write_message("Combining NDPP data for material " // &
          to_str(this_mat % id), 6)
 
@@ -617,6 +618,27 @@ module ndpp_ops
       end if
       deallocate(elEin)
 
+      ! Finally, merge in the nuclide's grid, store on elEin
+      ! Find bounds of nuclide's energy bins with respect to ours
+      if (bounds(1) <= nuclides(i_nuc) % energy(1)) then
+        iE = 1
+      else
+        iE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                           bounds(1))
+      end if
+      if (bounds(groups + 1) >= &
+          nuclides(i_nuc) % energy(nuclides(i_nuc) % n_grid)) then
+        NE = nuclides(i_nuc) % n_grid
+      else
+        NE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                           bounds(groups + 1))
+      end if
+      call merge(Ein, nuclides(i_nuc) % energy(iE:NE), elEin)
+      deallocate(Ein)
+      allocate(Ein(size(elEin)))
+      Ein = elEin
+      deallocate(elEin)
+
       ! Now I need to merge my new Ein with the material grid
       if (i == 1) then
         ! First time through so nothing to merge with
@@ -677,7 +699,6 @@ module ndpp_ops
 
         ! Get our specific x/s needed
         call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
-        sigs = micro_xs(i_nuc) % total - micro_xs(i_nuc) % absorption
 
         if (ndpp_mat % inel_Ein(iE) > sab_thresh(i)) then
 
@@ -690,7 +711,7 @@ module ndpp_ops
           ! Add this component to our temporary output, temp_out, weighted
           ! by atom_density
           temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
+               ndpp_outgoing(thread_id,:,gmin:gmax)
 
           nuscatt_flag = .True.
           ! Now combine the elastic and inelastic distributions to one set,
@@ -702,7 +723,7 @@ module ndpp_ops
           ! Add this component to our temporary output, temp_out, weighted
           ! by atom_density
           nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
+               ndpp_outgoing(thread_id,:,gmin:gmax)
 
         else
           ! Do the same as above, but for sab only
@@ -720,9 +741,9 @@ module ndpp_ops
           ! Add this component to our temporary output, temp_out, weighted
           ! by atom_density
           temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-            ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
+            ndpp_outgoing(thread_id,:,gmin:gmax)
           nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax) * sigs
+               ndpp_outgoing(thread_id,:,gmin:gmax)
 
         end if
 
@@ -737,39 +758,98 @@ module ndpp_ops
       ! Finally, find the gmin and gmax bounds of this set so we can compress
       ! the data storage
 
+      ! ! find gmin by checking the P0 moment
+      ! do gmin = 1, size(temp_out, dim = 2)
+      !   if (temp_out(1, gmin) > ZERO) exit
+      ! end do
+      ! ! find gmax by checking the P0 moment
+      ! do gmax = size(temp_out, dim = 2), 1, -1
+      !   if (temp_out(1, gmax) > ZERO) exit
+      ! end do
+      ! if (gmin > gmax) then ! we have effectively all zeros
+      !   gmin = 1
+      !   gmax = 1
+      ! end if
+
+      ! allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
+      ! ndpp_mat % inel(iE) % outgoing = temp_out(:,gmin:gmax)
+
+      ! if (use_nuinel) then
+      !   allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
+      !   ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:,gmin:gmax)
+      ! end if
+
+      allocate(ndpp_mat % inel(iE) % outgoing(order, groups))
+      ndpp_mat % inel(iE) % outgoing = temp_out
+
+      if (use_nuinel) then
+        allocate(ndpp_mat % nuinel(iE) % outgoing(order, groups))
+        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out
+      end if
+
+    end do
+
+    ! Set last data point to the same as last - 1 data point
+    ! allocate(ndpp_mat % inel(NE) % outgoing(order, gmin:gmax))
+    ! ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
+
+    ! if (use_nuinel) then
+    !   allocate(ndpp_mat % nuinel(NE) % outgoing(order, gmin:gmax))
+    !   ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
+    ! end if
+    allocate(ndpp_mat % inel(NE) % outgoing(order, groups))
+    ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
+
+    if (use_nuinel) then
+      allocate(ndpp_mat % nuinel(NE) % outgoing(order, groups))
+      ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
+    end if
+
+    !!!TODO: Chi Data
+
+    ! Perform grid thinning
+    if (tol > ZERO) then
+      call write_message("Thinning NDPP data for material " // &
+           to_str(this_mat % id), 6)
+      allocate(to_keep(groups + 1 + 2))
+      to_keep = (/ndpp_mat % inel_Ein(1), bounds(:), &
+                 ndpp_mat % inel_Ein(size(ndpp_mat % inel_Ein))/)
+      call thin_grid(ndpp_mat % inel_Ein, ndpp_mat % inel, ndpp_mat % nuinel, &
+                     to_keep, tol, compression, max_err)
+      call write_message("  Completed Thinning, Reduced Storage By " // &
+                         trim(to_str(100.0_8 * compression)) // "%", 6)
+      call write_message("  Maximum Thinning Error Was " // &
+                         trim(to_str(100.0_8 * max_err)) // "%", 6)
+    end if
+
+    ! Now that we have thinned we can remove the zero entries from outgoing
+    NE = size(ndpp_mat % inel_Ein)
+    do iE = 1, NE
       ! find gmin by checking the P0 moment
-      do gmin = 1, size(temp_out, dim = 2)
-        if (temp_out(1, gmin) > ZERO) exit
+      do gmin = 1, size(ndpp_mat % inel(iE) % outgoing, dim = 2)
+        if (ndpp_mat % inel(iE) % outgoing(1, gmin) > ZERO) exit
       end do
       ! find gmax by checking the P0 moment
-      do gmax = size(temp_out, dim = 2), 1, -1
-        if (temp_out(1, gmax) > ZERO) exit
+      do gmax = size(ndpp_mat % inel(iE) % outgoing, dim = 2), 1, -1
+        if (ndpp_mat % inel(iE) % outgoing(1, gmax) > ZERO) exit
       end do
       if (gmin > gmax) then ! we have effectively all zeros
         gmin = 1
         gmax = 1
       end if
 
+      temp_out = ndpp_mat % inel(iE) % outgoing
+      nu_temp_out = ndpp_mat % nuinel(iE) % outgoing
+      deallocate(ndpp_mat % inel(iE) % outgoing)
       allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
-      ndpp_mat % inel(iE) % outgoing = temp_out(:,gmin:gmax)
-
+      ndpp_mat % inel(iE) % outgoing = temp_out(:, gmin:gmax)
       if (use_nuinel) then
+        deallocate(ndpp_mat % nuinel(iE) % outgoing)
         allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
-        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:,gmin:gmax)
+        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:, gmin:gmax)
       end if
-
     end do
 
-    ! Set last data point to the same as last - 1 data point
-    allocate(ndpp_mat % inel(NE) % outgoing(order, gmin:gmax))
-    ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
-
-    if (use_nuinel) then
-      allocate(ndpp_mat % nuinel(NE) % outgoing(order, gmin:gmax))
-      ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
-    end if
-
-    !!!TODO: Chi Data
 
     ! Now we need to set inel_Ein_srch
     allocate(ndpp_mat % inel_Ein_srch(groups + 1))
@@ -1817,5 +1897,180 @@ module ndpp_ops
       ! Clean up
       deallocate(merged)
     end subroutine merge
+
+!===============================================================================
+! THIN_GRID thins an y(x) and y2(x) grid at the same time to a user-specified
+! interpolation tolerance.
+!===============================================================================
+
+    subroutine thin_grid(xout, yout, yout2, tokeep, tol, compression, maxerr)
+      real(8), pointer, intent(inout) :: xout(:)      ! Resultant x grid
+      type(GrpTransfer), pointer, intent(inout) :: yout(:)  ! Resultant y values
+      type(GrpTransfer), pointer, intent(inout) :: yout2(:) ! Resultant y values
+      real(8), allocatable, intent(in)    :: tokeep(:)    ! x points to keep
+      real(8), intent(in)                 :: tol          ! Desired fractional error to maintain
+      real(8), intent(out)                :: compression  ! Data reduction fraction
+      real(8), intent(inout)              :: maxerr       ! Maximum error due to compression
+
+      real(8), allocatable :: xin(:)       ! Incoming x grid
+      type(GrpTransfer), allocatable :: yin(:)   ! Incoming y values
+      type(GrpTransfer), allocatable :: yin2(:)  ! Incoming y values
+      integer :: i, j, k, klo, khi
+      integer :: all_ok
+      real(8) :: x1, y1, x2, y2, x, y, testval
+      integer :: num_keep, remove_it
+      real(8) :: initial_size
+      real(8) :: error
+      real(8) :: x_frac
+
+      initial_size = real(size(xout), 8)
+
+      ! Duplicate the input for temporary work
+      allocate(xin(size(xout)))
+      xin = xout
+      xout = ZERO
+
+      allocate(yin(size(yout)))
+      do i = 1, size(yout)
+        allocate(yin(i) % outgoing(size(yout(i) % outgoing,dim = 1), &
+                                   size(yout(i) % outgoing,dim = 2)))
+        yin(i) % outgoing = yout(i) % outgoing
+        yout(i) % outgoing = ZERO
+      end do
+      allocate(yin2(size(yout2)))
+      do i = 1, size(yout2)
+        allocate(yin2(i) % outgoing(size(yout2(i) % outgoing,dim = 1), &
+                                    size(yout2(i) % outgoing,dim = 2)))
+        yin2(i) % outgoing = yout2(i) % outgoing
+        yout2(i) % outgoing = ZERO
+      end do
+
+      maxerr = ZERO
+
+      ! Keep first point's data
+      xout(1) = xin(1)
+      yout(1) % outgoing = yin(1) % outgoing
+      yout2(1) % outgoing = yin2(1) % outgoing
+
+      ! This loop will step through each entry in x and y and check to see if
+      ! all of the values in outgoing can be replaced with interpolation.
+      ! If not, the value will be saved to a new array, if so, it will be
+      ! skipped.
+
+      ! Initialize data
+      num_keep = 1  ! Keeping the 1st point, so we already have one
+      klo = 1       ! klo is the lower point of interpolation
+      khi = 3       ! khi is the upper point of interpolation
+      k = 2         ! Since we are keeping the first spot, we are currently checking
+                    ! the second (k=2)
+
+      do while (khi <= size(xin))
+        ! all_ok is the total number of points we need to check, and so is
+        ! simply the size of outgoing at our current data point (k)
+        all_ok = size(yin(k) % outgoing) + size(yin2(k) % outgoing)
+
+        remove_it = 0
+        x1 = xin(klo)
+        x2 = xin(khi)
+        x  = xin(k)
+
+        x_frac = 1.0_8 / log(x2 / x1) * log(x / x1)  ! Log interp.
+
+        ! Check to see if this x is in the tokeep list, if its not, then check
+        ! it for removal. Otherwise, it stays. This is accomplished by leaving
+        ! remove_it as 0, entering the else portion of if(remove_it==all_ok)
+        if (.not. any(tokeep == x)) then
+          ORDER_LOOP: do i = 1, size(yin(k) % outgoing, dim=1)
+            GROUP_LOOP: do j = 1, size(yin(k) % outgoing, dim=2)
+              ! First check yin
+              y1 = yin(klo) % outgoing(i,j)
+              y2 = yin(khi) % outgoing(i,j)
+              y  = yin(k) % outgoing(i,j)
+              testval = y1 + (y2-y1) * x_frac
+              error = abs(testval - y)
+              if (y /= 0.0_8) then
+                error = error / y
+              end if
+              if (error <= tol) then
+                remove_it = remove_it + 1
+                if (error > maxerr) then
+                  maxerr = abs(testval - y)
+                end if
+              end if
+              ! And now check yin2
+              y1 = yin2(klo) % outgoing(i,j)
+              y2 = yin2(khi) % outgoing(i,j)
+              y  = yin2(k) % outgoing(i,j)
+              testval = y1 + (y2-y1) * x_frac
+              error = abs(testval - y)
+              if (y /= 0.0_8) then
+                error = error / y
+              end if
+              if (error <= tol) then
+                remove_it = remove_it + 1
+                if (error > maxerr) then
+                  maxerr = abs(testval - y)
+                end if
+              end if
+            end do GROUP_LOOP
+          end do ORDER_LOOP
+        end if
+        ! Now place the point in to the proper bin and advance iterators.
+        if (remove_it == all_ok) then
+          ! Then don't put it in the new grid but advance iterators
+          k = k + 1
+          khi = khi + 1
+        else
+          ! Put it in new grid and advance iterators accordingly
+          num_keep = num_keep + 1
+          xout(num_keep) = xin(k)
+          yout(num_keep) % outgoing = yin(k) % outgoing
+          yout2(num_keep) % outgoing = yin2(k) % outgoing
+          klo = k
+          k = k + 1
+          khi = khi + 1
+        end if
+      end do
+      ! Save the last point's data
+      num_keep = num_keep + 1
+      xout(num_keep) = xin(size(xin))
+      yout(num_keep) % outgoing = yin(size(xin)) % outgoing
+      yout2(num_keep) % outgoing = yin2(size(xin)) % outgoing
+
+      ! Finally, xout and yout were sized to match xin and yin since we knew
+      ! they would be no larger than those.  Now we must resize these arrays
+      ! and copy only the useful data in. Will use xin/yin for temp arrays.
+      xin = xout(1:num_keep)
+      do i = 1, num_keep
+        yin(i) % outgoing = yout(i) % outgoing
+        yin2(i) % outgoing = yout2(i) % outgoing
+      end do
+
+      deallocate(xout)
+      deallocate(yout)
+      deallocate(yout2)
+      allocate(xout(num_keep))
+      xout = xin(1:num_keep)
+
+      allocate(yout(num_keep))
+      allocate(yout2(num_keep))
+      do i = 1, num_keep
+        allocate(yout(i) % outgoing(size(yin(i) % outgoing,dim = 1), &
+                                    size(yin(i) % outgoing,dim = 2)))
+        yout(i) % outgoing = yin(i) % outgoing
+
+        allocate(yout2(i) % outgoing(size(yin2(i) % outgoing,dim = 1), &
+                                    size(yin2(i) % outgoing,dim = 2)))
+        yout2(i) % outgoing = yin2(i) % outgoing
+      end do
+
+      ! Clean up
+      deallocate(xin)
+      deallocate(yin)
+      deallocate(yin2)
+
+      compression = (initial_size - real(size(xout),8)) / initial_size
+
+    end subroutine thin_grid
 
 end module ndpp_ops
