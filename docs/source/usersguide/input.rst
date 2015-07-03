@@ -1348,7 +1348,7 @@ The ``<tally>`` element accepts the following sub-elements:
       N must be between 0 and 10. As an example, tallying the
       2\ :sup:`nd` \ scattering moment would be specified as
       ``<scores> scatter-2 </scores>``.
-      Units are reactions per source particle. 
+      Units are reactions per source particle.
       This score can only be used with an
       ``analog`` estimator.
 
@@ -1360,7 +1360,7 @@ The ``<tally>`` element accepts the following sub-elements:
       ``scatter-N``, N must be between 0 and 10. As an example, tallying up
       to the 2\ :sup:`nd` \ scattering moment would be specified as
       ``<scores> scatter-P2 </scores>``.
-      Units are reactions per source particle.       
+      Units are reactions per source particle.
       This score can only be used with an
       ``analog`` estimator.
 
@@ -1372,7 +1372,7 @@ The ``<tally>`` element accepts the following sub-elements:
       moments.
       Like ``scatter-PN``, ``scatter-YN`` will tally all of the
       moments from order 0 to N; N again must be between 0 and 10.
-      Units are reactions per source particle. 
+      Units are reactions per source particle.
       This score can only be used with an ``analog`` estimator.
 
     :nu-scatter, nu-scatter-N, nu-scatter-PN, nu-scatter-YN:
@@ -1537,6 +1537,21 @@ In cases where an ``ndpp-*`` score is requested in any tally,
 the user must provide the location of the ``ndpp_lib.xml`` file produced
 by the NDPP program.  This tag stores the relative or absolute location
 of the ``ndpp_lib.xml`` file to use.
+
+``<ndpp_macroscopic>`` Element
+--------------------------
+
+The typical process of tallying ``ndpp-*`` scores is to build the material's
+macroscopic scattering moments from the data in within each of the constituent
+nuclides at each tally event.  Not surprisingly, this can be slow, especially
+for materials with many nuclides, though very memory efficient.
+Setting this ``<ndpp_macroscopic>`` element to true instead forces OpenMC to
+pre-combine this nuclide-specific data into material-specific data, so long as
+there are tallies which do not have nuclide filters applied.
+Setting this otion to true can provide a significant speedup but also comes at
+the cost of additional memory usage and a chance for larger interpolation error.
+
+  *Default*: false
 
 .. _NDPP:  http://ndpp.github.io/
 

@@ -574,12 +574,21 @@ contains
 
       case (SCORE_NDPP_SCATT_N)
         if (t % estimator == ESTIMATOR_ANALOG) then
-          call tally_ndpp_n(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               t % results)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_n(p % material, &
+                   matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                   score_index, filter_index - &
+                   matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                   t % moment_order(i), &
+                   p % last_wgt, p % E, t % results)
+          else
+            call tally_ndpp_n(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .true., p % last_E, &
+                 t % results)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_n(i_nuclide, &
@@ -588,20 +597,21 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_n(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, t % results)
-            call tally_macro_ndpp_n2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_n(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, t % results)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_n(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, t % results)
           end if
         end if
 
@@ -610,12 +620,20 @@ contains
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! For the case of analog NDPP scatter-pn tallying, filter_index
           ! needs to be adjusted to point to the first energyout filter
-          call tally_ndpp_pn(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               t % results)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_pn(p % material, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, p % E, t % results)
+          else
+            call tally_ndpp_pn(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .True., p % last_E, &
+                 t % results)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_pn(i_nuclide, &
@@ -624,20 +642,21 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_pn(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, t % results)
-            call tally_macro_ndpp_pn2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_pn(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, t % results)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_pn(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, t % results)
           end if
         end if
         i = i + t % moment_order(i)
@@ -647,12 +666,21 @@ contains
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! For the case of analog NDPP scatter-yn tallying, filter_index
           ! needs to be adjusted to point to the first energyout filter
-          call tally_ndpp_yn(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               p % last_uvw, t % results)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_yn(p % material, &
+                   matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                   score_index, filter_index - &
+                   matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                   t % moment_order(i), p % last_wgt, p % E, p % coord0 % uvw, &
+                   t % results)
+          else
+            call tally_ndpp_yn(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .True., p % last_E, &
+                 p % last_uvw, t % results)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_yn(i_nuclide, &
@@ -661,21 +689,22 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, p % coord0 % uvw, t % results)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_yn(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, p % coord0 % uvw, &
-            !      t % results)
-            call tally_macro_ndpp_yn2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_yn(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, p % coord0 % uvw, &
+                 t % results)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_yn(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, p % coord0 % uvw, &
                  t % results)
           end if
         end if
@@ -686,12 +715,21 @@ contains
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! For the case of analog NDPP nu-scatter-n tallying, filter_index
           ! needs to be adjusted to point to the first energyout filter
-          call tally_ndpp_n(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               t % results, .True.)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_n(p % material, &
+                   matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                   score_index, filter_index - &
+                   matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                   t % moment_order(i), &
+                   p % last_wgt, p % E, t % results, .true.)
+          else
+            call tally_ndpp_n(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .true., p % last_E, &
+                 t % results, .true.)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_n(i_nuclide, &
@@ -700,20 +738,21 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results, .true.)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_n(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, t % results, .true.)
-            call tally_macro_ndpp_n2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_n(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, t % results, .true.)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_n(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, t % results, .true.)
           end if
         end if
 
@@ -722,12 +761,20 @@ contains
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! For the case of analog NDPP nu-scatter-pn tallying, filter_index
           ! needs to be adjusted to point to the first energyout filter
-          call tally_ndpp_pn(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               t % results, .True.)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_pn(p % material, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, p % E, t % results, .true.)
+          else
+            call tally_ndpp_pn(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .true., p % last_E, &
+                 t % results, .true.)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_pn(i_nuclide, &
@@ -736,20 +783,21 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, t % results, .true.)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_pn(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, t % results, .true.)
-            call tally_macro_ndpp_pn2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_pn(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, t % results, .true.)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_pn(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, t % results, .true.)
           end if
         end if
       i = i + t % moment_order(i)
@@ -759,12 +807,21 @@ contains
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! For the case of analog NDPP nu-scatter-yn tallying, filter_index
           ! needs to be adjusted to point to the first energyout filter
-          call tally_ndpp_yn(p % event_nuclide, &
-               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-               score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), p % last_wgt, .True., p % last_E, &
-               p % last_uvw, t % results, .True.)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_yn(p % material, &
+                   matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                   score_index, filter_index - &
+                   matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                   t % moment_order(i), p % last_wgt, p % E, p % coord0 % uvw, &
+                   t % results, .true.)
+          else
+            call tally_ndpp_yn(p % event_nuclide, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), p % last_wgt, .true., p % last_E, &
+                 p % last_uvw, t % results, .true.)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_yn(i_nuclide, &
@@ -773,21 +830,22 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), atom_density * flux, .false., &
                  p % E, p % coord0 % uvw, t % results, .true.)
-          else
-            ! mat => materials(p % material)
-            ! call tally_macro_ndpp_yn(mat, &
-            !      matching_bins(t % find_filter(FILTER_ENERGYIN)), &
-            !      score_index, filter_index - &
-            !      matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-            !      t % moment_order(i), flux, p % E, p % coord0 % uvw, &
-            !      t % results, .true.)
-            call tally_macro_ndpp_yn2(p % material, &
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_yn(p % material, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), &
                  flux * (material_xs % total - material_xs % absorption), &
                  p % E, p % coord0 % uvw, &
+                 t % results, .true.)
+          else
+            mat => materials(p % material)
+            call tally_macro_ndpp_yn(mat, &
+                 matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+                 score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+                 t % moment_order(i), flux, p % E, p % coord0 % uvw, &
                  t % results, .true.)
           end if
         end if
@@ -2290,13 +2348,13 @@ contains
   end subroutine tally_macro_ndpp_n
 
 !===============================================================================
-! TALLY_MACRO_NDPP_N2 determines the macroscopic scattering moments which were
+! TALLY_MACRO_MAT_NDPP_Ndetermines the macroscopic scattering moments which were
 ! previously calculated with a pre-processor such as NDPP.
 ! This method applies to ndpp-scatter-n tally types and utilizes pre-combined
 ! macroscopic data.
 !===============================================================================
 
-  subroutine tally_macro_ndpp_n2(i_mat, gin, score_index, filter_index, &
+  subroutine tally_macro_mat_ndpp_n(i_mat, gin, score_index, filter_index, &
                                  t_order, mult, Ein, results, nuscatt)
     integer, intent(in) :: i_mat     ! Working material index in materials
     integer, intent(in) :: gin       ! Incoming group index
@@ -2316,7 +2374,7 @@ contains
       call ndpp_tally_mat_scatt_n(ndpp_mat_data(i_mat), gin, score_index, &
                                   filter_index, t_order, mult, Ein, results)
     end if
-  end subroutine tally_macro_ndpp_n2
+  end subroutine tally_macro_mat_ndpp_n
 
 !===============================================================================
 ! TALLY_NDPP_PN determines the scattering moments which were
@@ -2400,13 +2458,13 @@ contains
   end subroutine tally_macro_ndpp_pn
 
 !===============================================================================
-! TALLY_MACRO_NDPP_PN2 determines the macroscopic scattering moments which were
+! TALLY_MACRO_MAT_NDPP_PN determines the macroscopic scattering moments which were
 ! previously calculated with a pre-processor such as NDPP;
 ! This method applies to ndpp-scatter-pn tally types and utilizes pre-combined
 ! macroscopic data.
 !===============================================================================
 
-  subroutine tally_macro_ndpp_pn2(i_mat, gin, score_index, filter_index, &
+  subroutine tally_macro_mat_ndpp_pn(i_mat, gin, score_index, filter_index, &
                                   t_order, mult, Ein, results, nuscatt)
 
     integer, intent(in) :: i_mat        ! Working material index in materials
@@ -2428,7 +2486,7 @@ contains
                                    filter_index, t_order, mult, Ein, results)
     end if
 
-  end subroutine tally_macro_ndpp_pn2
+  end subroutine tally_macro_mat_ndpp_pn
 
 !===============================================================================
 ! TALLY_NDPP_YN determines the scattering moments with angular flux moment
@@ -2516,13 +2574,13 @@ contains
   end subroutine tally_macro_ndpp_yn
 
 !===============================================================================
-! TALLY_MACRO_NDPP_YN2 determines the macroscopic scattering moments
+! TALLY_MACRO_MAT_NDPP_YN determines the macroscopic scattering moments
 ! with angular flux moment weighting which were
 ! previously calculated with a pre-processor such as NDPP;
 ! this method applies to ndpp-scatter-yn tally types
 !===============================================================================
 
-  subroutine tally_macro_ndpp_yn2(i_mat, gin, score_index, filter_index, &
+  subroutine tally_macro_mat_ndpp_yn(i_mat, gin, score_index, filter_index, &
                                   t_order, mult, Ein, uvw, results, nuscatt)
     integer, intent(in) :: i_mat        ! Working material index in materials
     integer, intent(in) :: gin          ! Incoming energy group
@@ -2545,7 +2603,7 @@ contains
                                    results)
     end if
 
-  end subroutine tally_macro_ndpp_yn2
+  end subroutine tally_macro_mat_ndpp_yn
 
 !===============================================================================
 ! TALLY_NDPP_CHI determines the fission spectra which were

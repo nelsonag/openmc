@@ -23,12 +23,11 @@ module ndpp_header
     real(8) :: kT      = ZERO      ! Boltzmann constant * temperature (MeV)
     logical :: is_nuc  = .False.   ! Is our data a nuc or an sab?
     logical :: is_init = .False.   ! Is object initialized
-    ! Elastic data is allocatable since it will be unique for each Ndpp object
     real(8), pointer :: el_Ein(:) => null()          ! Incoming elastic energy grid
     integer, pointer :: el_Ein_srch(:) => null()     ! Incoming elastic energy grid search bounds
     type(GrpTransfer), pointer :: el(:) => null()    ! Elastic Data, Dimension is # of Ein
-    ! Inelastic data are pointers since it may not be unique and thus
-    ! may point to data in another object.
+    ! Inelastic data may not be unique and thus may point to data in
+    ! another object.
     ! This is not a good design practice to have one object point to the member
     ! data of another object, but will do for now until the NDPP library format
     ! is modified such that all temperatures are written together, at which point
@@ -39,7 +38,7 @@ module ndpp_header
     integer, pointer :: inel_Ein_srch(:) => null()   ! Incoming inelastic energy grid search bounds
     type(GrpTransfer), pointer :: inel(:) => null()  ! Inelastic Data, Dimension is # of Ein
     type(GrpTransfer), pointer :: nuinel(:) => null()! Inelastic Data, Dimension is # of Ein
-    ! Chi data is temperature dependent, so it is allocatable
+    ! Chi data
     real(8), pointer :: chi_Ein(:) => null()         ! Ein grid for all chi
     real(8), pointer :: chi(:,:) => null()           ! Data grid for ndpp chi data
                                                 ! dimensions of chi: (g, Ein)
@@ -49,7 +48,9 @@ module ndpp_header
 
     ! Type-Bound procedures
     contains
-      procedure :: clear => ndpp_clear ! Clears NDPP structure
+      procedure :: clear       => ndpp_clear       ! Clears NDPP Structure
+      procedure :: clear_scatt => ndpp_clear_scatt ! Clears NDPP Scattering Data
+      procedure :: clear_chi   => ndpp_clear_chi   ! Clears NDPP Chi Data
   end type Ndpp
 
   contains
@@ -63,6 +64,23 @@ module ndpp_header
 !===============================================================================
 
   subroutine ndpp_clear(this)
+    class(Ndpp), intent(inout) :: this ! Ndpp object to act on
+
+    call this % clear_scatt()
+    call this % clear_chi()
+
+    this % zaid    = 0
+    this % kT      = ZERO
+    this % is_nuc  = .False.
+    this % is_init = .False.
+
+  end subroutine ndpp_clear
+
+!===============================================================================
+! NDPP_CLEAR_SCATT clears the scattering data from the object
+!===============================================================================
+
+  subroutine ndpp_clear_scatt(this)
     class(Ndpp), intent(inout) :: this ! Ndpp object to act on
 
     if (associated(this % el)) then
@@ -86,6 +104,16 @@ module ndpp_header
     if (associated(this % inel_Ein_srch)) then
       deallocate(this % inel_Ein_srch)
     end if
+
+  end subroutine ndpp_clear_scatt
+
+!===============================================================================
+! NDPP_CLEAR clears the chi data from this object
+!===============================================================================
+
+  subroutine ndpp_clear_chi(this)
+    class(Ndpp), intent(inout) :: this ! Ndpp object to act on
+
     if (associated(this % chi)) then
       deallocate(this % chi)
     end if
@@ -99,11 +127,6 @@ module ndpp_header
       deallocate(this % chi_Ein)
     end if
 
-    this % zaid    = 0
-    this % kT      = ZERO
-    this % is_nuc  = .False.
-    this % is_init = .False.
-
-  end subroutine ndpp_clear
+  end subroutine ndpp_clear_chi
 
 end module ndpp_header

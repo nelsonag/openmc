@@ -41,8 +41,12 @@ contains
     integer :: scatt_order   ! Number of scatter moments requested in tallies
     integer :: ndpp_groups   ! Number of groups in the NDPP library
     real(8), allocatable :: ndpp_bounds(:) ! Group Boundaries
-    logical :: get_macro     ! Condense the macroscopic data
+    logical :: get_macro_s   ! Condense the macroscopic scattering data
+    logical :: get_macro_c   ! Condense the macroscopic chi data
+    logical :: keep_micro_s  ! Dont deallocate the microscopic ndpp scatt data
+    logical :: keep_micro_c  ! Dont deallocate the microscopic ndpp chi data
     integer :: i_mat         ! Material index
+    integer :: i_nuc         ! Nuclide index
     type(Material), pointer :: mat => null()
 
     ! allocate arrays for NDPP data storage
@@ -55,7 +59,8 @@ contains
     ! Determine which data is required to be stored as well as the maximum
     ! orders for scatt and nuscatt
     call which_data(scatt_type, get_scatt, get_nuscatt, get_chi_t, get_chi_p, &
-                    get_chi_d, scatt_order, get_macro)
+                    get_chi_d, scatt_order, get_macro_s, keep_micro_s, &
+                    get_macro_c, keep_micro_c)
 
     ! Parse through each nuclide in the model and read in the corresponding
     ! NDPP data.
@@ -116,7 +121,7 @@ contains
 
     ! Finally check to see if we have only material-wise tallies.
     ! If we do, then we can condense and remove
-    if (get_macro) then
+    if ((get_macro_s .or. get_macro_c) .and. ndpp_macroscopic) then
       ! Allocate our material array
       allocate(ndpp_mat_data(n_materials))
 
@@ -126,7 +131,35 @@ contains
         ndpp_mat_data(i_mat) = build_material_ndpp(mat, i_mat, ndpp_nuc_data, &
                                                    ndpp_sab_data, scatt_order, &
                                                    ndpp_groups, ndpp_bounds, &
-                                                   get_nuscatt, 1E-4_8)
+                                                   get_nuscatt, ndpp_thin, &
+                                                   get_macro_s, get_macro_c)
+      end do
+    end if
+
+    ! Now do we keep the micros or not?
+    ! If so, clear them
+    if ((.not. keep_micro_s) .and. (.not. keep_micro_c)) then
+      do i_nuc = 1, n_nuclides_total
+        ! Just clear since we arent keeping any of it
+        call ndpp_nuc_data(i_nuc) % clear()
+      end do
+      do i_sab = 1, n_sab_tables
+        ! Just clear since we arent keeping any of it
+        call ndpp_sab_data(i_sab) % clear()
+      end do
+    else if (.not. keep_micro_s) then ! Clear only scatt
+      do i_nuc = 1, n_nuclides_total
+        call ndpp_nuc_data(i_nuc) % clear_scatt()
+      end do
+      do i_sab = 1, n_sab_tables
+        call ndpp_sab_data(i_sab) % clear_scatt()
+      end do
+    else if (.not. keep_micro_c) then ! Clear only chi
+      do i_nuc = 1, n_nuclides_total
+        call ndpp_nuc_data(i_nuc) % clear_chi()
+      end do
+      do i_sab = 1, n_sab_tables
+        call ndpp_sab_data(i_sab) % clear_chi()
       end do
     end if
 
@@ -206,15 +239,19 @@ contains
 !===============================================================================
 
   subroutine which_data(scatt_type, get_scatt, get_nuscatt, get_chi_t, &
-                        get_chi_p, get_chi_d, scatt_order, get_macro)
-    integer, intent(in)  :: scatt_type  ! Flag for legendre or tabular data
-    logical, intent(out) :: get_scatt   ! Flag for if scatt data is needed
-    logical, intent(out) :: get_nuscatt ! Flag for if nuscatt data is needed
-    logical, intent(out) :: get_chi_t   ! Flag for if total chi data is needed
-    logical, intent(out) :: get_chi_p   ! Flag for if prompt chi data is needed
-    logical, intent(out) :: get_chi_d   ! Flag for if delay chi data is needed
-    integer, intent(out) :: scatt_order ! Number of scatter moments requested
-    logical, intent(out) :: get_macro   ! Do we have macroscopic tallies?
+                        get_chi_p, get_chi_d, scatt_order, get_macro_s, &
+                        keep_micro_s, get_macro_c, keep_micro_c)
+    integer, intent(in)  :: scatt_type   ! Flag for legendre or tabular data
+    logical, intent(out) :: get_scatt    ! Flag for if scatt data is needed
+    logical, intent(out) :: get_nuscatt  ! Flag for if nuscatt data is needed
+    logical, intent(out) :: get_chi_t    ! Flag for if total chi data is needed
+    logical, intent(out) :: get_chi_p    ! Flag for if prompt chi data is needed
+    logical, intent(out) :: get_chi_d    ! Flag for if delay chi data is needed
+    integer, intent(out) :: scatt_order  ! Number of scatter moments requested
+    logical, intent(out) :: get_macro_s  ! Do we have macroscopic scatt tallies?
+    logical, intent(out) :: keep_micro_s ! Do we have microscopic scatt tallies?
+    logical, intent(out) :: get_macro_c  ! Do we have macroscopic chi tallies?
+    logical, intent(out) :: keep_micro_c ! Do we have microscopic chi tallies?
 
     type(TallyObject), pointer :: t => null()
     integer :: i ! Tally index
@@ -228,7 +265,10 @@ contains
     get_chi_p = .false.
     get_chi_d = .false.
     scatt_order = 0
-    get_macro = .false.
+    get_macro_s = .false.
+    keep_micro_s = .false.
+    get_macro_c = .false.
+    keep_micro_c = .false.
 
     ! Step through each tally and score and determine which types are present
     ! and the orders for scatt and nuscatt
@@ -244,33 +284,77 @@ contains
             scatt_order = t % moment_order(j)
           end if
 
+          ! Find if we need macroscopic data and microscopic data
+          if (any(t % nuclide_bins(:) == -1)) then
+            get_macro_s = .true.
+          end if
+          if (any(t % nuclide_bins(:) >= 0)) then
+            keep_micro_s = .true.
+          end if
+
         case (SCORE_NDPP_NU_SCATT_N, SCORE_NDPP_NU_SCATT_PN, SCORE_NDPP_NU_SCATT_YN)
           get_nuscatt = .true.
           if (t % moment_order(j) > scatt_order) then
             scatt_order = t % moment_order(j)
           end if
 
+          ! Find if we need macroscopic data and microscopic data
+          if (any(t % nuclide_bins(:) == -1)) then
+            get_macro_s = .true.
+          end if
+          if (any(t % nuclide_bins(:) >= 0)) then
+            keep_micro_s = .true.
+          end if
+
         case (SCORE_NDPP_CHI)
           get_chi_t = .true.
+
+          ! Find if we need macroscopic data and microscopic data
+          if (any(t % nuclide_bins(:) == -1)) then
+            get_macro_c = .true.
+          end if
+          if (any(t % nuclide_bins(:) >= 0)) then
+            keep_micro_c = .true.
+          end if
 
         case (SCORE_NDPP_CHI_P)
           get_chi_p = .true.
 
+          ! Find if we need macroscopic data and microscopic data
+          if (any(t % nuclide_bins(:) == -1)) then
+            get_macro_c = .true.
+          end if
+          if (any(t % nuclide_bins(:) >= 0)) then
+            keep_micro_c = .true.
+          end if
+
         case (SCORE_NDPP_CHI_D)
           get_chi_d = .true.
 
+          ! Find if we need macroscopic data and microscopic data
+          if (any(t % nuclide_bins(:) == -1)) then
+            get_macro_c = .true.
+          end if
+          if (any(t % nuclide_bins(:) >= 0)) then
+            keep_micro_c = .true.
+          end if
+
         end select
 
-        ! Find if we need macroscopic data
-        if (any(t % nuclide_bins(:) == -1)) then
-          get_macro = .True.
-        end if
       end do SCORE_LOOP
     end do TALLY_LOOP
 
     ! Adjust the order so array sizing is correct
     if (scatt_type == SCATT_TYPE_LEGENDRE) then
       scatt_order = scatt_order + 1
+    end if
+
+    ! Now undo any of the above if we arent even creating the macroscopic data
+    if (.not. ndpp_macroscopic) then
+      keep_micro_s = .true.
+      keep_micro_c = .true.
+      get_macro_s = .false.
+      get_macro_c = .false.
     end if
 
   end subroutine which_data

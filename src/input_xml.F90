@@ -2167,6 +2167,19 @@ contains
         assume_separate = .true.
     end if
 
+    ! Check for <ndpp_macroscopic> settings
+    if (check_for_node(doc, "ndpp_macroscopic")) then
+      call get_node_value(doc, "ndpp_macroscopic", temp_str)
+      temp_str = to_lower(temp_str)
+      if (trim(temp_str) == 'true' .or. trim(temp_str) == '1') &
+        ndpp_macroscopic = .true.
+    end if
+
+    ! Check for NDPP thinning tolerance (<ndpp_thin>) settings
+    if (check_for_node(doc, "ndpp_thin")) then
+      call get_node_value(doc, "ndpp_thin", ndpp_thin)
+    end if
+
     ! ==========================================================================
     ! READ MESH DATA
 
@@ -2953,7 +2966,7 @@ contains
             if ((t % find_filter(FILTER_ENERGYOUT) /= t % n_filters) .or. &
               (t % find_filter(FILTER_ENERGYIN) /= (t % n_filters - 1))) then
               call fatal_error("Energy and Energyout filter types must " // &
-                   "be the last declared (and in that order) in any " // & 
+                   "be the last declared (and in that order) in any " // &
                    "tally with an ndpp-nu-scatter-pn score!")
             end if
 

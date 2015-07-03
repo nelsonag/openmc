@@ -490,7 +490,8 @@ module ndpp_ops
 !===============================================================================
 
   function build_material_ndpp(this_mat, i_mat, ndpp_nuc, ndpp_sab, order, &
-                               groups, bounds, use_nuinel, tol) result(ndpp_mat)
+                               groups, bounds, use_nuinel, tol, &
+                               get_macro_s, get_macro_c) result(ndpp_mat)
 
     type(Material), intent(in)          :: this_mat    ! The working material
     integer, intent(in)                 :: i_mat       ! Current Index of materials
@@ -501,6 +502,8 @@ module ndpp_ops
     real(8), intent(in)                 :: bounds(:)   ! Group boundaries
     logical, intent(in)                 :: use_nuinel  ! Desire nuinel data?
     real(8), intent(in)                 :: tol         ! Thinning Tolerance
+    logical, intent(in)                 :: get_macro_s ! Do this for the scatt data
+    logical, intent(in)                 :: get_macro_c ! Do this for the chi data
     type(Ndpp)                          :: ndpp_mat    ! The result of this method
 
     integer :: i, i_nuc ! Nuclide index
@@ -532,273 +535,279 @@ module ndpp_ops
     urr_initial = urr_ptables_on
     urr_ptables_on = .False.
 
-    ! display status message
-    call write_message("Combining NDPP data for material " // &
-         to_str(this_mat % id), 6)
+    if ((get_macro_s) .or. (get_macro_c)) then
 
-    ! Initialize the ndpp object with what we know off bat.
-    ! First, kT will be the same as all the nuclides so just take the first one's
-    ! value:
-    ndpp_mat % kT = ndpp_nuc(this_mat % nuclide(1)) % zaid
-    ! ndpp % zaid has no meaning for this but we can store the material index here
-    ndpp_mat % zaid = this_mat % id
-    ! is_nuc will be false, since we are not a nuclide
-    ndpp_mat % is_nuc = .False.
+      ! display status message
+      call write_message("Combining NDPP Scattering Data for Material " // &
+           to_str(this_mat % id), 6)
 
-    ! Go through and create a combined energy grid to store in the inelastic
-    ! slot of Ndpp (and nuinel)
-    ! Will also do the same operations for chi_Ein at the same time
-    allocate(has_sab(this_mat % n_nuclides))
-    allocate(sab_loc(this_mat % n_nuclides))
-    has_sab = .False.
-    sab_loc = 0
+      ! Initialize the ndpp object with what we know off bat.
+      ! First, kT will be the same as all the nuclides so just take the first one's
+      ! value:
+      ndpp_mat % kT = ndpp_nuc(this_mat % nuclide(1)) % zaid
+      ! ndpp % zaid has no meaning for this but we can store the material index here
+      ndpp_mat % zaid = this_mat % id
+      ! is_nuc will be false, since we are not a nuclide
+      ndpp_mat % is_nuc = .False.
+    end if
 
-    do i = 1, this_mat % n_nuclides
-      i_nuc = this_mat % nuclide(i)
+    if (get_macro_s) then
 
-      ! Need to get s(a,b) grid if its data is needed for this i_nuc
-      if (this_mat % n_sab > 0) then
-        i_sab = -1
-        do i_sabnuc = 1, this_mat % n_sab
-          if (i_nuc == &
-              this_mat % nuclide(this_mat % i_sab_nuclides(i_sabnuc))) then
-            i_sab = this_mat % i_sab_tables(i_sabnuc)
-            sab_loc(i) = i_sab
-          end if
-        end do
-        if (i_sab /= -1) then
-          has_sab(i) = .True.
-        ! Otherwise nothing needed since this nuc doesnt have sab data
-        end if
-      end if
+      ! Go through and create a combined energy grid to store in the inelastic
+      ! slot of Ndpp (and nuinel)
+      ! Will also do the same operations for chi_Ein at the same time
+      allocate(has_sab(this_mat % n_nuclides))
+      allocate(sab_loc(this_mat % n_nuclides))
+      has_sab = .False.
+      sab_loc = 0
 
-      ! Begin grid merging:
-      ! First take in the nuclide's energy grid as our starting point
-      if (bounds(1) <= nuclides(i_nuc) % energy(1)) then
-        iE = 1
-      else
-        iE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
-                           bounds(1))
-      end if
-      if (bounds(groups + 1) >= &
-          nuclides(i_nuc) % energy(nuclides(i_nuc) % n_grid)) then
-        NE = nuclides(i_nuc) % n_grid
-      else
-        NE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
-                           bounds(groups + 1))
-      end if
-      allocate(Ein(NE - iE + 1))
-      Ein = nuclides(i_nuc) % energy(iE: NE)
-
-      ! Now, if sab data, add in the relevant ACE and NDPP Ein S(a,b) grids
-      if (has_sab(i)) then
-        i_sab = sab_loc(i)
-        ! First do the ACE
-        if (allocated(sab_tables(i_sab) % inelastic_e_in)) then
-          call merge_in_place(sab_tables(i_sab) % inelastic_e_in, Ein)
-        end if
-        if (allocated(sab_tables(i_sab) % elastic_e_in)) then
-          call merge_in_place(sab_tables(i_sab) % elastic_e_in, Ein)
-        end if
-        ! Now the NDPP S(a,b) grid
-        ! To do this, will add in a point just slightly above the last sab
-        ! point to help with interpolation on the nuclide grid
-        Ethresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein)) + 1E-11_8
-        allocate(tmp_Ein(size(ndpp_sab(i_sab) % el_Ein) + 1))
-        tmp_Ein = (/ndpp_sab(i_sab) % el_Ein, Ethresh/)
-        ! Now we can add this in
-        call merge_in_place(tmp_Ein, Ein)
-      end if
-
-      ! Now add in the NDPP elastic grid
-      call merge_in_place(ndpp_nuc(i_nuc) % el_Ein, Ein)
-
-      ! And finally, the NDPP inelastic grid (if exists)
-      if (associated(ndpp_nuc(i_nuc) % inel_Ein)) then
-        call merge_in_place(ndpp_nuc(i_nuc) % inel_Ein, Ein)
-      end if
-
-      ! At this point we have a grid for all the data needed for this nuclide
-      ! Now we must merge it with what we have so far for the material
-      if (i == 1) then
-        ! First time through so nothing to merge with
-        allocate(mat_Ein(size(Ein)))
-        mat_Ein = Ein
-      else
-        ! Not the first rodeo, so merge it.
-        call merge_in_place(Ein, mat_Ein)
-      end if
-      deallocate(Ein)
-
-    end do
-
-    ! Store the energy grid
-    NE = size(mat_Ein)
-    allocate(ndpp_mat % inel_Ein(NE))
-    ndpp_mat % inel_Ein = mat_Ein
-    deallocate(mat_Ein)
-
-    ! We have our grids.  Now we have to go through each incoming
-    ! energy point and build the outgoing data, wihch will combine
-    ! elastic and inelastic scattering data
-    allocate(ndpp_mat % inel(NE))
-    allocate(ndpp_mat % nuinel(NE))
-
-    do iE = 1, NE - 1
-      ! Build a particle so we can calculate the cross sections
-      p % material = i_mat
-      p % E = ndpp_mat % inel_Ein(iE)
-
-      ! Calculate those xs
-      call calculate_xs(p)
-
-      ! Zero out the outgoing data
-      temp_out = ZERO
-      nu_temp_out = ZERO
-
-      gin = binary_search(bounds, groups + 1, ndpp_mat % inel_Ein(iE))
-
-      ! Now add in the contribution of elastic and inelastic for each
       do i = 1, this_mat % n_nuclides
         i_nuc = this_mat % nuclide(i)
-        atom_density = this_mat % atom_density(i)
 
-        ! Get our specific x/s needed
-        call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
+        ! Need to get s(a,b) grid if its data is needed for this i_nuc
+        if (this_mat % n_sab > 0) then
+          i_sab = -1
+          do i_sabnuc = 1, this_mat % n_sab
+            if (i_nuc == &
+                this_mat % nuclide(this_mat % i_sab_nuclides(i_sabnuc))) then
+              i_sab = this_mat % i_sab_tables(i_sabnuc)
+              sab_loc(i) = i_sab
+            end if
+          end do
+          if (i_sab /= -1) then
+            has_sab(i) = .True.
+          ! Otherwise nothing needed since this nuc doesnt have sab data
+          end if
+        end if
 
+        ! Begin grid merging:
+        ! First take in the nuclide's energy grid as our starting point
+        if (bounds(1) <= nuclides(i_nuc) % energy(1)) then
+          iE = 1
+        else
+          iE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                             bounds(1))
+        end if
+        if (bounds(groups + 1) >= &
+            nuclides(i_nuc) % energy(nuclides(i_nuc) % n_grid)) then
+          NE = nuclides(i_nuc) % n_grid
+        else
+          NE = binary_search(nuclides(i_nuc) % energy, nuclides(i_nuc) % n_grid, &
+                             bounds(groups + 1))
+        end if
+        allocate(Ein(NE - iE + 1))
+        Ein = nuclides(i_nuc) % energy(iE: NE)
+
+        ! Now, if sab data, add in the relevant ACE and NDPP Ein S(a,b) grids
         if (has_sab(i)) then
           i_sab = sab_loc(i)
-          sab_thresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
-        else
-          sab_thresh = ZERO
+          ! First do the ACE
+          if (allocated(sab_tables(i_sab) % inelastic_e_in)) then
+            call merge_in_place(sab_tables(i_sab) % inelastic_e_in, Ein)
+          end if
+          if (allocated(sab_tables(i_sab) % elastic_e_in)) then
+            call merge_in_place(sab_tables(i_sab) % elastic_e_in, Ein)
+          end if
+          ! Now the NDPP S(a,b) grid
+          ! To do this, will add in a point just slightly above the last sab
+          ! point to help with interpolation on the nuclide grid
+          Ethresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein)) + 1E-11_8
+          allocate(tmp_Ein(size(ndpp_sab(i_sab) % el_Ein) + 1))
+          tmp_Ein = (/ndpp_sab(i_sab) % el_Ein, Ethresh/)
+          ! Now we can add this in
+          call merge_in_place(tmp_Ein, Ein)
         end if
 
-        if (ndpp_mat % inel_Ein(iE) > sab_thresh) then
+        ! Now add in the NDPP elastic grid
+        call merge_in_place(ndpp_nuc(i_nuc) % el_Ein, Ein)
 
-          nuscatt_flag = .False.
-          ! Now combine the elastic and inelastic distributions to one set,
-          ! which will be in ndpp_outgoing(thread_id,:,:)
-          call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
-                                        order - 1, ndpp_mat % inel_Ein(iE), &
-                                        sigs_el, sigs_inel, norm, gmin, gmax)
-          ! Add this component to our temporary output, temp_out, weighted
-          ! by atom_density
-          temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax)
+        ! And finally, the NDPP inelastic grid (if exists)
+        if (associated(ndpp_nuc(i_nuc) % inel_Ein)) then
+          call merge_in_place(ndpp_nuc(i_nuc) % inel_Ein, Ein)
+        end if
 
-          nuscatt_flag = .True.
-          ! Now combine the elastic and inelastic distributions to one set,
-          ! which will be in ndpp_outgoing(thread_id,:,:)
-          call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
-                                        order - 1, ndpp_mat % inel_Ein(iE), &
-                                        sigs_el, sigs_inel, norm, gmin, gmax)
-
-          ! Add this component to our temporary output, temp_out, weighted
-          ! by atom_density
-          nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax)
-
+        ! At this point we have a grid for all the data needed for this nuclide
+        ! Now we must merge it with what we have so far for the material
+        if (i == 1) then
+          ! First time through so nothing to merge with
+          allocate(mat_Ein(size(Ein)))
+          mat_Ein = Ein
         else
-          ! Do the same as above, but for sab only
-          ! (again, b/c assuming no inelastic and sab overlap)
+          ! Not the first rodeo, so merge it.
+          call merge_in_place(Ein, mat_Ein)
+        end if
+        deallocate(Ein)
 
-          nuscatt_flag = .False.
+      end do
 
-          ! Now combine the elastic and inelastic distributions to one set,
-          ! which will be in ndpp_outgoing(thread_id,:,:)
-          call generate_ndpp_distrib_pn(ndpp_sab(i_sab), nuscatt_flag, gin, &
-                                        order - 1, ndpp_mat % inel_Ein(iE), &
-                                        sigs_el, sigs_inel, norm, gmin, gmax)
+      ! Store the energy grid
+      NE = size(mat_Ein)
+      allocate(ndpp_mat % inel_Ein(NE))
+      ndpp_mat % inel_Ein = mat_Ein
+      deallocate(mat_Ein)
 
-          ! Add this component to our temporary output, temp_out, weighted
-          ! by atom_density
-          temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
-            ndpp_outgoing(thread_id,:,gmin:gmax)
-          nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
-               ndpp_outgoing(thread_id,:,gmin:gmax)
+      ! We have our grids.  Now we have to go through each incoming
+      ! energy point and build the outgoing data, wihch will combine
+      ! elastic and inelastic scattering data
+      allocate(ndpp_mat % inel(NE))
+      allocate(ndpp_mat % nuinel(NE))
 
+      do iE = 1, NE - 1
+        ! Build a particle so we can calculate the cross sections
+        p % material = i_mat
+        p % E = ndpp_mat % inel_Ein(iE)
+
+        ! Calculate those xs
+        call calculate_xs(p)
+
+        ! Zero out the outgoing data
+        temp_out = ZERO
+        nu_temp_out = ZERO
+
+        gin = binary_search(bounds, groups + 1, ndpp_mat % inel_Ein(iE))
+
+        ! Now add in the contribution of elastic and inelastic for each
+        do i = 1, this_mat % n_nuclides
+          i_nuc = this_mat % nuclide(i)
+          atom_density = this_mat % atom_density(i)
+
+          ! Get our specific x/s needed
+          call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
+
+          if (has_sab(i)) then
+            i_sab = sab_loc(i)
+            sab_thresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
+          else
+            sab_thresh = ZERO
+          end if
+
+          if (ndpp_mat % inel_Ein(iE) > sab_thresh) then
+
+            nuscatt_flag = .False.
+            ! Now combine the elastic and inelastic distributions to one set,
+            ! which will be in ndpp_outgoing(thread_id,:,:)
+            call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
+                                          order - 1, ndpp_mat % inel_Ein(iE), &
+                                          sigs_el, sigs_inel, norm, gmin, gmax)
+            ! Add this component to our temporary output, temp_out, weighted
+            ! by atom_density
+            temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
+                 ndpp_outgoing(thread_id,:,gmin:gmax)
+
+            nuscatt_flag = .True.
+            ! Now combine the elastic and inelastic distributions to one set,
+            ! which will be in ndpp_outgoing(thread_id,:,:)
+            call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
+                                          order - 1, ndpp_mat % inel_Ein(iE), &
+                                          sigs_el, sigs_inel, norm, gmin, gmax)
+
+            ! Add this component to our temporary output, temp_out, weighted
+            ! by atom_density
+            nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
+                 ndpp_outgoing(thread_id,:,gmin:gmax)
+
+          else
+            ! Do the same as above, but for sab only
+            ! (again, b/c assuming no inelastic and sab overlap)
+
+            nuscatt_flag = .False.
+
+            ! Now combine the elastic and inelastic distributions to one set,
+            ! which will be in ndpp_outgoing(thread_id,:,:)
+            call generate_ndpp_distrib_pn(ndpp_sab(i_sab), nuscatt_flag, gin, &
+                                          order - 1, ndpp_mat % inel_Ein(iE), &
+                                          sigs_el, sigs_inel, norm, gmin, gmax)
+
+            ! Add this component to our temporary output, temp_out, weighted
+            ! by atom_density
+            temp_out(:,gmin:gmax) = temp_out(:,gmin:gmax) + atom_density * &
+              ndpp_outgoing(thread_id,:,gmin:gmax)
+            nu_temp_out(:,gmin:gmax) = nu_temp_out(:,gmin:gmax) + atom_density * &
+                 ndpp_outgoing(thread_id,:,gmin:gmax)
+
+          end if
+
+        end do
+
+        ! Normalize out any non-1 normalized behavior as well (including truncation
+        ! and the macro scopic x/s
+        norm = sum(temp_out(1,:))
+        temp_out = temp_out / norm
+        nu_temp_out = nu_temp_out / norm
+
+        allocate(ndpp_mat % inel(iE) % outgoing(order, groups))
+        ndpp_mat % inel(iE) % outgoing = temp_out
+
+        if (use_nuinel) then
+          allocate(ndpp_mat % nuinel(iE) % outgoing(order, groups))
+          ndpp_mat % nuinel(iE) % outgoing = nu_temp_out
         end if
 
       end do
 
-      ! Normalize out any non-1 normalized behavior as well (including truncation
-      ! and the macro scopic x/s
-      norm = sum(temp_out(1,:))
-      temp_out = temp_out / norm
-      nu_temp_out = nu_temp_out / norm
-
-      allocate(ndpp_mat % inel(iE) % outgoing(order, groups))
-      ndpp_mat % inel(iE) % outgoing = temp_out
+      ! Set last data point to the same as last - 1 data point
+      allocate(ndpp_mat % inel(NE) % outgoing(order, groups))
+      ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
 
       if (use_nuinel) then
-        allocate(ndpp_mat % nuinel(iE) % outgoing(order, groups))
-        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out
+        allocate(ndpp_mat % nuinel(NE) % outgoing(order, groups))
+        ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
       end if
 
-    end do
+      ! Perform grid thinning
+      if (tol > ZERO) then
+        call write_message("Thinning NDPP data for material " // &
+             to_str(this_mat % id), 6)
+        allocate(to_keep(groups + 1 + 2))
+        to_keep = (/ndpp_mat % inel_Ein(1), bounds(:), &
+                   ndpp_mat % inel_Ein(size(ndpp_mat % inel_Ein))/)
+        call thin_grid(ndpp_mat % inel_Ein, ndpp_mat % inel, ndpp_mat % nuinel, &
+                       to_keep, tol, compression, max_err)
+        call write_message("  Completed Thinning, Reduced Storage By " // &
+                           trim(to_str(100.0_8 * compression)) // "%", 6)
+        call write_message("  Maximum Thinning Error Was " // &
+                           trim(to_str(100.0_8 * max_err)) // "%", 6)
+      end if
 
-    ! Set last data point to the same as last - 1 data point
-    allocate(ndpp_mat % inel(NE) % outgoing(order, groups))
-    ndpp_mat % inel(NE) % outgoing = ndpp_mat % inel(NE - 1) % outgoing
+      ! Now that we have thinned we can remove the zero entries from outgoing
+      NE = size(ndpp_mat % inel_Ein)
+      do iE = 1, NE
+        ! find gmin by checking the P0 moment
+        do gmin = 1, size(ndpp_mat % inel(iE) % outgoing, dim = 2)
+          if (ndpp_mat % inel(iE) % outgoing(1, gmin) > ZERO) exit
+        end do
+        ! find gmax by checking the P0 moment
+        do gmax = size(ndpp_mat % inel(iE) % outgoing, dim = 2), 1, -1
+          if (ndpp_mat % inel(iE) % outgoing(1, gmax) > ZERO) exit
+        end do
+        if (gmin > gmax) then ! we have effectively all zeros
+          gmin = 1
+          gmax = 1
+        end if
 
-    if (use_nuinel) then
-      allocate(ndpp_mat % nuinel(NE) % outgoing(order, groups))
-      ndpp_mat % nuinel(NE) % outgoing = ndpp_mat % nuinel(NE - 1) % outgoing
-    end if
-
-    ! Perform grid thinning
-    if (tol > ZERO) then
-      call write_message("Thinning NDPP data for material " // &
-           to_str(this_mat % id), 6)
-      allocate(to_keep(groups + 1 + 2))
-      to_keep = (/ndpp_mat % inel_Ein(1), bounds(:), &
-                 ndpp_mat % inel_Ein(size(ndpp_mat % inel_Ein))/)
-      call thin_grid(ndpp_mat % inel_Ein, ndpp_mat % inel, ndpp_mat % nuinel, &
-                     to_keep, tol, compression, max_err)
-      call write_message("  Completed Thinning, Reduced Storage By " // &
-                         trim(to_str(100.0_8 * compression)) // "%", 6)
-      call write_message("  Maximum Thinning Error Was " // &
-                         trim(to_str(100.0_8 * max_err)) // "%", 6)
-    end if
-
-    ! Now that we have thinned we can remove the zero entries from outgoing
-    NE = size(ndpp_mat % inel_Ein)
-    do iE = 1, NE
-      ! find gmin by checking the P0 moment
-      do gmin = 1, size(ndpp_mat % inel(iE) % outgoing, dim = 2)
-        if (ndpp_mat % inel(iE) % outgoing(1, gmin) > ZERO) exit
+        temp_out = ndpp_mat % inel(iE) % outgoing
+        nu_temp_out = ndpp_mat % nuinel(iE) % outgoing
+        deallocate(ndpp_mat % inel(iE) % outgoing)
+        allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
+        ndpp_mat % inel(iE) % outgoing = temp_out(:, gmin:gmax)
+        if (use_nuinel) then
+          deallocate(ndpp_mat % nuinel(iE) % outgoing)
+          allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
+          ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:, gmin:gmax)
+        end if
       end do
-      ! find gmax by checking the P0 moment
-      do gmax = size(ndpp_mat % inel(iE) % outgoing, dim = 2), 1, -1
-        if (ndpp_mat % inel(iE) % outgoing(1, gmax) > ZERO) exit
+
+
+      ! Now we need to set inel_Ein_srch
+      allocate(ndpp_mat % inel_Ein_srch(groups + 1))
+      ndpp_mat % inel_Ein_srch(1) = 1
+      do g = 2, groups
+        ndpp_mat % inel_Ein_srch(g) = binary_search(ndpp_mat % inel_Ein, &
+                                                    size(ndpp_mat % inel_Ein), &
+                                                    bounds(g))
       end do
-      if (gmin > gmax) then ! we have effectively all zeros
-        gmin = 1
-        gmax = 1
-      end if
-
-      temp_out = ndpp_mat % inel(iE) % outgoing
-      nu_temp_out = ndpp_mat % nuinel(iE) % outgoing
-      deallocate(ndpp_mat % inel(iE) % outgoing)
-      allocate(ndpp_mat % inel(iE) % outgoing(order, gmin:gmax))
-      ndpp_mat % inel(iE) % outgoing = temp_out(:, gmin:gmax)
-      if (use_nuinel) then
-        deallocate(ndpp_mat % nuinel(iE) % outgoing)
-        allocate(ndpp_mat % nuinel(iE) % outgoing(order, gmin:gmax))
-        ndpp_mat % nuinel(iE) % outgoing = nu_temp_out(:, gmin:gmax)
-      end if
-    end do
-
-
-    ! Now we need to set inel_Ein_srch
-    allocate(ndpp_mat % inel_Ein_srch(groups + 1))
-    ndpp_mat % inel_Ein_srch(1) = 1
-    do g = 2, groups
-      ndpp_mat % inel_Ein_srch(g) = binary_search(ndpp_mat % inel_Ein, &
-                                                  size(ndpp_mat % inel_Ein), &
-                                                  bounds(g))
-    end do
-    ndpp_mat % inel_Ein_srch(groups + 1) = size(ndpp_mat % inel_Ein)
+      ndpp_mat % inel_Ein_srch(groups + 1) = size(ndpp_mat % inel_Ein)
+    end if
 
     ! Restore ptables settings
     urr_ptables_on = urr_initial

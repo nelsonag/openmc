@@ -146,6 +146,13 @@ module global
   ! Flag to indicate need to store pre-processed data library
   logical        :: use_ndpp_data = .false.
 
+  ! Flag to indicate if macroscopic (material-wise) NDPP data should be created
+  ! if user requests non-nuclidic tallies
+  logical        :: ndpp_macroscopic = .false.
+
+  ! Tolerance to apply for thinning the NDPP incoming energy grid
+  real(8)        :: ndpp_thin = 1.0E-4_8
+
   ! File which stores ndpp library data.
   character(MAX_FILE_LEN) :: ndpp_lib
 
