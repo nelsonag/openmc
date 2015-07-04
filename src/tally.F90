@@ -580,7 +580,7 @@ contains
                    score_index, filter_index - &
                    matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                    t % moment_order(i), &
-                   p % last_wgt, p % E, t % results)
+                   p % last_wgt, p % last_E, t % results)
           else
             call tally_ndpp_n(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -625,7 +625,7 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), p % last_wgt, p % E, t % results)
+                 t % moment_order(i), p % last_wgt, p % last_E, t % results)
           else
             call tally_ndpp_pn(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -671,8 +671,8 @@ contains
                    matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                    score_index, filter_index - &
                    matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                   t % moment_order(i), p % last_wgt, p % E, p % coord0 % uvw, &
-                   t % results)
+                   t % moment_order(i), p % last_wgt, p % last_E, &
+                   p % coord0 % uvw, t % results)
           else
             call tally_ndpp_yn(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -721,7 +721,7 @@ contains
                    score_index, filter_index - &
                    matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                    t % moment_order(i), &
-                   p % last_wgt, p % E, t % results, .true.)
+                   p % last_wgt, p % last_E, t % results, .true.)
           else
             call tally_ndpp_n(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -766,7 +766,8 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), p % last_wgt, p % E, t % results, .true.)
+                 t % moment_order(i), p % last_wgt, p % last_E, t % results, &
+                 .true.)
           else
             call tally_ndpp_pn(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -812,8 +813,8 @@ contains
                    matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                    score_index, filter_index - &
                    matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                   t % moment_order(i), p % last_wgt, p % E, p % coord0 % uvw, &
-                   t % results, .true.)
+                   t % moment_order(i), p % last_wgt, p % last_E, &
+                   p % coord0 % uvw, t % results, .true.)
           else
             call tally_ndpp_yn(p % event_nuclide, &
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
@@ -854,14 +855,28 @@ contains
 
       case (SCORE_NDPP_CHI, SCORE_NDPP_CHI_P, SCORE_NDPP_CHI_D)
         if (t % estimator == ESTIMATOR_ANALOG) then
-          call tally_ndpp_chi(p % event_nuclide, score_index, filter_index - &
-               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, score, &
-               .true., p % last_E, score_bin, t % results)
+          if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+            call tally_macro_mat_ndpp_chi(p % material, score_index, &
+                                          filter_index - matching_bins(&
+                                          t % find_filter(FILTER_ENERGYOUT))+1,&
+                                          score, p % last_E, score_bin, &
+                                          t % results)
+          else
+            call tally_ndpp_chi(p % event_nuclide, score_index, filter_index - &
+                 matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, score, &
+                 .true., p % last_E, score_bin, t % results)
+          end if
         else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
           if (i_nuclide > 0) then
             call tally_ndpp_chi(i_nuclide, score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  atom_density * flux, .false., p % E, score_bin, t % results)
+          else if (ndpp_macroscopic) then
+            call tally_macro_mat_ndpp_chi(p % material, score_index, &
+                                          filter_index - matching_bins(&
+                                          t % find_filter(FILTER_ENERGYOUT))+1,&
+                                          flux, p % E, score_bin, &
+                                          t % results)
           else
             mat => materials(p % material)
             call tally_macro_ndpp_chi(mat, score_index, filter_index - &
@@ -2665,5 +2680,33 @@ contains
     end do
 
   end subroutine tally_macro_ndpp_chi
+
+!===============================================================================
+! TALLY_MACRO_MAT_NDPP_CHI determines the material-wise Chi spectra which were
+! previously calculated with a pre-processor such as NDPP;
+! this method applies to ndpp-chi tally types.  This version uses the material
+! specific data.
+!===============================================================================
+
+  subroutine tally_macro_mat_ndpp_chi(i_mat, score_index, filter_index, flux, &
+                                      Ein, score_type, results)
+
+    integer, intent(in) :: i_mat ! Working material index in materials
+    integer, intent(in) :: score_index ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    real(8), intent(in) :: flux ! flux
+    real(8), intent(in) :: Ein ! Incoming energy
+    integer, intent(in) :: score_type ! Type of Chi score we are using
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+
+    ! Quit before doing anything else if we have no chi data
+    if (.not. materials(i_mat) % fissionable) then
+      return
+    end if
+
+    call ndpp_tally_mat_chi(ndpp_mat_data(i_mat), score_index, &
+                        filter_index, flux, Ein, score_type, results)
+
+  end subroutine tally_macro_mat_ndpp_chi
 
 end module tally

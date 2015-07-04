@@ -895,12 +895,14 @@ module ndpp_ops
             if (p % E <= ndpp_nuc(i_nuc) % chi_Ein(1)) then
               i_grid = 1
               f = ZERO
+              one_f = ONE
             else
               i_grid = binary_search(ndpp_nuc(i_nuc) % chi_Ein, &
                                      size(ndpp_nuc(i_nuc) % chi_Ein), p % E)
               f = (p % E - ndpp_nuc(i_nuc) % chi_Ein(i_grid)) / &
                 (ndpp_nuc(i_nuc) % chi_Ein(i_grid + 1) - &
                  ndpp_nuc(i_nuc) % chi_Ein(i_grid))
+              one_f = ONE - f
             end if
 
             ! Calculate 1-f, and apply weighting
@@ -908,19 +910,19 @@ module ndpp_ops
             one_f = one_f * micro_xs(i_nuc) % nu_fission * atom_density
 
             if (get_chi_t) then
-              ndpp_mat % chi = ndpp_mat % chi + &
-                   ndpp_nuc(i_nuc) % chi(g, i_grid) * one_f + &
-                   ndpp_nuc(i_nuc) % chi(g, i_grid + 1) * f
+              ndpp_mat % chi(:, iE) = ndpp_mat % chi(:, iE) + &
+                   ndpp_nuc(i_nuc) % chi(:, i_grid) * one_f + &
+                   ndpp_nuc(i_nuc) % chi(:, i_grid + 1) * f
             end if
             if (get_chi_p) then
-              ndpp_mat % chi_p = ndpp_mat % chi_p + &
-                   ndpp_nuc(i_nuc) % chi_p(g, i_grid) * one_f + &
-                   ndpp_nuc(i_nuc) % chi_p(g, i_grid + 1) * f
+              ndpp_mat % chi_p(:, iE) = ndpp_mat % chi_p(:, iE) + &
+                   ndpp_nuc(i_nuc) % chi_p(:, i_grid) * one_f + &
+                   ndpp_nuc(i_nuc) % chi_p(:, i_grid + 1) * f
             end if
             ! if (get_chi_d) then
-            !   ndpp_mat % chi_d = ndpp_mat % chi_d + &
-            !        ndpp_nuc(i_nuc) % chi_d(g, i_grid) * one_f + &
-            !        ndpp_nuc(i_nuc) % chi_d(g, i_grid + 1) * f
+            !   ndpp_mat % chi_d(:, iE) = ndpp_mat % chi_d(:, iE) + &
+            !        ndpp_nuc(i_nuc) % chi_d(:, i_grid) * one_f + &
+            !        ndpp_nuc(i_nuc) % chi_d(:, i_grid + 1) * f
             ! end if
           end if
         end do
@@ -1398,6 +1400,75 @@ module ndpp_ops
     end do
 
   end subroutine ndpp_tally_chi
+
+!===============================================================================
+! TALLY_NDPP_MAT_CHI determines the fission spectra which were
+! previously calculated with a pre-processor such as NDPP;
+! this can be used for analog and tracklength estimators;
+! this method applies to ndpp-scatter-chi tally types.
+! This routine uses the macroscopic data
+!===============================================================================
+
+  subroutine ndpp_tally_mat_chi(this, score_index, filter_index, mult, &
+                                Ein, score_type, results)
+
+    type(Ndpp), intent(in) :: this      ! Ndpp object to act on
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    real(8), intent(in) :: mult         ! wgt or wgt * flux
+    real(8), intent(in) :: Ein          ! Incoming energy
+    integer, intent(in) :: score_type   ! Type of Chi score we are using
+    type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
+
+    integer :: g                         ! outgoing energy group index
+    integer :: g_filter                  ! outgoing energy group index
+    integer :: i_grid                    ! index on nuclide energy grid
+    real(8) :: f                         ! interp factor on nuclide energy grid
+    real(8) :: one_f                     ! (ONE - f)
+    real(8), pointer, save :: chi_Ein(:) ! Working Ein grid
+    real(8), pointer, save :: chi(:,:)   ! Working chi data
+
+!$omp threadprivate(chi_Ein, chi)
+
+    ! Set up pointers
+    chi_Ein => this % chi_Ein
+    if (score_type == SCORE_NDPP_CHI) then
+      chi => this % chi
+    else if (score_type == SCORE_NDPP_CHI_P) then
+      chi => this % chi_p
+    else if (score_type == SCORE_NDPP_CHI_D) then
+      call fatal_error("OpenMC does not yet support Delayed Chi Tallying!")
+      !chi => this % chi_d
+    end if
+
+    ! Find the grid index and interpolant of ndpp scattering data
+    if (Ein <= chi_Ein(1)) then
+      i_grid = 1
+      f = ZERO
+    else if (Ein >= chi_Ein(size(chi_Ein))) then
+      ! Should never happen as max(ndpp_Ein) is above filter range
+      return
+    else
+      i_grid = binary_search(chi_Ein, size(chi_Ein), Ein)
+      f = (Ein - chi_Ein(i_grid)) / &
+        (chi_Ein(i_grid + 1) - chi_Ein(i_grid))
+    end if
+
+    ! Calculate 1-f, apply mult, and weight by nu-fission for TL
+    one_f = (ONE - f) * mult
+    f = f * mult
+
+    ! Add the contribution from NDPP data (with interpolation)
+    do g = 1, ubound(chi, dim=1)
+      g_filter = filter_index + g - 1
+!$omp atomic
+      results(score_index, g_filter) % value = &
+        results(score_index, g_filter) % value + &
+        chi(g, i_grid) * one_f + &
+        chi(g, i_grid + 1) * f
+    end do
+
+  end subroutine ndpp_tally_mat_chi
 
 !===============================================================================
 ! HELPER SUBROUTINES
