@@ -2291,18 +2291,18 @@ contains
 !===============================================================================
 
   subroutine tally_ndpp_n(i_nuclide, gin, score_index, filter_index, t_order, &
-    mult, is_analog, Ein, results, nuscatt)
+                          mult, is_analog, Ein, results, nuscatt)
 
-    integer, intent(in) :: i_nuclide ! index into nuclides array
-    integer, intent(in) :: gin       ! Incoming group index
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
-    real(8), intent(in) :: mult ! wgt or wgt * atom_density * flux
-    logical, intent(in) :: is_analog ! Is this an analog or TL event?
-    real(8), intent(in) :: Ein ! Incoming energy
+    integer, intent(in) :: i_nuclide    ! index into nuclides array
+    integer, intent(in) :: gin          ! Incoming group index
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: i_sab ! sab index in ndpp_sab_data & sab_tables
 
@@ -2312,9 +2312,9 @@ contains
     i_sab = micro_xs(i_nuclide) % index_sab
     if (i_sab /= 0) then
       ! We have a collision in the S(a,b) range
-      call ndpp_tally_scatt_n(ndpp_sab_data(i_sab), i_nuclide, gin, score_index, &
-                              filter_index, t_order, mult, is_analog, Ein, &
-                              results, nuscatt)
+      call ndpp_tally_scatt_n(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                              score_index, filter_index, t_order, mult, &
+                              is_analog, Ein, results, nuscatt)
     else
       ! Normal scattering (non-S(a,b))
       call ndpp_tally_scatt_n(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
@@ -2329,35 +2329,35 @@ contains
 ! this method applies to ndpp-scatter-n tally types
 !===============================================================================
 
-  subroutine tally_macro_ndpp_n(mat, gin, score_index, filter_index, t_order, flux, &
-                                Ein, results, nuscatt)
+  subroutine tally_macro_ndpp_n(mat, gin, score_index, filter_index, t_order, &
+                                flux, Ein, results, nuscatt)
     type(Material), pointer, intent(in) :: mat ! Working material
-    integer, intent(in) :: gin       ! Incoming group index
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
-    real(8), intent(in) :: flux ! flux
-    real(8), intent(in) :: Ein ! Incoming energy
+    integer, intent(in) :: gin          ! Incoming group index
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: flux         ! flux
+    real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
-    integer :: i ! index in nuclide list of materials
+    integer :: i         ! index in nuclide list of materials
     integer :: i_nuclide ! index in nuclides array of our working nuclide
-    real(8) :: N_flux ! atom_density * flux
+    real(8) :: N_flux    ! atom_density * flux
 
     if (present(nuscatt)) then
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
         call tally_ndpp_n(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, results, nuscatt)
+                          N_flux, .false., Ein, results, nuscatt)
       end do
     else
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
         call tally_ndpp_n(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, results)
+                          N_flux, .false., Ein, results)
       end do
     end if
   end subroutine tally_macro_ndpp_n
@@ -2370,16 +2370,16 @@ contains
 !===============================================================================
 
   subroutine tally_macro_mat_ndpp_n(i_mat, gin, score_index, filter_index, &
-                                 t_order, mult, Ein, results, nuscatt)
-    integer, intent(in) :: i_mat     ! Working material index in materials
-    integer, intent(in) :: gin       ! Incoming group index
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
+                                    t_order, mult, Ein, results, nuscatt)
+    integer, intent(in) :: i_mat        ! Working index in materials
+    integer, intent(in) :: gin          ! Incoming group index
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! applied multiplier (flux or flux*sigS)
-    real(8), intent(in) :: Ein ! Incoming energy
+    real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     if (present(nuscatt)) then
       call ndpp_tally_mat_scatt_n(ndpp_mat_data(i_mat), gin, score_index, &
@@ -2392,25 +2392,25 @@ contains
   end subroutine tally_macro_mat_ndpp_n
 
 !===============================================================================
-! TALLY_NDPP_PN determines the scattering moments which were
-! previously calculated with a pre-processor such as NDPP;
-! this can be used for analog and tracklength estimators;
-! this method applies to ndpp-scatter-pn tally types
+! TALLY_NDPP_PN determines the scattering moments which were previously !
+! calculated with a pre-processor such as NDPP; this can be used for analog
+! and tracklength estimators.
+! This method applies to ndpp-scatter-pn tally types
 !===============================================================================
 
-  subroutine tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, t_order, &
-    mult, is_analog, Ein, results, nuscatt)
+  subroutine tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, mult, is_analog, Ein, results, nuscatt)
 
-    integer, intent(in) :: i_nuclide ! index into nuclides array
-    integer, intent(in) :: gin       ! Incoming group index
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
-    real(8), intent(in) :: mult ! wgt or wgt * atom_density * flux
-    logical, intent(in) :: is_analog ! Is this an analog or TL event?
-    real(8), intent(in) :: Ein ! Incoming energy
+    integer, intent(in) :: i_nuclide    ! index into nuclides array
+    integer, intent(in) :: gin          ! Incoming group index
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: i_sab ! sab index in ndpp_sab_data & sab_tables
 
@@ -2437,36 +2437,36 @@ contains
 ! this method applies to ndpp-scatter-pn tally types
 !===============================================================================
 
-  subroutine tally_macro_ndpp_pn(mat, gin, score_index, filter_index, t_order, flux, &
-    Ein, results, nuscatt)
+  subroutine tally_macro_ndpp_pn(mat, gin, score_index, filter_index, t_order, &
+                                 flux, Ein, results, nuscatt)
 
     type(Material), pointer, intent(in) :: mat ! Working material
-    integer, intent(in) :: gin         ! Incoming energy group
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
-    real(8), intent(in) :: flux ! flux
-    real(8), intent(in) :: Ein ! Incoming energy
+    integer, intent(in) :: gin          ! Incoming energy group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: flux         ! flux
+    real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
-    integer :: i ! index in nuclide list of materials
+    integer :: i         ! index in nuclide list of materials
     integer :: i_nuclide ! index in nuclides array of our working nuclide
-    real(8) :: N_flux ! atom_density * flux
+    real(8) :: N_flux    ! atom_density * flux
 
     if (present(nuscatt)) then
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
-        call tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, results, nuscatt)
+        call tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, N_flux, .false., Ein, results, nuscatt)
       end do
     else
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
-        call tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, results)
+        call tally_ndpp_pn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, N_flux, .false., Ein, results)
       end do
     end if
 
@@ -2480,7 +2480,7 @@ contains
 !===============================================================================
 
   subroutine tally_macro_mat_ndpp_pn(i_mat, gin, score_index, filter_index, &
-                                  t_order, mult, Ein, results, nuscatt)
+                                     t_order, mult, Ein, results, nuscatt)
 
     integer, intent(in) :: i_mat        ! Working material index in materials
     integer, intent(in) :: gin          ! Incoming energy group
@@ -2490,7 +2490,7 @@ contains
     real(8), intent(in) :: mult         ! applied multiplier (flux or flux*sigS)
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     if (present(nuscatt)) then
       call ndpp_tally_mat_scatt_pn(ndpp_mat_data(i_mat), gin, score_index, &
@@ -2510,20 +2510,21 @@ contains
 ! this method applies to ndpp-scatter-yn tally types
 !===============================================================================
 
-  subroutine tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, t_order, &
-    mult, is_analog, Ein, uvw, results, nuscatt)
+  subroutine tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, mult, is_analog, Ein, uvw, results, &
+                           nuscatt)
 
-    integer, intent(in) :: i_nuclide ! index into nuclides array
-    integer, intent(in) :: gin       ! Incoming group index
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order ! # of scattering orders to tally
-    real(8), intent(in) :: mult ! wgt or wgt * atom_density * flux
-    logical, intent(in) :: is_analog ! Is this an analog or TL event?
-    real(8), intent(in) :: Ein ! Incoming energy
-    real(8), intent(in) :: uvw(3)   ! direction coordinates
+    integer, intent(in) :: i_nuclide    ! index into nuclides array
+    integer, intent(in) :: gin          ! Incoming group index
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    real(8), intent(in) :: Ein          ! Incoming energy
+    real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: i_sab ! sab index in ndpp_sab_data & sab_tables
 
@@ -2552,17 +2553,17 @@ contains
 ! this method applies to ndpp-scatter-yn tally types
 !===============================================================================
 
-  subroutine tally_macro_ndpp_yn(mat, gin, score_index, filter_index, t_order, flux, &
-    Ein, uvw, results, nuscatt)
+  subroutine tally_macro_ndpp_yn(mat, gin, score_index, filter_index, t_order, &
+                                 flux, Ein, uvw, results, nuscatt)
 
     type(Material), pointer, intent(in) :: mat ! Working material
-    integer, intent(in) :: gin         ! Incoming energy group
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    integer, intent(in) :: t_order  ! # of scattering orders to tally
-    real(8), intent(in) :: flux     ! flux
-    real(8), intent(in) :: Ein      ! Incoming energy
-    real(8), intent(in) :: uvw(3)   ! direction coordinates
+    integer, intent(in) :: gin          ! Incoming energy group
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    integer, intent(in) :: t_order      ! # of scattering orders to tally
+    real(8), intent(in) :: flux         ! flux
+    real(8), intent(in) :: Ein          ! Incoming energy
+    real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
     logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
 
@@ -2574,15 +2575,16 @@ contains
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
-        call tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, uvw, results, nuscatt)
+        call tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, N_flux, .false., Ein, uvw, results, &
+                           nuscatt)
       end do
     else
       do i = 1, mat % n_nuclides
         i_nuclide = mat % nuclide(i)
         N_flux = mat % atom_density(i) * flux
-        call tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, t_order, &
-          N_flux, .false., Ein, uvw, results)
+        call tally_ndpp_yn(i_nuclide, gin, score_index, filter_index, &
+                           t_order, N_flux, .false., Ein, uvw, results)
       end do
     end if
 
@@ -2596,7 +2598,7 @@ contains
 !===============================================================================
 
   subroutine tally_macro_mat_ndpp_yn(i_mat, gin, score_index, filter_index, &
-                                  t_order, mult, Ein, uvw, results, nuscatt)
+                                     t_order, mult, Ein, uvw, results, nuscatt)
     integer, intent(in) :: i_mat        ! Working material index in materials
     integer, intent(in) :: gin          ! Incoming energy group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
@@ -2606,7 +2608,7 @@ contains
     real(8), intent(in) :: Ein          ! Incoming energy
     real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt ! Is this for nuscatter?
+    logical, optional, intent(in)    :: nuscatt ! Is this for nuscatter?
 
     if (present(nuscatt)) then
       call ndpp_tally_mat_scatt_yn(ndpp_mat_data(i_mat), gin, score_index, &
@@ -2630,13 +2632,13 @@ contains
   subroutine tally_ndpp_chi(i_nuclide, score_index, filter_index, mult, &
                             is_analog, Ein, score_type, results)
 
-    integer, intent(in) :: i_nuclide ! index into nuclides array
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    real(8), intent(in) :: mult ! wgt or wgt * atom_density * flux
-    logical, intent(in) :: is_analog ! Is this an analog or TL event?
-    real(8), intent(in) :: Ein ! Incoming energy
-    integer, intent(in) :: score_type ! Type of Chi score we are using
+    integer, intent(in) :: i_nuclide    ! index into nuclides array
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    real(8), intent(in) :: Ein          ! Incoming energy
+    integer, intent(in) :: score_type   ! Type of Chi score we are using
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
 
     ! Quit before doing anything else if we have no chi data
@@ -2647,7 +2649,8 @@ contains
     ! We COULD have just went straight to the following call, but then
     ! when delayed chi is implemented we would need a wrapper function anyways.
     call ndpp_tally_chi(ndpp_nuc_data(i_nuclide), i_nuclide, score_index, &
-                        filter_index, mult, is_analog, Ein, score_type, results)
+                        filter_index, mult, is_analog, Ein, score_type, &
+                        results)
 
   end subroutine tally_ndpp_chi
 
@@ -2661,22 +2664,22 @@ contains
                                   score_type, results)
 
     type(Material), pointer, intent(in) :: mat ! Working material
-    integer, intent(in) :: score_index ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
-    real(8), intent(in) :: flux ! flux
-    real(8), intent(in) :: Ein ! Incoming energy
-    integer, intent(in) :: score_type ! Type of Chi score we are using
+    integer, intent(in) :: score_index  ! dim = 1 starting index in results
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
+    real(8), intent(in) :: flux         ! flux
+    real(8), intent(in) :: Ein          ! Incoming energy
+    integer, intent(in) :: score_type   ! Type of Chi score we are using
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
 
-    integer :: i ! index in nuclide list of materials
+    integer :: i         ! index in nuclide list of materials
     integer :: i_nuclide ! index in nuclides array of our working nuclide
-    real(8) :: N_flux ! atom_density * flux
+    real(8) :: N_flux    ! atom_density * flux
 
     do i = 1, mat % n_nuclides
       i_nuclide = mat % nuclide(i)
       N_flux = mat % atom_density(i) * flux
       call tally_ndpp_chi(i_nuclide, score_index, filter_index, N_flux, &
-        .false., Ein, score_type, results)
+                          .false., Ein, score_type, results)
     end do
 
   end subroutine tally_macro_ndpp_chi

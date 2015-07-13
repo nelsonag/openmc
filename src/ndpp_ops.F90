@@ -3,13 +3,13 @@ module ndpp_ops
   use ace_header,   only: XsListing
   use constants
   use cross_section, only: calculate_xs
-  use dict_header,  only: DictCharInt, DICT_NULL
+  use dict_header,  only: DictCharInt
   use error,        only: fatal_error
   use global
   use list_header,  only: ListElemInt
   use material_header, only: Material
   use math,         only: calc_rn
-  use ndpp_header,  only: GrpTransfer, Ndpp
+  use ndpp_header,  only: GroupTransfer, Ndpp
   use output,       only: write_message
   use particle_header, only: Particle
   use search
@@ -38,29 +38,29 @@ module ndpp_ops
     integer, intent(in) :: scatt_order ! Number of moments requested in tallies
     logical, intent(in) :: is_nuc      ! Is our data a nuc or an sab?
 
-    integer       :: in = UNIT_DATAFILE ! file unit
-    integer       :: i                  ! loop index for data records
-    integer       :: location           ! location of NDPP table
-    integer       :: filetype           ! Ascii, Binary or HDF5 filetype
-    logical       :: file_exists        ! does NDPP library exist?
-    character(7)  :: readable           ! is NDPP library readable?
-    character(10) :: name               ! name of NDPP table
-    real(8)       :: kT                 ! temperature of table
-    real(8)       :: dkT                ! difference in temperature of table
-    integer       :: NG                 ! Number of energy groups in library
+    integer       :: in          ! file unit
+    integer       :: i           ! loop index for data records
+    integer       :: location    ! location of NDPP table
+    integer       :: filetype    ! Ascii, Binary or HDF5 filetype
+    logical       :: file_exists ! does NDPP library exist?
+    character(7)  :: readable    ! is NDPP library readable?
+    character(10) :: name        ! name of NDPP table
+    real(8)       :: kT          ! temperature of table
+    real(8)       :: dkT         ! difference in temperature of table
+    integer       :: NG          ! Number of energy groups in library
     character(MAX_FILE_LEN) :: filename ! path to NDPP data library
-    integer       :: mu_bins            ! NUmber of angular points used
-    integer       :: scatt_type         ! Type of scattering data, discarded
-    integer       :: lib_order          ! Order of scattering data in library
-    integer       :: nuscatter          ! Flag as to if nuscatter data is present
-    integer       :: chi_present_int    ! Is chi present? (from input)
-    logical       :: chi_present        ! Flag as to if chi data is present
-    integer       :: gmin, gmax         ! Min and max possible group transfers
-    real(8)       :: thin_tol           ! Thinning tolerance used in lib, discarded
-    integer       :: NEin, iE           ! Number of incoming energies and the index
-    integer       :: NP                 ! Number of precursors groups
+    integer       :: mu_bins         ! NUmber of angular points used
+    integer       :: scatt_type      ! Type of scattering data, discarded
+    integer       :: lib_order       ! Order of scattering data in library
+    integer       :: nuscatter       ! Flag as to if nuscatter data is present
+    integer       :: chi_present_int ! Is chi present? (from input)
+    logical       :: chi_present     ! Flag as to if chi data is present
+    integer       :: gmin, gmax      ! Min and max possible group transfers
+    real(8)       :: thin_tol        ! Thinning tolerance used in lib
+    integer       :: NEin, iE        ! Number of incoming E and the index
+    integer       :: NP              ! Number of precursors groups
     real(8), allocatable    :: energy_bins(:)  ! Energy group structure
-    real(8), allocatable :: temp_outgoing(:,:) ! Temporary storage of scatt data
+    real(8), allocatable :: temp_outgoing(:,:) ! Temporary scatt data storage
 
     ! determine path, file type, and location of table
     filename = listing % path
@@ -82,7 +82,7 @@ module ndpp_ops
       ! READ NDPP DATA IN ASCII FORMAT
 
       ! Find location of table
-      open(UNIT=in, FILE=filename, STATUS='old', ACTION='read')
+      open(NEWUNIT=in, FILE=filename, STATUS='old', ACTION='read')
       rewind(UNIT=in)
       do i = 1, location - 1
         read(UNIT=in, FMT=*)
@@ -147,7 +147,7 @@ module ndpp_ops
           ! And copy in to this % el
           allocate(this % el(iE) % outgoing(scatt_order, gmin : gmax))
           this % el(iE) % outgoing(:, gmin : gmax) = &
-            temp_outgoing(1 : scatt_order, gmin : gmax)
+               temp_outgoing(1 : scatt_order, gmin : gmax)
           deallocate(temp_outgoing)
         end if
       end do ENERGY_LOOP
@@ -199,9 +199,9 @@ module ndpp_ops
               if ((gmin > 0) .and. (gmax > 0)) then
                 ! Then we can allocate the space. Do it to lib_order
                 ! since this is the largest order requested in the tallies.
-                ! Since we only need to store up to the maximum, we also need to have
-                ! an array for reading the file which we can later truncate to fit
-                ! in to this % nuinel(iE) % outgoing.
+                ! Since we only need to store up to the maximum, we also
+                ! need to have an array for reading the file which we can
+                ! later truncate to fit in to this % nuinel(iE) % outgoing.
                 allocate(temp_outgoing(lib_order, gmin : gmax))
 
                 ! Now we have a space to store the data, get it.
@@ -248,7 +248,8 @@ module ndpp_ops
       ! READ NDPP DATA IN BINARY FORMAT
 
       ! Open file
-      open(UNIT=in, FILE=filename, STATUS='old', ACTION='read', ACCESS='stream')
+      open(UNIT=in, FILE=filename, STATUS='old', ACTION='read', &
+           ACCESS='stream')
       rewind(UNIT=in)
       ! right now binary files dont have the capability to do location /= 1!
 
@@ -362,8 +363,8 @@ module ndpp_ops
               if ((gmin > 0) .and. (gmax > 0)) then
                 ! Then we can allocate the space. Do it to lib_order
                 ! since this is the largest order requested in the tallies.
-                ! Since we only need to store up to the maximum, we also need to
-                ! have an array for reading the file which we can later truncate
+                ! Since we only need to store up to the maximum, also need to
+                ! have an array for reading file which we later truncate
                 ! to fit in to this % nuinel(iE) % outgoing.
                 allocate(temp_outgoing(lib_order, gmin : gmax))
 
@@ -431,10 +432,10 @@ module ndpp_ops
         end if
       end if
       if ((.not. get_scatt) .and. (.not. get_nuscatt)) then
-        if (associated(this % el_Ein)) then
+        if (allocated(this % el_Ein)) then
           deallocate(this % el_Ein)
         end if
-        if (associated(this % el_Ein_srch)) then
+        if (allocated(this % el_Ein_srch)) then
           deallocate(this % el_Ein_srch)
         end if
         if (associated(this % inel_Ein)) then
@@ -445,34 +446,35 @@ module ndpp_ops
         end if
       end if
       if (.not. get_chi_t) then
-        if (associated(this % chi)) then
+        if (allocated(this % chi)) then
           deallocate(this % chi)
         end if
       end if
       if (.not. get_chi_p) then
-        if (associated(this % chi_p)) then
+        if (allocated(this % chi_p)) then
           deallocate(this % chi_p)
         end if
       end if
       if (.not. get_chi_d) then
-        if (associated(this % chi_d)) then
+        if (allocated(this % chi_d)) then
           deallocate(this % chi_d)
         end if
       end if
-      if ((.not. get_chi_t) .and. (.not. get_chi_p) .and. (.not. get_chi_d)) then
-        if (associated(this % chi_Ein)) then
+      if ((.not. get_chi_t) .and. (.not. get_chi_p) .and. &
+          (.not. get_chi_d)) then
+        if (allocated(this % chi_Ein)) then
           deallocate(this % chi_Ein)
         end if
       end if
     else ! Do similar for S(a,b) tables, dont need to check inel here
       if ((.not. get_scatt) .and. (.not. get_nuscatt)) then
-        if (associated(this % el)) then
+        if (allocated(this % el)) then
           deallocate(this % el)
         end if
-        if (associated(this % el_Ein)) then
+        if (allocated(this % el_Ein)) then
           deallocate(this % el_Ein)
         end if
-        if (associated(this % el_Ein_srch)) then
+        if (allocated(this % el_Ein_srch)) then
           deallocate(this % el_Ein_srch)
         end if
       end if
@@ -814,7 +816,7 @@ module ndpp_ops
     if (get_macro_c .and. this_mat % fissionable) then
       do i = 1, this_mat % n_nuclides
         i_nuc = this_mat % nuclide(i)
-        if (associated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
+        if (allocated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
             (nuclides(i_nuc) % fissionable)) then
 
           ! Begin grid merging
@@ -888,7 +890,7 @@ module ndpp_ops
           i_nuc = this_mat % nuclide(i)
           atom_density = this_mat % atom_density(i)
 
-          if (associated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
+          if (allocated(ndpp_nuc(i_nuc) % chi_Ein) .and. &
               (nuclides(i_nuc) % fissionable)) then
 
             ! Find the grid index and interpolant of ndpp scattering data
@@ -980,7 +982,7 @@ module ndpp_ops
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: filter_index ! dim = 2 starting index (Ein filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
@@ -991,7 +993,7 @@ module ndpp_ops
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
     integer :: l         ! tally order index to score
-    real(8) :: norm      ! Interpolation constant, multiplied by sigS (if in TL)
+    real(8) :: norm      ! Interpolation constant multiplied by sigS (if TL)
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
@@ -1019,7 +1021,7 @@ module ndpp_ops
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
       norm = norm * (micro_xs(i_nuclide) % total - &
-        micro_xs(i_nuclide) % absorption)
+           micro_xs(i_nuclide) % absorption)
     end if
 
     ! Add the combined distribution to our tally
@@ -1027,8 +1029,8 @@ module ndpp_ops
       g_filter = filter_index + g - 1
 !$omp atomic
       results(score_index, g_filter) % value = &
-        results(score_index, g_filter) % value + &
-        ndpp_outgoing(thread_id, l, g) * norm
+          results(score_index, g_filter) % value + &
+          ndpp_outgoing(thread_id, l, g) * norm
     end do
   end subroutine ndpp_tally_scatt_n
 
@@ -1045,8 +1047,8 @@ module ndpp_ops
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
-    integer, intent(in) :: score_index  ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: score_index  ! dim=1 starting index in results
+    integer, intent(in) :: filter_index ! dim=2 starting index (Ein filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
@@ -1058,7 +1060,7 @@ module ndpp_ops
     integer :: g_filter  ! outgoing energy group index
     integer :: i_score   ! index of score dimension of results
     integer :: l         ! legendre moment index
-    real(8) :: norm      ! Interpolation constant, multiplied by sigS (if in TL)
+    real(8) :: norm      ! Interpolation constant multiplied by sigS (if TL)
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
@@ -1084,7 +1086,7 @@ module ndpp_ops
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
       norm = norm * (micro_xs(i_nuclide) % total - &
-        micro_xs(i_nuclide) % absorption)
+           micro_xs(i_nuclide) % absorption)
     end if
 
     ! Add the combined distribution to our tally
@@ -1094,7 +1096,8 @@ module ndpp_ops
         i_score = score_index + l - 1
 !$omp atomic
         results(i_score, g_filter) % value = &
-          results(i_score, g_filter) % value + ndpp_outgoing(thread_id, l, g) * norm
+             results(i_score, g_filter) % value + &
+             ndpp_outgoing(thread_id, l, g) * norm
       end do
     end do
   end subroutine ndpp_tally_scatt_pn
@@ -1113,8 +1116,8 @@ module ndpp_ops
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
-    integer, intent(in) :: score_index  ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: score_index  ! dim=1 starting index in results
+    integer, intent(in) :: filter_index ! dim=2 starting index (Ein filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
@@ -1127,7 +1130,7 @@ module ndpp_ops
     integer :: g_filter  ! outgoing energy group index
     integer :: i_score   ! index of score dimension of results
     integer :: l         ! legendre moment index
-    real(8) :: norm      ! Interpolation constant, multiplied by sigS (if in TL)
+    real(8) :: norm      ! Interpolation constant multiplied by sigS (if TL)
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     integer :: num_lm    ! Number of m for this l
@@ -1146,15 +1149,15 @@ module ndpp_ops
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
-    call generate_ndpp_distrib_pn(this, nuscatt_flag, gin, t_order, Ein, sigs_el, sigs_inel, &
-                                  norm, gmin, gmax)
+    call generate_ndpp_distrib_pn(this, nuscatt_flag, gin, t_order, Ein, &
+                                  sigs_el, sigs_inel, norm, gmin, gmax)
 
-    ! Apply mult to the normalization constant, norm
+    ! Apply mult to the n ormalization constant, norm
     norm = norm * mult
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
       norm = norm * (micro_xs(i_nuclide) % total - &
-        micro_xs(i_nuclide) % absorption)
+           micro_xs(i_nuclide) % absorption)
     end if
 
     ! Add the combined distribution to our tally for each order
@@ -1165,8 +1168,8 @@ module ndpp_ops
         num_lm = 2 * l + 1
 !$omp critical (ndpp_tally_scatt_yn)
         results(i_score: i_score + num_lm - 1, g_filter) % value = &
-          results(i_score: i_score + num_lm - 1, g_filter) % value + &
-          ndpp_outgoing(thread_id, l + 1, g) * norm * calc_rn(l, uvw)
+             results(i_score: i_score + num_lm - 1, g_filter) % value + &
+             ndpp_outgoing(thread_id, l + 1, g) * norm * calc_rn(l, uvw)
 !$omp end critical (ndpp_tally_scatt_yn)
 
         i_score = i_score + num_lm
@@ -1337,8 +1340,8 @@ module ndpp_ops
 
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
-    integer, intent(in) :: score_index  ! dim = 1 starting index in results
-    integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
+    integer, intent(in) :: score_index  ! dim=1 starting index in results
+    integer, intent(in) :: filter_index ! dim=2 starting index (Ein filter)
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
     real(8), intent(in) :: Ein          ! Incoming energy
@@ -1350,33 +1353,18 @@ module ndpp_ops
     integer :: i_grid                    ! index on nuclide energy grid
     real(8) :: f                         ! interp factor on nuclide energy grid
     real(8) :: one_f                     ! (ONE - f)
-    real(8), pointer, save :: chi_Ein(:) ! Working Ein grid
-    real(8), pointer, save :: chi(:,:)   ! Working chi data
-
-!$omp threadprivate(chi_Ein, chi)
-
-    ! Set up pointers
-    chi_Ein => this % chi_Ein
-    if (score_type == SCORE_NDPP_CHI) then
-      chi => this % chi
-    else if (score_type == SCORE_NDPP_CHI_P) then
-      chi => this % chi_p
-    else if (score_type == SCORE_NDPP_CHI_D) then
-      call fatal_error("OpenMC does not yet support Delayed Chi Tallying!")
-      !chi => this % chi_d
-    end if
 
     ! Find the grid index and interpolant of ndpp scattering data
-    if (Ein <= chi_Ein(1)) then
+    if (Ein <= this % chi_Ein(1)) then
       i_grid = 1
       f = ZERO
-    else if (Ein >= chi_Ein(size(chi_Ein))) then
+    else if (Ein >= this % chi_Ein(size(this % chi_Ein))) then
       ! Should never happen as max(ndpp_Ein) is above filter range
       return
     else
-      i_grid = binary_search(chi_Ein, size(chi_Ein), Ein)
-      f = (Ein - chi_Ein(i_grid)) / &
-        (chi_Ein(i_grid + 1) - chi_Ein(i_grid))
+      i_grid = binary_search(this % chi_Ein, size(this % chi_Ein), Ein)
+      f = (Ein - this % chi_Ein(i_grid)) / &
+           (this % chi_Ein(i_grid + 1) - this % chi_Ein(i_grid))
     end if
 
     ! Calculate 1-f, apply mult, and weight by nu-fission for TL
@@ -1390,14 +1378,27 @@ module ndpp_ops
     end if
 
     ! Add the contribution from NDPP data (with interpolation)
-    do g = 1, ubound(chi, dim=1)
-      g_filter = filter_index + g - 1
+    if (score_type == SCORE_NDPP_CHI) then
+      do g = 1, ubound(this % chi, dim=1)
+        g_filter = filter_index + g - 1
 !$omp atomic
-      results(score_index, g_filter) % value = &
-        results(score_index, g_filter) % value + &
-        chi(g, i_grid) * one_f + &
-        chi(g, i_grid + 1) * f
-    end do
+        results(score_index, g_filter) % value = &
+             results(score_index, g_filter) % value + &
+             this % chi(g, i_grid) * one_f + &
+             this % chi(g, i_grid + 1) * f
+      end do
+    else if (score_type == SCORE_NDPP_CHI_P) then
+      do g = 1, ubound(this % chi_p, dim=1)
+        g_filter = filter_index + g - 1
+!$omp atomic
+        results(score_index, g_filter) % value = &
+             results(score_index, g_filter) % value + &
+             this % chi_p(g, i_grid) * one_f + &
+             this % chi_p(g, i_grid + 1) * f
+      end do
+    else if (score_type == SCORE_NDPP_CHI_D) then
+      call fatal_error("OpenMC does not yet support Delayed Chi Tallying!")
+    end if
 
   end subroutine ndpp_tally_chi
 
@@ -1425,33 +1426,17 @@ module ndpp_ops
     integer :: i_grid                    ! index on nuclide energy grid
     real(8) :: f                         ! interp factor on nuclide energy grid
     real(8) :: one_f                     ! (ONE - f)
-    real(8), pointer, save :: chi_Ein(:) ! Working Ein grid
-    real(8), pointer, save :: chi(:,:)   ! Working chi data
-
-!$omp threadprivate(chi_Ein, chi)
-
-    ! Set up pointers
-    chi_Ein => this % chi_Ein
-    if (score_type == SCORE_NDPP_CHI) then
-      chi => this % chi
-    else if (score_type == SCORE_NDPP_CHI_P) then
-      chi => this % chi_p
-    else if (score_type == SCORE_NDPP_CHI_D) then
-      call fatal_error("OpenMC does not yet support Delayed Chi Tallying!")
-      !chi => this % chi_d
-    end if
-
     ! Find the grid index and interpolant of ndpp scattering data
-    if (Ein <= chi_Ein(1)) then
+    if (Ein <= this % chi_Ein(1)) then
       i_grid = 1
       f = ZERO
-    else if (Ein >= chi_Ein(size(chi_Ein))) then
+    else if (Ein >= this % chi_Ein(size(this % chi_Ein))) then
       ! Should never happen as max(ndpp_Ein) is above filter range
       return
     else
-      i_grid = binary_search(chi_Ein, size(chi_Ein), Ein)
-      f = (Ein - chi_Ein(i_grid)) / &
-        (chi_Ein(i_grid + 1) - chi_Ein(i_grid))
+      i_grid = binary_search(this % chi_Ein, size(this % chi_Ein), Ein)
+      f = (Ein - this % chi_Ein(i_grid)) / &
+           (this % chi_Ein(i_grid + 1) - this % chi_Ein(i_grid))
     end if
 
     ! Calculate 1-f, apply mult, and weight by nu-fission for TL
@@ -1459,14 +1444,27 @@ module ndpp_ops
     f = f * mult
 
     ! Add the contribution from NDPP data (with interpolation)
-    do g = 1, ubound(chi, dim=1)
-      g_filter = filter_index + g - 1
+    if (score_type == SCORE_NDPP_CHI) then
+      do g = 1, ubound(this % chi, dim=1)
+        g_filter = filter_index + g - 1
 !$omp atomic
-      results(score_index, g_filter) % value = &
-        results(score_index, g_filter) % value + &
-        chi(g, i_grid) * one_f + &
-        chi(g, i_grid + 1) * f
-    end do
+        results(score_index, g_filter) % value = &
+                results(score_index, g_filter) % value + &
+                this % chi(g, i_grid) * one_f + &
+                this % chi(g, i_grid + 1) * f
+      end do
+    else if (score_type == SCORE_NDPP_CHI_P) then
+      do g = 1, ubound(this % chi_p, dim=1)
+        g_filter = filter_index + g - 1
+!$omp atomic
+        results(score_index, g_filter) % value = &
+                results(score_index, g_filter) % value + &
+                this % chi_p(g, i_grid) * one_f + &
+                this % chi_p(g, i_grid + 1) * f
+      end do
+    else if (score_type == SCORE_NDPP_CHI_D) then
+      call fatal_error("OpenMC does not yet support Delayed Chi Tallying!")
+    end if
 
   end subroutine ndpp_tally_mat_chi
 
@@ -1487,22 +1485,23 @@ module ndpp_ops
     if (micro_xs(i_nuclide) % use_ptable) then
       ! We have to get the non-URR elastic x/s which is the average value
       sigs_el = (ONE - micro_xs(i_nuclide) % interp_factor) * &
-        nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid) &
-        + micro_xs(i_nuclide) % interp_factor * &
-        nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid + 1)
+           nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid) &
+           + micro_xs(i_nuclide) % interp_factor * &
+           nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid + 1)
       ! First get the total scattering x/s
       sigs_inel = (ONE - micro_xs(i_nuclide) % interp_factor) * &
-        (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid) - &
-         nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid)) + &
-        (micro_xs(i_nuclide) % interp_factor) * &
-        (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid + 1) - &
-         nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid + 1))
+           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid) - &
+            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid)) + &
+           (micro_xs(i_nuclide) % interp_factor) * &
+           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid + 1) - &
+            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid + 1))
       ! Now take away elastic to get the total inelastic
       sigs_inel = sigs_inel - sigs_el
     else
       sigs_el   = micro_xs(i_nuclide) % elastic
-      sigs_inel = micro_xs(i_nuclide) % total - micro_xs(i_nuclide) % absorption - &
-        sigs_el
+      sigs_inel = micro_xs(i_nuclide) % total - &
+           micro_xs(i_nuclide) % absorption - &
+           sigs_el
     end if
 
   end subroutine calc_scatter_xs
@@ -1523,11 +1522,11 @@ module ndpp_ops
     real(8), intent(in)    :: Ein        ! Incoming energy
     integer, intent(out)   :: el_gmin    ! Elastic min outgoing group
     integer, intent(out)   :: el_gmax    ! Elastic max outgoing group
-    type(GrpTransfer), pointer, intent(in) :: inel(:) ! Inelastic data to use
+    type(GroupTransfer), pointer, intent(in) :: inel(:) ! Inelastic data to use
     integer, intent(out)   :: inel_gmin  ! Inelastic min outgoing group
     integer, intent(out)   :: inel_gmax  ! Inelastic max outgoing group
-    integer, intent(out)   :: gmin       ! Min outgoing group for both el and inel
-    integer, intent(out)   :: gmax       ! Max outgoing group for both el and inel
+    integer, intent(out)   :: gmin       ! Min out group for both el and inel
+    integer, intent(out)   :: gmax       ! Max out group for both el and inel
     real(8), intent(out)   :: el_f       ! Elastic interpolant
     real(8), intent(out)   :: inel_f     ! Inelastic interpolant
     integer, intent(out)   :: el_igrid   ! Elastic data location
@@ -1551,9 +1550,9 @@ module ndpp_ops
       el_f = ONE
     else
       el_igrid = binary_search(this % el_Ein(srch_lo: srch_hi), &
-                             srch_hi - srch_lo + 1, Ein) + srch_lo - 1
+                               srch_hi - srch_lo + 1, Ein) + srch_lo - 1
       el_f = log(Ein / this % el_Ein(el_igrid)) / &
-        log(this % el_Ein(el_igrid + 1) / this % el_Ein(el_igrid))
+           log(this % el_Ein(el_igrid + 1) / this % el_Ein(el_igrid))
     end if
 
     ! Now find our gmin and gmax terms
@@ -1576,8 +1575,8 @@ module ndpp_ops
         end if
       else
         ! Perform same steps as above, but with inelastic.
-        ! Also, we will get our normalization constants from the NDPP data itself.
-        ! First perform the binary search to find where our incoming E points is
+        ! Also, we will get normalization constants from the NDPP data itself.
+        ! First perform the binary search to find where our incoming E point is
         srch_lo = this % inel_Ein_srch(gin)
         srch_hi = this % inel_Ein_srch(gin + 1)
         ! Find the grid index and interpolant of ndpp scattering data
@@ -1586,9 +1585,9 @@ module ndpp_ops
           inel_f = ONE
         else
           inel_igrid = binary_search(this % inel_Ein(srch_lo: srch_hi), &
-                                 srch_hi - srch_lo + 1, Ein) + srch_lo - 1
+                                     srch_hi - srch_lo + 1, Ein) + srch_lo - 1
           inel_f = log(Ein / this % inel_Ein(inel_igrid)) / &
-            log(this % inel_Ein(inel_igrid + 1) / this % inel_Ein(inel_igrid))
+               log(this % inel_Ein(inel_igrid + 1) / this % inel_Ein(inel_igrid))
         end if
 
         ! Now find our gmin and gmax terms
@@ -1641,13 +1640,13 @@ module ndpp_ops
     real(8), intent(in)    :: sigs_el   ! Elastic x/s
     real(8), intent(in)    :: sigs_inel ! Inelastic x/s
     real(8), intent(inout) :: norm      ! Total normalization
-    integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp_outgoing
-    integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp_outgoing
+    integer, intent(inout) :: gmin      ! Minimum group transfer of ndpp data
+    integer, intent(inout) :: gmax      ! Maximum group transfer of ndpp data
 
     integer :: el_igrid, inel_igrid
     integer :: el_gmin, el_gmax, inel_gmin, inel_gmax, g
     real(8) :: el_f, el_one_f, inel_f, inel_one_f
-    type(GrpTransfer), pointer :: inel(:)
+    type(GroupTransfer), pointer :: inel(:)
 
     ! Now set our inelastic data to be inelastic or nuinel, depending on type
     ! requested
@@ -1677,7 +1676,7 @@ module ndpp_ops
       do g = lbound(this % el(el_igrid) % outgoing, dim=2), &
              ubound(this % el(el_igrid) % outgoing, dim=2)
         ndpp_outgoing(thread_id, l, g) = el_one_f * &
-          this % el(el_igrid) % outgoing(l, g)
+             this % el(el_igrid) % outgoing(l, g)
       end do
     end if
     ! Do upper point
@@ -1686,8 +1685,8 @@ module ndpp_ops
       do g = lbound(this % el(el_igrid + 1) % outgoing, dim=2), &
              ubound(this % el(el_igrid + 1) % outgoing, dim=2)
         ndpp_outgoing(thread_id, l, g) = &
-          ndpp_outgoing(thread_id, l, g) + &
-          el_f * this % el(el_igrid + 1) % outgoing(l, g)
+             ndpp_outgoing(thread_id, l, g) + &
+             el_f * this % el(el_igrid + 1) % outgoing(l, g)
       end do
     end if
 
@@ -1698,7 +1697,7 @@ module ndpp_ops
         do g = lbound(inel(inel_igrid) % outgoing, dim=2), &
                ubound(inel(inel_igrid) % outgoing, dim=2)
           ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
-            inel(inel_igrid) % outgoing(l, g) * inel_one_f
+               inel(inel_igrid) % outgoing(l, g) * inel_one_f
         end do
       end if
       ! Do upper point
@@ -1706,7 +1705,7 @@ module ndpp_ops
         do g = lbound(inel(inel_igrid + 1) % outgoing, dim=2), &
                ubound(inel(inel_igrid + 1) % outgoing, dim=2)
           ndpp_outgoing(thread_id, l, g) = ndpp_outgoing(thread_id, l, g) + &
-            inel(inel_igrid + 1) % outgoing(l, g) * inel_f
+               inel(inel_igrid + 1) % outgoing(l, g) * inel_f
         end do
       end if
     end if
@@ -1730,13 +1729,13 @@ module ndpp_ops
     real(8), intent(in)    :: sigs_el   ! Elastic x/s
     real(8), intent(in)    :: sigs_inel ! Inelastic x/s
     real(8), intent(inout) :: norm      ! Total normalization
-    integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp_outgoing
-    integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp_outgoing
+    integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp data
+    integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp data
 
     integer :: el_igrid, inel_igrid
     integer :: el_gmin, el_gmax, inel_gmin, inel_gmax, g
     real(8) :: el_f, el_one_f, inel_f, inel_one_f
-    type(GrpTransfer), pointer :: inel(:)
+    type(GroupTransfer), pointer :: inel(:)
 
     ! Now set our inelastic data to be inelastic or nuinel, depending on type
     ! requested
@@ -1766,7 +1765,7 @@ module ndpp_ops
       do g = lbound(this % el(el_igrid) % outgoing, dim=2), &
              ubound(this % el(el_igrid) % outgoing, dim=2)
         ndpp_outgoing(thread_id, 1: l + 1, g) = el_one_f * &
-          this % el(el_igrid) % outgoing(1: l + 1, g)
+             this % el(el_igrid) % outgoing(1: l + 1, g)
       end do
     end if
     ! Do upper point
@@ -1775,8 +1774,8 @@ module ndpp_ops
       do g = lbound(this % el(el_igrid + 1) % outgoing, dim=2), &
              ubound(this % el(el_igrid + 1) % outgoing, dim=2)
         ndpp_outgoing(thread_id, 1: l + 1, g) = &
-          ndpp_outgoing(thread_id, 1: l + 1, g) + &
-          el_f * this % el(el_igrid + 1) % outgoing(1: l + 1, g)
+             ndpp_outgoing(thread_id, 1: l + 1, g) + &
+             el_f * this % el(el_igrid + 1) % outgoing(1: l + 1, g)
       end do
     end if
 
@@ -1787,8 +1786,8 @@ module ndpp_ops
         do g = lbound(inel(inel_igrid) % outgoing, dim=2), &
                ubound(inel(inel_igrid) % outgoing, dim=2)
           ndpp_outgoing(thread_id, 1: l + 1, g) = &
-            ndpp_outgoing(thread_id, 1: l + 1, g) + &
-            inel(inel_igrid) % outgoing(1: l + 1, g) * inel_one_f
+               ndpp_outgoing(thread_id, 1: l + 1, g) + &
+               inel(inel_igrid) % outgoing(1: l + 1, g) * inel_one_f
         end do
       end if
       ! Do upper point
@@ -1823,7 +1822,7 @@ module ndpp_ops
     integer :: srch_lo, srch_hi, g
     integer :: igrid
     real(8) :: f, one_f
-    type(GrpTransfer), pointer :: inel(:)
+    type(GroupTransfer), pointer :: inel(:)
 
     if (nuscatt) then
       inel => this % nuinel
@@ -1893,14 +1892,14 @@ module ndpp_ops
     integer, intent(in)    :: gin       ! Incoming group index
     integer, intent(in)    :: l         ! Legendre order to score up to
     real(8), intent(in)    :: Ein       ! Incoming energy
-    real(8), intent(in) :: norm      ! Total normalization
+    real(8), intent(in)    :: norm      ! Total normalization
     integer, intent(inout) :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer, intent(inout) :: gmax      ! Maximum group transfer in ndpp_outgoing
 
     integer :: srch_lo, srch_hi, g
     integer :: igrid
     real(8) :: f, one_f
-    type(GrpTransfer), pointer :: inel(:)
+    type(GroupTransfer), pointer :: inel(:)
 
     if (nuscatt) then
       inel => this % nuinel
@@ -2078,16 +2077,16 @@ module ndpp_ops
 
     subroutine thin_grid(xout, yout, yout2, tokeep, tol, compression, maxerr)
       real(8), pointer, intent(inout) :: xout(:)      ! Resultant x grid
-      type(GrpTransfer), pointer, intent(inout) :: yout(:)  ! Resultant y values
-      type(GrpTransfer), pointer, intent(inout) :: yout2(:) ! Resultant y values
+      type(GroupTransfer), pointer, intent(inout) :: yout(:)  ! Resultant y values
+      type(GroupTransfer), pointer, intent(inout) :: yout2(:) ! Resultant y values
       real(8), allocatable, intent(in)    :: tokeep(:)    ! x points to keep
       real(8), intent(in)                 :: tol          ! Desired fractional error to maintain
       real(8), intent(out)                :: compression  ! Data reduction fraction
       real(8), intent(inout)              :: maxerr       ! Maximum error due to compression
 
       real(8), allocatable :: xin(:)       ! Incoming x grid
-      type(GrpTransfer), allocatable :: yin(:)   ! Incoming y values
-      type(GrpTransfer), allocatable :: yin2(:)  ! Incoming y values
+      type(GroupTransfer), allocatable :: yin(:)   ! Incoming y values
+      type(GroupTransfer), allocatable :: yin2(:)  ! Incoming y values
       integer :: i, j, k, klo, khi
       integer :: all_ok
       real(8) :: x1, y1, x2, y2, x, y, testval
