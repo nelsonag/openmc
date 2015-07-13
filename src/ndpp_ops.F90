@@ -929,6 +929,10 @@ module ndpp_ops
           end if
         end do
 
+
+        !!!TODO: Thin the chi grid and also write code to apply user thinning
+        !!!      to any NDPP grid, regardless of if it is macro or nuclide data
+
         ! Now normalize the chi values
         if (get_chi_t) then
           norm = sum(ndpp_mat % chi(:,iE))
