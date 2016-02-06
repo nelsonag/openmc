@@ -273,7 +273,7 @@ module constants
        EVENT_ABSORB  =  2
 
   ! Tally score type
-  integer, parameter :: N_SCORE_TYPES = 22
+  integer, parameter :: N_SCORE_TYPES = 31
   integer, parameter :: &
        SCORE_FLUX               = -1,  & ! flux
        SCORE_TOTAL              = -2,  & ! total reaction rate
@@ -296,24 +296,39 @@ module constants
        SCORE_NU_SCATTER_YN      = -19, & ! angular flux-weighted nu-scattering moment (0:N)
        SCORE_EVENTS             = -20, & ! number of events
        SCORE_DELAYED_NU_FISSION = -21, & ! delayed neutron production rate
-       SCORE_INVERSE_VELOCITY   = -22    ! flux-weighted inverse velocity
+       SCORE_INVERSE_VELOCITY   = -22, & ! flux-weighted inverse velocity
+       SCORE_NDPP_SCATT_N       = -23, & ! pre-integrated version of score_scatter_n
+       SCORE_NDPP_SCATT_PN      = -24, & ! pre-integrated version of score_scatter_pn
+       SCORE_NDPP_SCATT_YN      = -25, & ! pre-integrated version of score_scatter_yn
+       SCORE_NDPP_NU_SCATT_N    = -26, & ! pre-integrated version of score_nu_scatter_n
+       SCORE_NDPP_NU_SCATT_PN   = -27, & ! pre-integrated version of score_nu_scatter_pn
+       SCORE_NDPP_NU_SCATT_YN   = -28, & ! pre-integrated version of score_nu_scatter_yn
+       SCORE_NDPP_CHI           = -29, & ! pre-integrated total fission spectra
+       SCORE_NDPP_CHI_P         = -30, & ! pre-integrated prompt fission spectra
+       SCORE_NDPP_CHI_D         = -31    ! pre-integrated delayed fission spectra
 
   ! Maximum scattering order supported
   integer, parameter :: MAX_ANG_ORDER = 10
 
   ! Names of *-PN & *-YN scores (MOMENT_STRS) and *-N moment scores
   character(*), parameter :: &
-       MOMENT_STRS(6)    = (/ "scatter-p   ",   &
-                              "nu-scatter-p",   &
-                              "flux-y      ",   &
-                              "total-y     ",   &
-                              "scatter-y   ",   &
-                              "nu-scatter-y"/), &
-       MOMENT_N_STRS(2)  = (/ "scatter-    ",   &
-                              "nu-scatter- "/)
+       MOMENT_STRS(10)   = (/ "scatter-p        ",   &
+                              "nu-scatter-p     ",   &
+                              "ndpp-scatter-p   ",   &
+                              "ndpp-nu-scatter-p",   &
+                              "flux-y           ",   &
+                              "total-y          ",   &
+                              "scatter-y        ",   &
+                              "nu-scatter-y     ",   &
+                              "ndpp-scatter-y   ",   &
+                              "ndpp-nu-scatter-y"/), &
+       MOMENT_N_STRS(4)  = (/ "scatter-        ", &
+                              "nu-scatter-     ", &
+                              "ndpp-scatter-   ", &
+                              "ndpp-nu-scatter-"/)
 
   ! Location in MOMENT_STRS where the YN data begins
-  integer, parameter :: YN_LOC = 3
+  integer, parameter :: YN_LOC = 5
 
   ! Tally map bin finding
   integer, parameter :: NO_BIN_FOUND = -1
@@ -361,6 +376,12 @@ module constants
        K_ABSORPTION  = 2, &
        K_TRACKLENGTH = 3, &
        LEAKAGE       = 4
+
+  ! ============================================================================
+  ! NDPP-BASED TALLY-RELATED CONSTANTS
+  integer, parameter :: &
+       SCATT_TYPE_LEGENDRE = 0, & ! Legendre moments
+       SCATT_TYPE_TABULAR  = 1 ! Tabular Representation
 
   ! ============================================================================
   ! RANDOM NUMBER STREAM CONSTANTS

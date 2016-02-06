@@ -17,6 +17,7 @@ module initialize
   use input_xml,       only: read_input_xml, cells_in_univ_dict, read_plots_xml
   use material_header, only: Material
   use mgxs_data,       only: read_mgxs, same_NuclideMG_list, create_macro_xs
+  use ndpp_initialize,  only: read_ndpp_data
   use output,          only: title, header, print_version, write_message,     &
                              print_usage, write_xs_summary, print_plot
   use random_lcg,      only: initialize_prng
@@ -163,6 +164,13 @@ contains
       ! If this is a restart run, load the state point data and binary source
       ! file
       if (restart_run) call load_state_point()
+
+      ! Read NDPP-format integrated scattering data, if needed for tallies
+      if (use_ndpp_data) then
+        call time_read_xs % start()
+        call read_ndpp_data()
+        call time_read_xs % stop()
+      end if
     end if
 
     if (master) then

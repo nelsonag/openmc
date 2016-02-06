@@ -788,6 +788,15 @@ contains
     score_names(abs(SCORE_NU_SCATTER_YN))      = "Scattering Prod. Rate Moment"
     score_names(abs(SCORE_DELAYED_NU_FISSION)) = "Delayed-Nu-Fission Rate"
     score_names(abs(SCORE_INVERSE_VELOCITY))   = "Flux-Weighted Inverse Velocity"
+    score_names(abs(SCORE_NDPP_SCATT_N))       = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_SCATT_PN))      = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_SCATT_YN))      = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATT_N))    = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATT_PN))   = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATT_YN))   = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_CHI))           = "Total Fission Prod. Rate"
+    score_names(abs(SCORE_NDPP_CHI_P))         = "Prompt Fission Prod. Rate"
+    score_names(abs(SCORE_NDPP_CHI_D))         = "Delayed Fission Prod. Rate"
 
     ! Create filename for tally output
     filename = trim(path_output) // "tallies.out"
@@ -922,7 +931,7 @@ contains
                    repeat(" ", indent), score_name, &
                    to_str(t % results(score_index,filter_index) % sum), &
                    trim(to_str(t % results(score_index,filter_index) % sum_sq))
-            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN)
+            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATT_PN, SCORE_NDPP_NU_SCATT_PN)
               score_index = score_index - 1
               do n_order = 0, t % moment_order(k)
                 score_index = score_index + 1
@@ -936,7 +945,7 @@ contains
               end do
               k = k + t % moment_order(k)
             case (SCORE_SCATTER_YN, SCORE_NU_SCATTER_YN, SCORE_FLUX_YN, &
-                  SCORE_TOTAL_YN)
+                  SCORE_TOTAL_YN, SCORE_NDPP_SCATT_YN, SCORE_NDPP_NU_SCATT_YN)
               score_index = score_index - 1
               do n_order = 0, t % moment_order(k)
                 do nm_order = -n_order, n_order
