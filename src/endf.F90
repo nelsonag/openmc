@@ -62,6 +62,24 @@ contains
       string = "events"
     case (SCORE_INVERSE_VELOCITY)
       string = "inverse-velocity"
+    case (SCORE_NDPP_SCATT_N)
+      string = "ndpp-scatt-n"
+    case (SCORE_NDPP_SCATT_PN)
+      string = "ndpp-scatt-pn"
+    case (SCORE_NDPP_SCATT_YN)
+      string = "ndpp-scatt-yn"
+    case (SCORE_NDPP_NU_SCATT_N)
+      string = "ndpp-nu-scatt-n"
+    case (SCORE_NDPP_NU_SCATT_PN)
+      string = "ndpp-nu-scatt-pn"
+    case (SCORE_NDPP_NU_SCATT_YN)
+      string = "ndpp-nu-scatt-yn"
+    case (SCORE_NDPP_CHI)
+      string = "ndpp-chi"
+    case (SCORE_NDPP_CHI_P)
+      string = "ndpp-chi-p"
+    case (SCORE_NDPP_CHI_D)
+      string = "ndpp-chi-d"
 
     ! Normal ENDF-based reactions
     case (TOTAL_XS)

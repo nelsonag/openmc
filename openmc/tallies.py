@@ -74,7 +74,7 @@ class Tally(object):
     num_bins : Integral
         Total number of bins for the tally
     shape : 3-tuple of Integral
-        The shape of the tally data array ordered as the number of filter bins, 
+        The shape of the tally data array ordered as the number of filter bins,
         nuclide bins and score bins
     num_realizations : Integral
         Total number of realizations
@@ -542,6 +542,8 @@ class Tally(object):
             msg = 'Unable to add a duplicate score "{0}" to Tally ID="{1}" ' \
                   'since duplicate scores are not supported in the OpenMC ' \
                   'Python API'.format(score, self.id)
+            print score
+            print self.scores
             raise ValueError(msg)
 
         # Normal score strings
@@ -1834,7 +1836,7 @@ class Tally(object):
                 np.tile(other.std_dev, (1, self.num_nuclides, 1))
 
         # Add nuclides to each tally such that each tally contains the complete
-        # set of nuclides necessary to perform an entrywise product. New 
+        # set of nuclides necessary to perform an entrywise product. New
         # nuclides added to a tally will have all their scores set to zero.
         else:
 

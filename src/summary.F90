@@ -661,16 +661,19 @@ contains
       allocate(str_array(t%n_score_bins))
       MOMENT_LOOP: do j = 1, t%n_user_score_bins
         select case(t%score_bins(k))
-        case (SCORE_SCATTER_N, SCORE_NU_SCATTER_N)
+        case (SCORE_SCATTER_N, SCORE_NU_SCATTER_N, SCORE_NDPP_SCATT_N, &
+              SCORE_NDPP_NU_SCATT_N)
           str_array(k) = 'P' // trim(to_str(t%moment_order(k)))
           k = k + 1
-        case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN)
+        case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATT_PN, &
+              SCORE_NDPP_NU_SCATT_PN)
           do n_order = 0, t%moment_order(k)
             str_array(k) = 'P' // trim(to_str(n_order))
             k = k + 1
           end do
         case (SCORE_SCATTER_YN, SCORE_NU_SCATTER_YN, SCORE_FLUX_YN, &
-             SCORE_TOTAL_YN)
+              SCORE_TOTAL_YN, SCORE_NDPP_SCATT_YN, &
+              SCORE_NDPP_NU_SCATT_YN)
           do n_order = 0, t%moment_order(k)
             do nm_order = -n_order, n_order
               str_array(k) = 'Y' // trim(to_str(n_order)) // ',' // &
