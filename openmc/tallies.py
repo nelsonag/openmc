@@ -542,8 +542,6 @@ class Tally(object):
             msg = 'Unable to add a duplicate score "{0}" to Tally ID="{1}" ' \
                   'since duplicate scores are not supported in the OpenMC ' \
                   'Python API'.format(score, self.id)
-            print score
-            print self.scores
             raise ValueError(msg)
 
         # Normal score strings
