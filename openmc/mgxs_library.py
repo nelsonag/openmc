@@ -455,7 +455,7 @@ class XSdata(object):
             shape_vec = (self._num_polar, self._num_azimuthal,
                          self._energy_groups.num_groups)
             shape_mat = (self._num_polar, self._num_azimuthal,
-                         self._energy_groups.num_group,
+                         self._energy_groups.num_groups,
                          self._energy_groups.num_groups)
 
         # Begin by checking the case when chi has already been given and thus
