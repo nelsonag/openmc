@@ -35,8 +35,7 @@ contains
     type(Node), pointer :: node_xsdata
     type(NodeList), pointer :: node_xsdata_list => null()
     logical :: file_exists
-    integer :: error_code
-    character(MAX_LINE_LEN) :: error_text, temp_str
+    character(MAX_LINE_LEN) :: temp_str
     logical :: get_kfiss, get_fiss
     integer :: l
 
@@ -125,17 +124,11 @@ contains
           end select
 
           ! Now read in the data specific to the type we just declared
-          call NuclideMG_init(nuclides_MG(i_nuclide) % obj, node_xsdata, &
-                               energy_groups, get_kfiss, get_fiss, error_code, &
-                               error_text)
+          call nuclides_MG(i_nuclide) % obj % init(node_xsdata, energy_groups, &
+                                                   get_kfiss, get_fiss)
 
           ! Keep track of what listing is associated with this nuclide
           nuclides_MG(i_nuclide) % obj % listing = i_listing
-
-          ! Handle any errors
-          if (error_code /= 0) then
-            call fatal_error(trim(error_text))
-          end if
 
           ! Add name and alias to dictionary
           call already_read % add(name)
@@ -169,13 +162,13 @@ contains
   end subroutine read_mgxs
 
 !===============================================================================
-! SAME_NUCLIDE_LIST creates a linked list for each nuclide containing the
+! SAME_NUCLIDEMG_LIST creates a linked list for each nuclide containing the
 ! indices in the nuclides array of all other instances of that nuclide.  For
 ! example, the same nuclide may exist at multiple temperatures resulting
 ! in multiple entries in the nuclides array for a single zaid number.
 !===============================================================================
 
-  subroutine same_NuclideMG_list()
+  subroutine same_nuclidemg_list()
 
     integer :: i ! index in nuclides array
     integer :: j ! index in nuclides array
@@ -188,448 +181,7 @@ contains
       end do
     end do
 
-  end subroutine same_NuclideMG_list
-
-!===============================================================================
-! NUCLIDE_*_INIT reads in the data from the XML file, as already accessed
-!===============================================================================
-
-    subroutine NuclideMG_init(this, node_xsdata, groups, get_kfiss, get_fiss, &
-                                  error_code, error_text)
-      class(NuclideMG), intent(inout) :: this        ! Working Object
-      type(Node), pointer, intent(in)  :: node_xsdata ! Data from data.xml
-      integer, intent(in)              :: groups      ! Number of Energy groups
-      logical, intent(in)              :: get_kfiss   ! Need Kappa-Fission?
-      logical, intent(in)              :: get_fiss ! Should we get fiss data?
-      integer, intent(inout)           :: error_code  ! Code signifying error
-      character(MAX_LINE_LEN), intent(inout) :: error_text ! Error message to print
-
-      type(Node), pointer     :: node_legendre_mu
-      character(MAX_LINE_LEN) :: temp_str
-      logical                 :: enable_leg_mu
-
-      ! Initialize error data
-      error_code = 0
-      error_text = ''
-
-      ! Load the data
-      call get_node_value(node_xsdata, "name", this % name)
-      this % name = to_lower(this % name)
-      if (check_for_node(node_xsdata, "kT")) then
-        call get_node_value(node_xsdata, "kT", this % kT)
-      else
-        this % kT = ZERO
-      end if
-      if (check_for_node(node_xsdata, "zaid")) then
-        call get_node_value(node_xsdata, "zaid", this % zaid)
-      else
-        this % zaid = -1
-      end if
-      if (check_for_node(node_xsdata, "scatt_type")) then
-        call get_node_value(node_xsdata, "scatt_type", temp_str)
-        temp_str = trim(to_lower(temp_str))
-        if (temp_str == 'legendre') then
-          this % scatt_type = ANGLE_LEGENDRE
-        else if (temp_str == 'histogram') then
-          this % scatt_type = ANGLE_HISTOGRAM
-        else if (temp_str == 'tabular') then
-          this % scatt_type = ANGLE_TABULAR
-        else
-          error_code = 1
-          error_text = "Invalid Scatt Type Option!"
-          return
-        end if
-      else
-        this % scatt_type = ANGLE_LEGENDRE
-      end if
-
-      if (check_for_node(node_xsdata, "order")) then
-        call get_node_value(node_xsdata, "order", this % order)
-      else
-        error_code = 1
-        error_text = "Order Must Be Provided!"
-        return
-      end if
-
-      ! Get scattering treatment
-      if (check_for_node(node_xsdata, "tabular_legendre")) then
-        call get_node_ptr(node_xsdata, "tabular_legendre", node_legendre_mu)
-        if (check_for_node(node_legendre_mu, "enable")) then
-          call get_node_value(node_legendre_mu, "enable", temp_str)
-          temp_str = trim(to_lower(temp_str))
-          if (temp_str == 'true' .or. temp_str == '1') then
-            enable_leg_mu = .true.
-          elseif (temp_str == 'false' .or. temp_str == '0') then
-            enable_leg_mu = .false.
-            this % legendre_mu_points = 1
-          else
-            call fatal_error("Unrecognized tabular_legendre/enable: " // temp_str)
-          end if
-        else
-          enable_leg_mu = .true.
-          this % legendre_mu_points = 33
-        end if
-        if (enable_leg_mu .and. &
-             check_for_node(node_legendre_mu, "num_points")) then
-          call get_node_value(node_legendre_mu, "num_points", &
-                              this % legendre_mu_points)
-          if (this % legendre_mu_points <= 0) then
-            call fatal_error("num_points element must be positive and non-zero!")
-          end if
-          this % legendre_mu_points = -1 * this % legendre_mu_points
-        end if
-      else
-        this % legendre_mu_points = 1
-      end if
-
-      if (check_for_node(node_xsdata, "fissionable")) then
-        call get_node_value(node_xsdata, "fissionable", temp_str)
-        temp_str = to_lower(temp_str)
-        if (trim(temp_str) == 'true' .or. trim(temp_str) == '1') then
-          this % fissionable = .true.
-        else
-          this % fissionable = .false.
-        end if
-      else
-        error_code = 1
-        error_text = "Fissionable element must be set!"
-        return
-      end if
-
-      select type(this)
-      type is (NuclideIso)
-        call NuclideIso_init(this, node_xsdata, groups, get_kfiss, get_fiss, &
-                              error_code, error_text)
-      type is (NuclideAngle)
-        call NuclideAngle_init(this, node_xsdata, groups, get_kfiss, get_fiss, &
-                                error_code, error_text)
-      end select
-
-    end subroutine NuclideMG_init
-
-    subroutine NuclideIso_init(this, node_xsdata, groups, get_kfiss, get_fiss, &
-                                error_code, error_text)
-      class(NuclideIso), intent(inout)  :: this        ! Working Object
-      type(Node), pointer, intent(in)    :: node_xsdata ! Data from data.xml
-      integer, intent(in)                :: groups      ! Number of Energy groups
-      logical, intent(in)                :: get_kfiss   ! Need Kappa-Fission?
-      logical, intent(in)                :: get_fiss    ! Need fiss data?
-      integer, intent(inout)             :: error_code  ! Code signifying error
-      character(MAX_LINE_LEN), intent(inout) :: error_text ! Error message to print
-
-      real(8), allocatable :: temp_arr(:)
-      integer :: arr_len
-      integer :: order_dim
-
-      ! Load the more specific data
-      if (this % fissionable) then
-
-        if (check_for_node(node_xsdata, "chi")) then
-          ! Get chi
-          allocate(this % chi(groups))
-          call get_node_array(node_xsdata, "chi", this % chi)
-
-          ! Get nu_fission (as a vector)
-          if (check_for_node(node_xsdata, "nu_fission")) then
-            allocate(temp_arr(groups * 1))
-            call get_node_array(node_xsdata, "nu_fission", temp_arr)
-            allocate(this % nu_fission(groups, 1))
-            this % nu_fission = reshape(temp_arr, (/groups, 1/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "If fissionable, must provide nu_fission!"
-            return
-          end if
-
-        else
-          ! Get nu_fission (as a matrix)
-          if (check_for_node(node_xsdata, "nu_fission")) then
-
-            allocate(temp_arr(groups*groups))
-            call get_node_array(node_xsdata, "nu_fission", temp_arr)
-            allocate(this % nu_fission(groups, groups))
-            this % nu_fission = reshape(temp_arr, (/groups, groups/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "If fissionable, must provide nu_fission!"
-            return
-          end if
-        end if
-        if (get_fiss) then
-          allocate(this % fission(groups))
-          if (check_for_node(node_xsdata, "fission")) then
-            call get_node_array(node_xsdata, "fission", this % fission)
-          else
-            error_code = 1
-            error_text = "Fission data missing, required due to fission&
-                         & tallies in tallies.xml file!"
-            return
-          end if
-        end if
-        if (get_kfiss) then
-          allocate(this % k_fission(groups))
-          if (check_for_node(node_xsdata, "kappa_fission")) then
-            call get_node_array(node_xsdata, "kappa_fission", this % k_fission)
-          else
-            error_code = 1
-            error_text = "kappa_fission data missing, required due to &
-                          &kappa-fission tallies in tallies.xml file!"
-            return
-          end if
-        end if
-      end if
-
-      allocate(this % absorption(groups))
-      if (check_for_node(node_xsdata, "absorption")) then
-        call get_node_array(node_xsdata, "absorption", this % absorption)
-      else
-        error_code = 1
-        error_text = "Must provide absorption!"
-        return
-      end if
-
-      if (this % scatt_type == ANGLE_LEGENDRE) then
-        order_dim = this % order + 1
-      else if (this % scatt_type == ANGLE_HISTOGRAM) then
-        order_dim = this % order
-      else if (this % scatt_type == ANGLE_TABULAR) then
-        order_dim = this % order
-      end if
-
-      allocate(this % scatter(groups, groups, order_dim))
-      if (check_for_node(node_xsdata, "scatter")) then
-        allocate(temp_arr(groups * groups * order_dim))
-        call get_node_array(node_xsdata, "scatter", temp_arr)
-        this % scatter = reshape(temp_arr, (/groups, groups, order_dim/))
-        deallocate(temp_arr)
-      else
-        error_code = 1
-        error_text = "Must provide scatter!"
-        return
-      end if
-
-
-      allocate(this % total(groups))
-      if (check_for_node(node_xsdata, "total")) then
-        call get_node_array(node_xsdata, "total", this % total)
-      else
-        this % total = this % absorption + sum(this%scatter(:,:,1),dim=1)
-      end if
-
-      ! Get Mult Data
-      allocate(this % mult(groups, groups))
-      if (check_for_node(node_xsdata, "multiplicity")) then
-        arr_len = get_arraysize_double(node_xsdata, "multiplicity")
-        if (arr_len == groups * groups) then
-          allocate(temp_arr(arr_len))
-          call get_node_array(node_xsdata, "multiplicity", temp_arr)
-          this % mult = reshape(temp_arr, (/groups, groups/))
-          deallocate(temp_arr)
-        else
-          error_code = 1
-          error_text = "Multiplicity Length Not Same as number of groups squared!"
-          return
-        end if
-      else
-        this % mult = ONE
-      end if
-
-    end subroutine NuclideIso_init
-
-    subroutine NuclideAngle_init(this, node_xsdata, groups, get_kfiss, get_fiss, &
-                                  error_code, error_text)
-      class(NuclideAngle), intent(inout) :: this        ! Working Object
-      type(Node), pointer, intent(in)     :: node_xsdata ! Data from data.xml
-      integer, intent(in)                 :: groups      ! Number of Energy groups
-      logical, intent(in)                 :: get_kfiss   ! Need Kappa-Fission?
-      logical, intent(in)                 :: get_fiss    ! Should we get fiss data?
-      integer, intent(inout)              :: error_code  ! Code signifying error
-      character(MAX_LINE_LEN), intent(inout) :: error_text ! Error message to print
-
-      real(8), allocatable :: temp_arr(:)
-      integer :: arr_len
-      real(8) :: dangle
-      integer :: iangle
-      integer :: order_dim
-
-      if (this % scatt_type == ANGLE_LEGENDRE) then
-        order_dim = this % order + 1
-      else if (this % scatt_type == ANGLE_HISTOGRAM) then
-        order_dim = this % order
-      else if (this % scatt_type == ANGLE_TABULAR) then
-        order_dim = this % order
-      end if
-
-      if (check_for_node(node_xsdata, "num_polar")) then
-        call get_node_value(node_xsdata, "num_polar", this % Npol)
-      else
-        error_code = 1
-        error_text = "num_polar Must Be Provided!"
-        return
-      end if
-
-      if (check_for_node(node_xsdata, "num_azimuthal")) then
-        call get_node_value(node_xsdata, "num_azimuthal", this % Nazi)
-      else
-        error_code = 1
-        error_text = "num_azimuthal Must Be Provided!"
-        return
-      end if
-
-      ! Load angle data, if present (else equally spaced)
-      allocate(this % polar(this % Npol))
-      allocate(this % azimuthal(this % Nazi))
-      if (check_for_node(node_xsdata, "polar")) then
-        error_code = 1
-        error_text = "User-Specified polar angle bins not yet supported!"
-        return
-        call get_node_array(node_xsdata, "polar", this % polar)
-      else
-        dangle = PI / real(this % Npol,8)
-        do iangle = 1, this % Npol
-          this % polar(iangle) = (real(iangle,8) - 0.5_8) * dangle
-        end do
-      end if
-      if (check_for_node(node_xsdata, "azimuthal")) then
-        error_code = 1
-        error_text = "User-Specified azimuthal angle bins not yet supported!"
-        return
-        call get_node_array(node_xsdata, "azimuthal", this % azimuthal)
-      else
-        dangle = TWO * PI / real(this % Nazi,8)
-        do iangle = 1, this % Nazi
-          this % azimuthal(iangle) = -PI + (real(iangle,8) - 0.5_8) * dangle
-        end do
-      end if
-
-      ! Load the more specific data
-      if (this % fissionable) then
-
-        if (check_for_node(node_xsdata, "chi")) then
-          ! Get chi
-          allocate(temp_arr(groups * this % Nazi * this % Npol))
-          call get_node_array(node_xsdata, "chi", temp_arr)
-          allocate(this % chi(groups, this % Nazi, this % Npol))
-          this % chi = reshape(temp_arr, (/groups, this % Nazi, this % Npol/))
-          deallocate(temp_arr)
-
-          ! Get nu_fission (as a vector)
-          if (check_for_node(node_xsdata, "nu_fission")) then
-            allocate(temp_arr(groups * this % Nazi * this % Npol))
-            call get_node_array(node_xsdata, "nu_fission", temp_arr)
-            allocate(this % nu_fission(groups, 1, this % Nazi, this % Npol))
-            this % nu_fission = reshape(temp_arr, (/groups, 1, this % Nazi, &
-                                                    this % Npol/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "If fissionable, must provide nu_fission!"
-            return
-          end if
-
-        else
-          ! Get nu_fission (as a matrix)
-          if (check_for_node(node_xsdata, "nu_fission")) then
-
-            allocate(temp_arr(groups * this % Nazi * this % Npol))
-            call get_node_array(node_xsdata, "nu_fission", temp_arr)
-            allocate(this % nu_fission(groups, groups, this % Nazi, this % Npol))
-            this % nu_fission = reshape(temp_arr, (/groups, groups, &
-                                                    this % Nazi, this % Npol/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "If fissionable, must provide nu_fission!"
-            return
-          end if
-        end if
-        if (get_fiss) then
-          if (check_for_node(node_xsdata, "fission")) then
-            allocate(temp_arr(groups * this % Nazi * this % Npol))
-            call get_node_array(node_xsdata, "fission", temp_arr)
-            allocate(this % fission(groups, this % Nazi, this % Npol))
-            this % fission = reshape(temp_arr, (/groups, this % Nazi, this % Npol/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "Fission data missing, required due to fission&
-                         & tallies in tallies.xml file!"
-            return
-          end if
-        end if
-        if (get_kfiss) then
-          if (check_for_node(node_xsdata, "kappa_fission")) then
-            allocate(temp_arr(groups * this % Nazi * this % Npol))
-            call get_node_array(node_xsdata, "kappa_fission", temp_arr)
-            allocate(this % k_fission(groups, this % Nazi, this % Npol))
-            this % k_fission = reshape(temp_arr, (/groups, this % Nazi, this % Npol/))
-            deallocate(temp_arr)
-          else
-            error_code = 1
-            error_text = "kappa_fission data missing, required due to &
-                          &kappa-fission tallies in tallies.xml file!"
-            return
-          end if
-        end if
-      end if
-
-      if (check_for_node(node_xsdata, "absorption")) then
-        allocate(temp_arr(groups * this % Nazi * this % Npol))
-        call get_node_array(node_xsdata, "absorption", temp_arr)
-        allocate(this % absorption(groups, this % Nazi, this % Npol))
-        this % absorption = reshape(temp_arr, (/groups, this % Nazi, this % Npol/))
-        deallocate(temp_arr)
-      else
-        error_code = 1
-        error_text = "Must provide absorption!"
-        return
-      end if
-
-      allocate(this % scatter(groups, groups, order_dim, this % Nazi, this % Npol))
-      if (check_for_node(node_xsdata, "scatter")) then
-        allocate(temp_arr(groups * groups * order_dim * this % Nazi * this%Npol))
-        call get_node_array(node_xsdata, "scatter", temp_arr)
-        this % scatter = reshape(temp_arr, (/groups, groups, order_dim, &
-                                             this%Nazi,this%Npol/))
-        deallocate(temp_arr)
-      else
-        error_code = 1
-        error_text = "Must provide scatter!"
-        return
-      end if
-
-      if (check_for_node(node_xsdata, "total")) then
-        allocate(temp_arr(groups * this % Nazi * this % Npol))
-        call get_node_array(node_xsdata, "total", temp_arr)
-        allocate(this % total(groups, this % Nazi, this % Npol))
-        this % total = reshape(temp_arr, (/groups, this % Nazi, this % Npol/))
-        deallocate(temp_arr)
-      else
-        this % total = this % absorption + sum(this%scatter(:,:,1,:,:),dim=1)
-      end if
-
-      ! Get Mult Data
-      allocate(this % mult(groups, groups, this % Nazi, this % Npol))
-      if (check_for_node(node_xsdata, "multiplicity")) then
-        arr_len = get_arraysize_double(node_xsdata, "multiplicity")
-        if (arr_len == groups * groups * this % Nazi * this % Npol) then
-          allocate(temp_arr(arr_len))
-          call get_node_array(node_xsdata, "multiplicity", temp_arr)
-          this % mult = reshape(temp_arr, (/groups, groups, this % Nazi, this % Npol/))
-          deallocate(temp_arr)
-        else
-          error_code = 1
-          error_text = "Multiplicity Length Does Not Match!"
-          return
-        end if
-      else
-        this % mult = ONE
-      end if
-
-    end subroutine NuclideAngle_init
-
+  end subroutine same_nuclidemg_list
 
 !===============================================================================
 ! CREATE_MACRO_XS generates the macroscopic x/s from the microscopic input data
@@ -643,7 +195,6 @@ contains
     logical :: get_kfiss, get_fiss
     integer :: error_code
     character(MAX_LINE_LEN) :: error_text
-    integer :: representation
     integer :: scatt_type
     integer :: legendre_mu_points
 
@@ -675,19 +226,11 @@ contains
       ! At the same time, we will find the scattering type, as that will dictate
       ! how we allocate the scatter object within macroxs
       legendre_mu_points = nuclides_MG(mat % nuclide(1)) % obj % legendre_mu_points
+      scatt_type = nuclides_MG(mat % nuclide(1)) % obj % scatt_type
       select type(nuc => nuclides_MG(mat % nuclide(1)) % obj)
       type is (NuclideIso)
-        representation = MGXS_ISOTROPIC
-      type is (NuclideAngle)
-        representation = MGXS_ANGLE
-      end select
-      scatt_type = nuclides_MG(mat % nuclide(1)) % obj % scatt_type
-
-      ! Now allocate accordingly
-      select case(representation)
-      case(MGXS_ISOTROPIC)
         allocate(MacroXSIso :: macro_xs(i_mat) % obj)
-      case(MGXS_ANGLE)
+      type is (NuclideAngle)
         allocate(MacroXSAngle :: macro_xs(i_mat) % obj)
       end select
 
@@ -696,9 +239,7 @@ contains
                                         scatt_type, legendre_mu_points, &
                                         error_code, error_text)
       ! Handle any errors
-      if (error_code /= 0) then
-        call fatal_error(trim(error_text))
-      end if
+      if (error_code /= 0) call fatal_error(trim(error_text))
     end do
   end subroutine create_macro_xs
 
