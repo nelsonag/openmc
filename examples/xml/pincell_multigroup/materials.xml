@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <materials>
-  <!-- Set default xs set to 300 Kelvin -->
+  <!-- Set default xs set to use 300K data -->
   <default_xs>300K</default_xs>
 
   <!-- UO2 -->

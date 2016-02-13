@@ -2063,7 +2063,10 @@ contains
       ! as nuclides internally.
       ! Get pointer list of XML <macroscopic>
       call get_node_list(node_mat, "macroscopic", node_macro_list)
-      if (get_list_size(node_macro_list) > 1) then
+      if (run_CE .and. (get_list_size(node_macro_list) > 0)) then
+        call fatal_error("Macroscopic can not be used in continuous-energy&
+                         & mode!")
+      else if (get_list_size(node_macro_list) > 1) then
         call fatal_error("Only one macroscopic object permitted per material, " &
              // trim(to_str(mat % id)))
       else if (get_list_size(node_macro_list) == 1) then
@@ -3089,7 +3092,7 @@ contains
 
             ! Append default_xs specifier to nuclide if needed
             if ((default_xs /= '') .and. (.not. ends_with(sarray(j), 'c'))) then
-              word = trim(word) // "." // default_xs
+              word = trim(word) // "." // trim(default_xs)
             end if
 
             ! Search through nuclides

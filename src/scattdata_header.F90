@@ -1,7 +1,10 @@
 module scattdata_header
 
-  use math
   use constants
+  use error,      only: fatal_error
+  use math
+  use random_lcg, only: prn
+  use search,     only: binary_search
 
   implicit none
 
@@ -19,6 +22,7 @@ module scattdata_header
   contains
     procedure(init_), deferred   :: init   ! Initializes ScattData
     procedure(calc_f_), deferred :: calc_f ! Calculates f, given mu
+    procedure(sample_), deferred :: sample ! sample the scatter event
   end type ScattData
 
   abstract interface
@@ -40,12 +44,24 @@ module scattdata_header
       real(8)                      :: f    ! Return value of f(mu)
 
     end function calc_f_
+
+    subroutine sample_(this, gin, gout, mu, wgt)
+      import ScattData
+      class(ScattData), intent(in)    :: this ! Scattering Object to Use
+      integer,          intent(in)    :: gin  ! Incoming neutron group
+      integer,          intent(out)   :: gout ! Sampled outgoin group
+      real(8),          intent(out)   :: mu   ! Sampled change in angle
+      real(8),          intent(inout) :: wgt  ! Particle weight
+    end subroutine sample_
   end interface
 
   type, extends(ScattData) :: ScattDataLegendre
+    ! Maximal value for rejection sampling from rectangle
+    real(8), allocatable  :: max_val(:,:)
   contains
     procedure :: init   => scattdatalegendre_init
     procedure :: calc_f => scattdatalegendre_calc_f
+    procedure :: sample => scattdatalegendre_sample
   end type ScattDataLegendre
 
   type, extends(ScattData) :: ScattDataHistogram
@@ -54,6 +70,7 @@ module scattdata_header
   contains
     procedure :: init   => scattdatahistogram_init
     procedure :: calc_f => scattdatahistogram_calc_f
+    procedure :: sample => scattdatahistogram_sample
   end type ScattDataHistogram
 
   type, extends(ScattData) :: ScattDataTabular
@@ -63,6 +80,7 @@ module scattdata_header
   contains
     procedure :: init   => scattdatatabular_init
     procedure :: calc_f => scattdatatabular_calc_f
+    procedure :: sample => scattdatatabular_sample
   end type ScattDataTabular
 
 !===============================================================================
@@ -100,14 +118,46 @@ contains
 
     subroutine scattdatalegendre_init(this, order, energy, mult, coeffs)
       class(ScattDataLegendre), intent(inout) :: this   ! Object to work on
-      integer, intent(in)                      :: order  ! Data Order
-      real(8), intent(in)              :: energy(:,:) ! Energy Transfer Matrix
-      real(8), intent(in)              :: mult(:,:)   ! Scatter Prod'n Matrix
+      integer, intent(in)                     :: order  ! Data Order
+      real(8), intent(in)              :: energy(:,:)   ! Energy Transfer Matrix
+      real(8), intent(in)              :: mult(:,:)     ! Scatter Prod'n Matrix
       real(8), intent(in)              :: coeffs(:,:,:) ! Coefficients to use
+
+      real(8) :: dmu, mu, f
+      integer :: imu, Nmu, gout, gin, groups
 
       call scattdata_init(this, order, energy, mult)
 
       this % data = coeffs
+
+      groups = size(this % energy,dim=1)
+
+      allocate(this % max_val(groups, groups))
+      this % max_val = ZERO
+      ! Step through the polynomial with fixed number of points to identify
+      ! the maximal value.
+      Nmu = 1001
+      dmu = TWO / real(Nmu,8)
+      do imu = 1, Nmu
+        ! Update mu. Do first and last seperate to avoid float errors
+        if (imu == 1) then
+          mu = -ONE
+        else if (imu == Nmu) then
+          mu = ONE
+        end if
+        mu = -ONE + real(imu - 1,8) * dmu
+        do gin = 1, groups
+          do gout = 1, groups
+            ! Calculate probability
+            f = this % calc_f(gin,gout,mu)
+            ! If this is a new max, store it.
+            if (f > this % max_val(gout,gin)) this % max_val(gout,gin) = f
+          end do
+        end do
+      end do
+
+      ! Finally, since we may not have caught the exact max, add 10% margin
+      this % max_val = this % max_val * 1.1_8
 
     end subroutine scattdatalegendre_init
 
@@ -129,7 +179,7 @@ contains
       this % dmu = TWO / real(order,8)
       this % mu(1) = -ONE
       do imu = 2, order
-        this % mu(imu) = -ONE + (imu - 1) * this % dmu
+        this % mu(imu) = -ONE + real(imu - 1,8) * this % dmu
       end do
 
       ! Best to integrate this histogram so we can avoid rejection sampling
@@ -289,5 +339,154 @@ contains
            r * this % data(imu + 1, gout, gin)
 
     end function scattdatatabular_calc_f
+
+!===============================================================================
+! SCATTDATA*_SCATTER Samples the outgoing energy and change in angle.
+!===============================================================================
+
+  subroutine scattdatalegendre_sample(this, gin, gout, mu, wgt)
+    class(ScattDataLegendre), intent(in)    :: this ! Scattering object to use
+    integer,                  intent(in)    :: gin  ! Incoming neutron group
+    integer,                  intent(out)   :: gout ! Sampled outgoin group
+    real(8),                  intent(out)   :: mu   ! Sampled change in angle
+    real(8),                  intent(inout) :: wgt  ! Particle weight
+
+    real(8) :: xi     ! Our random number
+    real(8) :: prob   ! Running probability
+    real(8) :: u, f, M
+    integer :: samples
+
+    xi = prn()
+    prob = ZERO
+    gout = 0
+
+    do while (prob < xi)
+      gout = gout + 1
+      prob = prob + this % energy(gout,gin)
+    end do
+
+    ! Now we can sample mu using the legendre representation of the thisering
+    ! kernel in data(1:this % order)
+
+    ! Do with rejection sampling
+    ! Set maximal value
+    M = this % max_val(gout,gin)
+    samples = 0
+    do
+      mu = TWO * prn() - ONE
+      f = this % calc_f(gin,gout,mu)
+if (f > M) then
+call fatal_error("Legendre exceeds Max Value!!!")
+end if
+      if (f > ZERO) then
+        u = prn() * M
+        if (u <= f) then
+          exit
+        end if
+      end if
+      samples = samples + 1
+      if (samples > MAX_SAMPLE) then
+        call fatal_error("Maximum number of Legendre expansion samples reached!")
+      end if
+    end do
+
+    wgt = wgt * this % mult(gout,gin)
+
+  end subroutine scattdatalegendre_sample
+
+  subroutine scattdatahistogram_sample(this, gin, gout, mu, wgt)
+    class(ScattDataHistogram), intent(in)    :: this ! Scattering object to use
+    integer,                   intent(in)    :: gin  ! Incoming neutron group
+    integer,                   intent(out)   :: gout ! Sampled outgoin group
+    real(8),                   intent(out)   :: mu   ! Sampled change in angle
+    real(8),                   intent(inout) :: wgt  ! Particle weight
+
+    real(8) :: xi     ! Our random number
+    real(8) :: prob   ! Running probability
+    integer :: imu
+
+    xi = prn()
+    prob = ZERO
+    gout = 0
+
+    do while (prob < xi)
+      gout = gout + 1
+      prob = prob + this % energy(gout,gin)
+    end do
+
+    xi = prn()
+    if (xi < this % data(1,gout,gin)) then
+      imu = 1
+    else
+      imu = binary_search(this % data(:,gout,gin), &
+                          size(this % data(:,gout,gin)), xi)
+    end if
+
+    ! Randomly select a mu in this bin.
+    mu = prn() * this % dmu + this % mu(imu)
+
+    wgt = wgt * this % mult(gout,gin)
+
+  end subroutine scattdatahistogram_sample
+
+  subroutine scattdatatabular_sample(this, gin, gout, mu, wgt)
+    class(ScattDataTabular), intent(in)    :: this ! Scattering object to use
+    integer,                  intent(in)    :: gin  ! Incoming neutron group
+    integer,                  intent(out)   :: gout ! Sampled outgoin group
+    real(8),                  intent(out)   :: mu   ! Sampled change in angle
+    real(8),                  intent(inout) :: wgt  ! Particle weight
+
+    real(8) :: xi     ! Our random number
+    real(8) :: prob   ! Running probability
+    real(8) :: mu0, frac, mu1
+    real(8) :: c_k, c_k1, p0, p1
+    integer :: k, NP
+
+    xi = prn()
+    prob = ZERO
+    gout = 0
+
+    do while (prob < xi)
+      gout = gout + 1
+      prob = prob + this % energy(gout,gin)
+    end do
+
+    ! determine outgoing cosine bin
+    NP = size(this % data(:,gout,gin))
+    xi = prn()
+
+    c_k = this % data(1,gout,gin)
+    do k = 1, NP - 1
+      c_k1 = this % data(k+1,gout,gin)
+      if (xi < c_k1) exit
+      c_k = c_k1
+    end do
+
+    ! check to make sure k is <= NP - 1
+    k = min(k, NP - 1)
+
+    p0  = this % fmu(k,gout,gin)
+    mu0 = this % mu(k)
+    ! Linear-linear interpolation to find mu value w/in bin.
+    p1  = this % fmu(k+1,gout,gin)
+    mu1 = this % mu(k+1)
+
+    frac = (p1 - p0)/(mu1 - mu0)
+
+    if (frac == ZERO) then
+      mu = mu0 + (xi - c_k)/p0
+    else
+      mu = mu0 + (sqrt(max(ZERO, p0*p0 + TWO*frac*(xi - c_k))) - p0)/frac
+    end if
+
+    if (mu <= -ONE) then
+      mu = -ONE
+    else if (mu >= ONE) then
+      mu = ONE
+    end if
+
+    wgt = wgt * this % mult(gout,gin)
+
+  end subroutine scattdatatabular_sample
 
 end module scattdata_header
