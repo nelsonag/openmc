@@ -2994,6 +2994,7 @@ class TalliesFile(object):
         self._tallies = []
         self._meshes = []
         self._tallies_file = ET.Element("tallies")
+        self._ndpp_macroscopic = False
 
     @property
     def tallies(self):
@@ -3002,6 +3003,15 @@ class TalliesFile(object):
     @property
     def meshes(self):
         return self._meshes
+
+    @property
+    def ndpp_macroscopic(self):
+        return self._ndpp_macroscopic
+
+    @ndpp_macroscopic.setter
+    def ndpp_macroscopic(self, ndpp_macroscopic):
+        self._ndpp_macroscopic = ndpp_macroscopic
+
 
     def add_tally(self, tally, merge=False):
         """Add a tally to the file
@@ -3119,6 +3129,11 @@ class TalliesFile(object):
             xml_element = mesh.get_mesh_xml()
             self._tallies_file.append(xml_element)
 
+    def _create_ndpp_macroscopic_subelement(self):
+        if self._ndpp_macroscopic is not None:
+            element = ET.SubElement(self._tallies_file, "ndpp_macroscopic")
+            element.text = str(self._ndpp_macroscopic).lower()
+
     def export_to_xml(self):
         """Create a tallies.xml file that can be used for a simulation.
 
@@ -3129,6 +3144,7 @@ class TalliesFile(object):
 
         self._create_mesh_subelements()
         self._create_tally_subelements()
+        self._create_ndpp_macroscopic_subelement()
 
         # Clean the indentation in the file to be user-readable
         clean_xml_indentation(self._tallies_file)
