@@ -1433,13 +1433,13 @@ contains
                  matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-                 t % moment_order(i), score, p % last_E, t % results)
+                 t % moment_order(i), score, p % last_E, t % results, .false.)
         else
           call tally_ndpp_n(p % event_nuclide, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, .true., p % last_E, t % results)
+               t % moment_order(i), score, .true., p % last_E, t % results, .false.)
         end if
       else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
         if (i_nuclide > 0) then
@@ -1447,19 +1447,19 @@ contains
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, .false., p % E, t % results)
+               t % moment_order(i), score, .false., p % E, t % results, .false.)
         else if (ndpp_macroscopic) then
           call tally_macro_mat_ndpp_n(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, p % E, t % results)
+               t % moment_order(i), score, p % E, t % results, .false.)
         else
           call tally_macro_ndpp_n(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, p % E, t % results)
+               t % moment_order(i), score, p % E, t % results, .false.)
         end if
       end if
 
@@ -1473,13 +1473,13 @@ contains
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, p % last_E, t % results)
+               t % moment_order(i), score, p % last_E, t % results,.false.)
         else
           call tally_ndpp_pn(p % event_nuclide, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, .True., p % last_E, t % results)
+               t % moment_order(i), score, .true., p % last_E, t % results,.false.)
         end if
       else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
         if (i_nuclide > 0) then
@@ -1487,19 +1487,19 @@ contains
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, .false., p % E, t % results)
+               t % moment_order(i), score, .false., p % E, t % results,.false.)
         else if (ndpp_macroscopic) then
           call tally_macro_mat_ndpp_pn(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, p % E, t % results)
+               t % moment_order(i), score, p % E, t % results,.false.)
         else
           call tally_macro_ndpp_pn(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
-               t % moment_order(i), score, p % E, t % results)
+               t % moment_order(i), score, p % E, t % results,.false.)
         end if
       end if
       i = i + t % moment_order(i)
@@ -1515,14 +1515,14 @@ contains
                  score_index, filter_index - &
                  matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                  t % moment_order(i), score, p % last_E, &
-                 p % coord(1) % uvw, t % results)
+                 p % coord(1) % uvw, t % results, .false.)
         else
           call tally_ndpp_yn(p % event_nuclide, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                t % moment_order(i), score, .true., p % last_E, &
-               p % last_uvw, t % results)
+               p % last_uvw, t % results, .false.)
         end if
       else if (t % estimator == ESTIMATOR_TRACKLENGTH) then
         if (i_nuclide > 0) then
@@ -1531,21 +1531,21 @@ contains
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                t % moment_order(i), score, .false., &
-               p % E, p % coord(1) % uvw, t % results)
+               p % E, p % coord(1) % uvw, t % results, .false.)
         else if (ndpp_macroscopic) then
           call tally_macro_mat_ndpp_yn(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                t % moment_order(i), score, p % E, p % coord(1) % uvw, &
-               t % results)
+               t % results, .false.)
         else
           call tally_macro_ndpp_yn(p % material, &
                matching_bins(t % find_filter(FILTER_ENERGYIN)), &
                score_index, filter_index - &
                matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
                t % moment_order(i), score, p % E, p % coord(1) % uvw, &
-               t % results)
+               t % results, .false.)
         end if
       end if
       i = i + (t % moment_order(i) + 1)**2 - 1
@@ -1979,7 +1979,7 @@ contains
 
       if (t % energyout_matches_groups) then
         ! determine outgoing energy from fission bank
-        gout = fission_bank(n_bank - p % n_bank + k) % g
+        gout = int(fission_bank(n_bank - p % n_bank + k) % E)
 
         ! change outgoing energy bin
         matching_bins(i) = gout
@@ -3768,14 +3768,26 @@ contains
     i_sab = micro_xs(i_nuclide) % index_sab
     if (i_sab /= 0) then
       ! We have a collision in the S(a,b) range
-      call ndpp_tally_scatt_n(ndpp_sab_data(i_sab), i_nuclide, gin, &
-                              score_index, filter_index, t_order, mult, &
-                              is_analog, Ein, results, nuscatt)
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_n(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                score_index, filter_index, t_order, mult, &
+                                is_analog, Ein, results, nuscatt)
+      else
+        call ndpp_tally_scatt_n(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                score_index, filter_index, t_order, mult, &
+                                is_analog, Ein, results)
+      end if
     else
       ! Normal scattering (non-S(a,b))
-      call ndpp_tally_scatt_n(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
-                              score_index, filter_index, t_order, mult, &
-                              is_analog, Ein, results, nuscatt)
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_n(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+                                score_index, filter_index, t_order, mult, &
+                                is_analog, Ein, results, nuscatt)
+      else
+        call ndpp_tally_scatt_n(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+                                score_index, filter_index, t_order, mult, &
+                                is_analog, Ein, results)
+      end if
     end if
   end subroutine tally_ndpp_n
 
@@ -3879,14 +3891,26 @@ contains
     i_sab = micro_xs(i_nuclide) % index_sab
     if (i_sab /= 0) then
       ! We have a collision in the S(a,b) range
-      call ndpp_tally_scatt_pn(ndpp_sab_data(i_sab), i_nuclide, gin, &
-                               score_index, filter_index, t_order, mult, &
-                               is_analog, Ein, results, nuscatt)
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_pn(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, results, nuscatt)
+      else
+        call ndpp_tally_scatt_pn(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, results)
+      end if
     else
       ! Normal scattering (non-S(a,b))
-      call ndpp_tally_scatt_pn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
-                               score_index, filter_index, t_order, mult, &
-                               is_analog, Ein, results, nuscatt)
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_pn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, results, nuscatt)
+      else
+        call ndpp_tally_scatt_pn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, results)
+      end if
     end if
   end subroutine tally_ndpp_pn
 
@@ -3996,14 +4020,26 @@ contains
     i_sab = micro_xs(i_nuclide) % index_sab
     if (i_sab /= 0) then
       ! We have a collision in the S(a,b) range
-      call ndpp_tally_scatt_yn(ndpp_sab_data(i_sab), i_nuclide, gin, &
-                               score_index, filter_index, t_order, mult, &
-                               is_analog, Ein, uvw, results, nuscatt)
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_yn(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, uvw, results, nuscatt)
+      else
+        call ndpp_tally_scatt_yn(ndpp_sab_data(i_sab), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, uvw, results)
+      end if
     else
       ! Normal scattering (non-S(a,b))
-      call ndpp_tally_scatt_yn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+      if (present(nuscatt)) then
+        call ndpp_tally_scatt_yn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
+                                 score_index, filter_index, t_order, mult, &
+                                 is_analog, Ein, uvw, results, nuscatt)
+      else
+        call ndpp_tally_scatt_yn(ndpp_nuc_data(i_nuclide), i_nuclide, gin, &
                                score_index, filter_index, t_order, mult, &
-                               is_analog, Ein, uvw, results, nuscatt)
+                               is_analog, Ein, uvw, results)
+      end if
     end if
   end subroutine tally_ndpp_yn
 
