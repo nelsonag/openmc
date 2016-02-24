@@ -5,7 +5,6 @@ module ndpp_ops
   use dict_header,     only: DictCharInt
   use error,           only: fatal_error
   use global
-  use interpolation,   only: interpolate_tab1
   use list_header,     only: ListElemInt
   use material_header, only: Material
   use math,            only: calc_rn
@@ -669,6 +668,9 @@ module ndpp_ops
           i_nuc = this_mat % nuclide(i)
           atom_density = this_mat % atom_density(i)
 
+          ! Get our specific x/s needed
+          call calc_scatter_xs(i_nuc, sigs_el, sigs_inel)
+
           if (has_sab(i)) then
             i_sab = sab_loc(i)
             sab_thresh = ndpp_sab(i_sab) % el_Ein(size(ndpp_sab(i_sab) % el_Ein))
@@ -680,8 +682,6 @@ module ndpp_ops
 
             nuscatt_flag = .False.
 
-            ! Get our specific x/s needed
-            call calc_scatter_xs(i_nuc, sigs_el, sigs_inel, p % E, nuscatt_flag)
             ! Now combine the elastic and inelastic distributions to one set,
             ! which will be in ndpp_outgoing(thread_id,:,:)
             call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
@@ -694,8 +694,6 @@ module ndpp_ops
 
             nuscatt_flag = .True.
 
-            ! Get our specific x/s needed
-            call calc_scatter_xs(i_nuc, sigs_el, sigs_inel, p % E, nuscatt_flag)
             ! Now combine the elastic and inelastic distributions to one set,
             ! which will be in ndpp_outgoing(thread_id,:,:)
             call generate_ndpp_distrib_pn(ndpp_nuc(i_nuc), nuscatt_flag, gin, &
@@ -999,7 +997,6 @@ module ndpp_ops
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
     logical :: nuscatt_flag
-    real(8) :: sums
 
     if (present(nuscatt)) then
       nuscatt_flag = nuscatt
@@ -1010,7 +1007,7 @@ module ndpp_ops
     l = t_order + 1
 
     ! First we need to calculate the x/s to use when creating our distribution.
-    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel, Ein, nuscatt_flag)
+    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
@@ -1075,7 +1072,7 @@ module ndpp_ops
     end if
 
     ! First we need to calculate the x/s to use when creating our distribution.
-    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel, Ein, nuscatt_flag)
+    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
@@ -1146,7 +1143,7 @@ module ndpp_ops
     end if
 
     ! First we need to calculate the x/s to use when creating our distribution.
-    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel, Ein, nuscatt_flag)
+    call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
@@ -1478,22 +1475,10 @@ module ndpp_ops
 ! given energy Ein for the nuclide denoted by i_nuclide.
 !===============================================================================
 
-  subroutine calc_scatter_xs(i_nuclide, sigs_el, sigs_inel, Ein, nuscatt)
+  subroutine calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
     integer, intent(in)  :: i_nuclide ! index into nuclides array
     real(8), intent(out) :: sigs_el   ! Elastic x/s
     real(8), intent(out) :: sigs_inel ! Inelastic x/s
-    real(8), intent(in)  :: Ein       ! Incoming Energy
-    logical, intent(in), optional :: nuscatt
-
-    integer :: i_rxn
-    real(8) :: yield, inel_val, f
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     if (micro_xs(i_nuclide) % use_ptable) then
       ! We have to get the non-URR elastic x/s which is the average value
@@ -1502,54 +1487,20 @@ module ndpp_ops
            + micro_xs(i_nuclide) % interp_factor * &
            nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid + 1)
       ! First get the total scattering x/s
-      ! sigs_inel = (ONE - micro_xs(i_nuclide) % interp_factor) * &
-      !      (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid) - &
-      !       nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid)) + &
-      !      (micro_xs(i_nuclide) % interp_factor) * &
-      !      (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid + 1) - &
-      !       nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid + 1))
+      sigs_inel = (ONE - micro_xs(i_nuclide) % interp_factor) * &
+           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid) - &
+            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid)) + &
+           (micro_xs(i_nuclide) % interp_factor) * &
+           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid + 1) - &
+            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid + 1))
       ! Now take away elastic to get the total inelastic
-      ! sigs_inel = sigs_inel - sigs_el
+      sigs_inel = sigs_inel - sigs_el
     else
       sigs_el   = micro_xs(i_nuclide) % elastic
-      ! sigs_inel = micro_xs(i_nuclide) % total - &
-      !      micro_xs(i_nuclide) % absorption - &
-      !      sigs_el
+      sigs_inel = micro_xs(i_nuclide) % total - &
+           micro_xs(i_nuclide) % absorption - &
+           sigs_el
     end if
-    sigs_inel = ZERO
-    f = micro_xs(i_nuclide) % interp_factor
-    associate(nuc => nuclides(i_nuclide))
-      do i_rxn = 2, nuc % n_reaction
-        associate(rxn => nuc % reactions(i_rxn))
-          ! Skip fission reactions
-          if (rxn % MT == N_FISSION .or. rxn % MT == N_F .or. rxn % MT == N_NF &
-               .or. rxn % MT == N_2NF .or. rxn % MT == N_3NF) cycle
-
-          ! some materials have gas production cross sections with MT > 200 that
-          ! are duplicates. Also MT=4 is total level inelastic scattering which
-          ! should be skipped
-          if (rxn % MT >= 200 .or. rxn % MT == N_LEVEL) cycle
-
-          ! if energy is below threshold for this reaction, skip it
-          if (micro_xs(i_nuclide) % index_grid < rxn % threshold) cycle
-
-          inel_val = ((ONE - f)*rxn%sigma(micro_xs(i_nuclide) % index_grid - rxn%threshold + 1) &
-               + f*(rxn%sigma(micro_xs(i_nuclide) % index_grid - rxn%threshold + 2)))
-          if (nuscatt_flag) then
-            sigs_inel = sigs_inel + inel_val
-          else
-            if (rxn % multiplicity_with_E) then
-              yield = interpolate_tab1(rxn % multiplicity_E, Ein)
-            else
-              yield = real(rxn % multiplicity,8)
-            end if
-            sigs_inel = sigs_inel + yield * inel_val
-          end if
-        end associate
-      end do
-    end associate
-
-
 
   end subroutine calc_scatter_xs
 
