@@ -258,27 +258,24 @@ contains
     type(TallyObject), pointer :: t
     integer :: i ! Tally index
     integer :: j ! Score bin index
-    integer :: k ! User score bin index
 
     ! Initialize the flags and orders
-    get_scatt = .false.
-    get_nuscatt = .false.
-    get_chi_t = .false.
-    get_chi_p = .false.
-    get_chi_d = .false.
-    scatt_order = 0
-    get_macro_s = .false.
+    get_scatt    = .false.
+    get_nuscatt  = .false.
+    get_chi_t    = .false.
+    get_chi_p    = .false.
+    get_chi_d    = .false.
+    scatt_order  = 0
+    get_macro_s  = .false.
     keep_micro_s = .false.
-    get_macro_c = .false.
+    get_macro_c  = .false.
     keep_micro_c = .false.
 
     ! Step through each tally and score and determine which types are present
     ! and the orders for scatt and nuscatt
     TALLY_LOOP: do i = 1, n_tallies
       t => tallies(i)
-      j = 0
-      SCORE_LOOP: do k = 1, t % n_user_score_bins
-        j = j + 1
+      SCORE_LOOP: do j = 1, t % n_score_bins
         select case (t % score_bins(j))
         case (SCORE_NDPP_SCATT_N, SCORE_NDPP_SCATT_PN, SCORE_NDPP_SCATT_YN)
           get_scatt = .true.

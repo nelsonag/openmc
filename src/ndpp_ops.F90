@@ -974,8 +974,8 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_scatt_n(this, i_nuclide, gin, score_index, &
-                                filter_index, t_order, mult, is_analog, Ein, &
-                                results, nuscatt)
+                                filter_index, t_order, mult, is_analog, nuscatt, &
+                                Ein, results)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
@@ -984,9 +984,9 @@ module ndpp_ops
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
@@ -996,13 +996,6 @@ module ndpp_ops
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     l = t_order + 1
 
@@ -1011,15 +1004,14 @@ module ndpp_ops
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
-    call generate_ndpp_distrib_n(this, nuscatt_flag, gin, l, Ein, sigs_el, &
+    call generate_ndpp_distrib_n(this, nuscatt, gin, l, Ein, sigs_el, &
                                  sigs_inel, norm, gmin, gmax)
 
     ! Apply mult to the normalization constant, norm
     norm = norm * mult
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
-      norm = norm * (micro_xs(i_nuclide) % total - &
-           micro_xs(i_nuclide) % absorption)
+      norm = norm * (sigs_el + sigs_inel)
     end if
 
     ! Add the combined distribution to our tally
@@ -1040,8 +1032,8 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_scatt_pn(this, i_nuclide, gin, score_index, &
-                                 filter_index, t_order, mult, is_analog, Ein, &
-                                 results, nuscatt)
+                                 filter_index, t_order, mult, is_analog, &
+                                 nuscatt, Ein, results)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
@@ -1050,9 +1042,9 @@ module ndpp_ops
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
@@ -1063,28 +1055,20 @@ module ndpp_ops
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     ! First we need to calculate the x/s to use when creating our distribution.
     call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
-    call generate_ndpp_distrib_pn(this, nuscatt_flag, gin, t_order, Ein, &
+    call generate_ndpp_distrib_pn(this, nuscatt, gin, t_order, Ein, &
                                   sigs_el, sigs_inel, norm, gmin, gmax)
 
     ! Apply mult to the normalization constant, norm
     norm = norm * mult
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
-      norm = norm * (micro_xs(i_nuclide) % total - &
-           micro_xs(i_nuclide) % absorption)
+      norm = norm * (sigs_el + sigs_inel)
     end if
 
     ! Add the combined distribution to our tally
@@ -1109,8 +1093,8 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_scatt_yn(this, i_nuclide, gin, score_index, &
-                                 filter_index, t_order, mult, is_analog, Ein, &
-                                 uvw, results, nuscatt)
+                                 filter_index, t_order, mult, is_analog, &
+                                 nuscatt, Ein, uvw, results)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: i_nuclide    ! index into nuclides array
     integer, intent(in) :: gin          ! Incoming group index
@@ -1119,10 +1103,10 @@ module ndpp_ops
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
     logical, intent(in) :: is_analog    ! Is this an analog or TL event?
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
@@ -1134,28 +1118,20 @@ module ndpp_ops
     integer :: num_lm    ! Number of m for this l
     real(8) :: sigs_el   ! Elastic x/s
     real(8) :: sigs_inel ! Inelastic x/s
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     ! First we need to calculate the x/s to use when creating our distribution.
     call calc_scatter_xs(i_nuclide, sigs_el, sigs_inel)
 
     ! Now combine the elastic and inelastic distributions to one set,
     ! which will be in ndpp_outgoing(thread_id,:,:)
-    call generate_ndpp_distrib_pn(this, nuscatt_flag, gin, t_order, Ein, &
+    call generate_ndpp_distrib_pn(this, nuscatt, gin, t_order, Ein, &
                                   sigs_el, sigs_inel, norm, gmin, gmax)
 
     ! Apply mult to the n ormalization constant, norm
     norm = norm * mult
     ! Now apply sigS if we are in tracklength mode
     if (.not. is_analog) then
-      norm = norm * (micro_xs(i_nuclide) % total - &
-           micro_xs(i_nuclide) % absorption)
+      norm = norm * (sigs_el + sigs_inel)
     end if
 
     ! Add the combined distribution to our tally for each order
@@ -1181,34 +1157,27 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_n(this, gin, score_index, filter_index, &
-                                    t_order, mult, Ein, results, &
-                                    nuscatt)
+                                    t_order, mult, nuscatt, Ein, results)
+
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
     integer :: l         ! tally order index to score
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_n(this, nuscatt_flag, gin, l, Ein, mult, &
+    call generate_ndpp_mat_distrib_n(this, nuscatt, gin, l, Ein, mult, &
                                      gmin, gmax)
 
     ! Add the combined distribution to our tally
@@ -1227,17 +1196,17 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_pn(this, gin, score_index, filter_index, &
-                                     t_order, mult, Ein, results, &
-                                     nuscatt)
+                                     t_order, mult, nuscatt, Ein, results)
+
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in) :: nuscatt         ! Is this for nuscatter?
 
     integer :: i_score   ! index of score dimension of results
     integer :: g         ! outgoing energy group index
@@ -1245,17 +1214,10 @@ module ndpp_ops
     integer :: l         ! tally order index to score
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_pn(this, nuscatt_flag, gin, l, Ein, mult, &
+    call generate_ndpp_mat_distrib_pn(this, nuscatt, gin, l, Ein, mult, &
                                       gmin, gmax)
 
     ! Add the combined distribution to our tally
@@ -1276,18 +1238,17 @@ module ndpp_ops
 !===============================================================================
 
   subroutine ndpp_tally_mat_scatt_yn(this, gin, score_index, filter_index, &
-                                     t_order, mult, Ein, uvw, results, &
-                                     nuscatt)
+                                     t_order, mult, nuscatt, Ein, uvw, results)
     type(Ndpp), intent(in) :: this      ! Ndpp object to act on
     integer, intent(in) :: gin          ! Incoming group
     integer, intent(in) :: score_index  ! dim = 1 starting index in results
     integer, intent(in) :: filter_index ! dim = 2 starting index (incoming E filter)
     integer, intent(in) :: t_order      ! # of scattering orders to tally
     real(8), intent(in) :: mult         ! wgt or wgt * atom_density * flux
+    logical, intent(in) :: nuscatt      ! Is this for nuscatter?
     real(8), intent(in) :: Ein          ! Incoming energy
     real(8), intent(in) :: uvw(3)       ! direction coordinates
     type(TallyResult), intent(inout) :: results(:,:) ! Tally results storage
-    logical, optional, intent(in)    :: nuscatt      ! Is this for nuscatter?
 
     integer :: g         ! outgoing energy group index
     integer :: g_filter  ! outgoing energy group index
@@ -1296,17 +1257,10 @@ module ndpp_ops
     integer :: i_score   ! index of score dimension of results
     integer :: gmin      ! Minimum group transfer in ndpp_outgoing
     integer :: gmax      ! Maximum group transfer in ndpp_outgoing
-    logical :: nuscatt_flag
-
-    if (present(nuscatt)) then
-      nuscatt_flag = nuscatt
-    else
-      nuscatt_flag = .false.
-    end if
 
     l = t_order + 1
 
-    call generate_ndpp_mat_distrib_pn(this, nuscatt_flag, gin, l, Ein, mult, &
+    call generate_ndpp_mat_distrib_pn(this, nuscatt, gin, l, Ein, mult, &
                                       gmin, gmax)
 
     ! Add the combined distribution to our tally for each order

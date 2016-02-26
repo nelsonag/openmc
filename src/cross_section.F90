@@ -164,10 +164,9 @@ contains
     case (GRID_LOGARITHM)
       ! Determine the energy grid index using a logarithmic mapping to reduce
       ! the energy range over which a binary search needs to be performed
-
       if (E < nuc % energy(1)) then
         i_grid = 1
-      elseif (E > nuc % energy(nuc % n_grid)) then
+      elseif (E >= nuc % energy(nuc % n_grid)) then
         i_grid = nuc % n_grid - 1
       else
         ! Determine bounding indices based on which equal log-spaced interval
