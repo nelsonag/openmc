@@ -2,7 +2,6 @@ module output
 
   use, intrinsic :: ISO_FORTRAN_ENV
 
-  use ace_header,      only: Reaction, UrrData
   use constants
   use endf,            only: reaction_name
   use error,           only: fatal_error, warning
@@ -336,10 +335,10 @@ contains
     ! Open log file for writing
     open(NEWUNIT=unit_xs, FILE=path, STATUS='replace', ACTION='write')
 
-    ! Write header
-    call header("CROSS SECTION TABLES", unit=unit_xs)
-
     if (run_CE) then
+      ! Write header
+      call header("CROSS SECTION TABLES", unit=unit_xs)
+
       NUCLIDE_LOOP: do i = 1, n_nuclides_total
         ! Print information about nuclide
         call nuclides(i) % print(unit=unit_xs)
@@ -350,10 +349,17 @@ contains
         call sab_tables(i) % print(unit=unit_xs)
       end do SAB_TABLES_LOOP
     else
+      ! Write header
+      call header("MGXS LIBRARY TABLES", unit=unit_xs)
       NuclideMG_LOOP: do i = 1, n_nuclides_total
         ! Print information about nuclide
         call nuclides_mg(i) % obj % print(unit=unit_xs)
       end do NuclideMG_LOOP
+      call header("MATERIAL MGXS TABLES", unit=unit_xs)
+      MATERIAL_LOOP: do i = 1, n_materials
+        ! Print information about Materials
+        call macro_xs(i) % obj % print(unit=unit_xs)
+      end do MATERIAL_LOOP
     end if
 
     ! Close cross section summary file
@@ -913,7 +919,11 @@ contains
             write(UNIT=unit_tally, FMT='(1X,2A,1X,A)') repeat(" ", indent), &
                  "Total Material"
           else
-            i_listing = nuclides(i_nuclide) % listing
+            if (run_CE) then
+              i_listing = nuclides(i_nuclide) % listing
+            else
+              i_listing = nuclides_MG(i_nuclide) % obj % listing
+            end if
             write(UNIT=unit_tally, FMT='(1X,2A,1X,A)') repeat(" ", indent), &
                  trim(xs_listings(i_listing) % alias)
           end if
@@ -1168,7 +1178,7 @@ contains
   function get_label(t, i_filter) result(label)
     type(TallyObject), intent(in) :: t        ! tally object
     integer,           intent(in) :: i_filter ! index in filters array
-    character(100)                :: label    ! user-specified identifier
+    character(MAX_LINE_LEN)       :: label    ! user-specified identifier
 
     integer :: i      ! index in cells/surfaces/etc array
     integer :: bin

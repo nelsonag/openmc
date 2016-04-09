@@ -67,10 +67,6 @@ class MGXS(object):
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
-    nuclides : Iterable of basestring
-        The user-specified nuclides to compute cross sections. If by_nuclide
-        is True but nuclides are not specified by the user, all nuclides in the
-        spatial domain will be used.
     name : str, optional
         Name of the multi-group cross section. Used as a label to identify
         tallies in OpenMC 'tallies.xml' file.
@@ -109,9 +105,11 @@ class MGXS(object):
     num_nuclides : Integral
         The number of nuclides for which the multi-group cross section is
         being tracked. This is unity if the by_nuclide attribute is False.
-    nuclides : list of str or 'sum'
-        A list of nuclide string names (e.g., 'U-238', 'O-16') when by_nuclide
-        is True and 'sum' when by_nuclide is False.
+    nuclides : Iterable of str or 'sum'
+        The optional user-specified nuclides for which to compute cross
+        sections (e.g., 'U-238', 'O-16'). If by_nuclide is True but nuclides
+        are not specified by the user, all nuclides in the spatial domain
+        are included. This attribute is 'sum' if by_nuclide is false.
     sparse : bool
         Whether or not the MGXS' tallies use SciPy's LIL sparse matrix format
         for compressed data storage
@@ -537,27 +535,27 @@ class MGXS(object):
         # Create each Tally needed to compute the multi group cross section
         for score, key, filters in zip(scores, keys, all_filters):
             self.tallies[key] = openmc.Tally(name=self.name)
-            self.tallies[key].add_score(score)
+            self.tallies[key].scores = [score]
             self.tallies[key].estimator = estimator
-            self.tallies[key].add_filter(domain_filter)
+            self.tallies[key].filters = [domain_filter]
 
             # If a tally trigger was specified, add it to each tally
             if self.tally_trigger:
                 trigger_clone = copy.deepcopy(self.tally_trigger)
-                trigger_clone.add_score(score)
-                self.tallies[key].add_trigger(trigger_clone)
+                trigger_clone.scores = [score]
+                self.tallies[key].triggers.append(trigger_clone)
 
             # Add all non-domain specific Filters (e.g., 'energy') to the Tally
             for add_filter in filters:
-                self.tallies[key].add_filter(add_filter)
+                self.tallies[key].filters.append(add_filter)
 
             # If this is a by-nuclide cross-section, add all nuclides to Tally
             if self.by_nuclide and score != 'flux':
-                all_nuclides = self.domain.get_all_nuclides()
+                all_nuclides = self.get_all_nuclides()
                 for nuclide in all_nuclides:
-                    self.tallies[key].add_nuclide(nuclide)
+                    self.tallies[key].nuclides.append(nuclide)
             else:
-                self.tallies[key].add_nuclide('total')
+                self.tallies[key].nuclides.append('total')
 
     def _compute_xs(self):
         """Performs generic cleanup after a subclass' uses tally arithmetic to
@@ -579,7 +577,7 @@ class MGXS(object):
             self.xs_tally._nuclides = []
             nuclides = self.get_all_nuclides()
             for nuclide in nuclides:
-                self.xs_tally.add_nuclide(openmc.Nuclide(nuclide))
+                self.xs_tally.nuclides.append(openmc.Nuclide(nuclide))
 
         # Remove NaNs which may have resulted from divide-by-zero operations
         self.xs_tally._mean = np.nan_to_num(self.xs_tally.mean)
@@ -761,10 +759,9 @@ class MGXS(object):
             # Reverse energies to align with increasing energy groups
             xs = xs[:, ::-1, :]
 
-            # Eliminate trivial dimensions
-            xs = np.squeeze(xs)
-            xs = np.atleast_1d(xs)
-
+        # Eliminate trivial dimensions
+        xs = np.squeeze(xs)
+        xs = np.atleast_1d(xs)
         return xs
 
     def get_condensed_xs(self, coarse_groups):
@@ -2313,7 +2310,7 @@ class Chi(MGXS):
             super(Chi, self)._compute_xs()
 
             # Add the coarse energy filter back to the nu-fission tally
-            nu_fission_in.add_filter(energy_filter)
+            nu_fission_in.filters.append(energy_filter)
 
         return self._xs_tally
 
@@ -2512,7 +2509,7 @@ class Chi(MGXS):
                 xs_tally = nu_fission_out / nu_fission_in
 
                 # Add the coarse energy filter back to the nu-fission tally
-                nu_fission_in.add_filter(energy_filter)
+                nu_fission_in.filters.append(energy_filter)
 
                 xs = xs_tally.get_values(filters=filters,
                                          filter_bins=filter_bins, value=value)

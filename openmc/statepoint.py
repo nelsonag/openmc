@@ -68,6 +68,9 @@ class StatePoint(object):
         Working directory for simulation
     run_mode : str
         Simulation run mode, e.g. 'k-eigenvalue'
+    runtime : dict
+        Dictionary whose keys are strings describing various runtime metrics
+        and whose values are time values in seconds.
     seed : Integral
         Pseudorandom number generator seed
     source : ndarray of compound datatype
@@ -101,8 +104,9 @@ class StatePoint(object):
                 raise IOError('{} is not a statepoint file.'.format(filename))
         except AttributeError:
             raise IOError('Could not read statepoint file. This most likely '
-                          'means the statepoint file was produced by a different '
-                          'version of OpenMC than the one you are using.')
+                          'means the statepoint file was produced by a '
+                          'different version of OpenMC than the one you are '
+                          'using.')
         if self._f['revision'].value != 15:
             raise IOError('Statepoint file has a file revision of {} '
                           'which is not consistent with the revision this '
@@ -312,6 +316,11 @@ class StatePoint(object):
         return self._f['run_mode'].value.decode()
 
     @property
+    def runtime(self):
+        return {name: dataset.value
+                for name, dataset in self._f['runtime'].items()}
+
+    @property
     def seed(self):
         return self._f['seed'].value
 
@@ -389,7 +398,7 @@ class StatePoint(object):
                         new_filter.mesh = self.meshes[key]
 
                     # Add Filter to the Tally
-                    tally.add_filter(new_filter)
+                    tally.filters.append(new_filter)
 
                 # Read Nuclide bins
                 nuclide_names = \
@@ -398,7 +407,7 @@ class StatePoint(object):
                 # Add all Nuclides to the Tally
                 for name in nuclide_names:
                     nuclide = openmc.Nuclide(name.decode().strip())
-                    tally.add_nuclide(nuclide)
+                    tally.nuclides.append(nuclide)
 
                 scores = self._f['{0}{1}/score_bins'.format(
                     base, tally_key)].value
@@ -425,7 +434,7 @@ class StatePoint(object):
                     pattern = r'-n$|-pn$|-yn$'
                     score = re.sub(pattern, '-' + moments[j].decode(), score)
 
-                    tally.add_score(score)
+                    tally.scores.append(score)
 
                 # Add Tally to the global dictionary of all Tallies
                 tally.sparse = self.sparse
@@ -609,11 +618,13 @@ class StatePoint(object):
             raise ValueError(msg)
 
         for tally_id, tally in self.tallies.items():
-            # Get the Tally name from the summary file
-            tally.name = summary.tallies[tally_id].name
+            summary_tally = summary.tallies[tally_id]
+            tally.name = summary_tally.name
             tally.with_summary = True
 
             for tally_filter in tally.filters:
+                summary_filter = summary_tally.find_filter(tally_filter.type)
+
                 if tally_filter.type == 'surface':
                     surface_ids = []
                     for bin in tally_filter.bins:
@@ -625,6 +636,10 @@ class StatePoint(object):
                     for bin in tally_filter.bins:
                         distribcell_ids.append(summary.cells[bin].id)
                     tally_filter.bins = distribcell_ids
+
+                if tally_filter.type == 'distribcell':
+                    tally_filter.distribcell_paths = \
+                        summary_filter.distribcell_paths
 
                 if tally_filter.type == 'universe':
                     universe_ids = []

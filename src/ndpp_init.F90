@@ -6,7 +6,7 @@ module ndpp_initialize
   use global
   use ndpp_header,  only: Ndpp
   use ndpp_ops,     only: ndpp_read, build_material_ndpp
-use nuclide_header, only: NuclideCE, XsListing
+  use nuclide_header, only: Nuclide, XsListing
   use output,       only: write_message
   use search
   use string,       only: ends_with, to_lower, starts_with, to_str
@@ -26,7 +26,7 @@ contains
 !===============================================================================
 
   subroutine read_ndpp_data()
-    type(NuclideCE), pointer    :: nuc ! Current working nuclide
+    type(Nuclide), pointer    :: nuc ! Current working nuclide
     type(SAlphaBeta), pointer :: sab ! Current working SAB table
     type(XsListing), pointer  :: ndpp_listing ! The NDPP data listings
     integer :: i_listing     ! index in ndpp_listings array

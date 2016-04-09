@@ -5,9 +5,9 @@ module global
   use constants
   use dict_header,      only: DictCharInt, DictIntInt
   use geometry_header,  only: Cell, Universe, Lattice, LatticeContainer
-  use macroxs_header,   only: MacroXSContainer
   use material_header,  only: Material
   use mesh_header,      only: RegularMesh
+  use mgxs_header,      only: Mgxs, MgxsContainer
   use ndpp_header,      only: Ndpp
   use nuclide_header
   use plot_header,      only: ObjectPlot
@@ -87,7 +87,7 @@ module global
   ! CONTINUOUS-ENERGY CROSS SECTION RELATED VARIABLES
 
   ! Cross section arrays
-  type(NuclideCE), allocatable, target :: nuclides(:)    ! Nuclide cross-sections
+  type(Nuclide), allocatable, target :: nuclides(:)    ! Nuclide cross-sections
   type(SAlphaBeta), allocatable, target :: sab_tables(:)  ! S(a,b) tables
 
   integer :: n_sab_tables     ! Number of S(a,b) thermal scattering tables
@@ -105,14 +105,18 @@ module global
   ! What to assume for expanding natural elements
   integer :: default_expand = ENDF_BVII1
 
+  ! Total amount of nuclide ZAID and dictionary of nuclide ZAID and index
+  integer(8)       :: n_nuc_zaid_total
+  type(DictIntInt) :: nuc_zaid_dict
+
   ! ============================================================================
   ! MULTI-GROUP CROSS SECTION RELATED VARIABLES
 
   ! Cross section arrays
-  type(NuclideMGContainer), allocatable, target :: nuclides_MG(:)
+  type(MgxsContainer), allocatable, target :: nuclides_MG(:)
 
   ! Cross section caches
-  type(MacroXSContainer), target, allocatable :: macro_xs(:)
+  type(MgxsContainer), target, allocatable :: macro_xs(:)
 
   ! Number of energy groups
   integer :: energy_groups
