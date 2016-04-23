@@ -1434,27 +1434,10 @@ module ndpp_ops
     real(8), intent(out) :: sigs_el   ! Elastic x/s
     real(8), intent(out) :: sigs_inel ! Inelastic x/s
 
-    if (micro_xs(i_nuclide) % use_ptable) then
-      ! We have to get the non-URR elastic x/s which is the average value
-      sigs_el = (ONE - micro_xs(i_nuclide) % interp_factor) * &
-           nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid) &
-           + micro_xs(i_nuclide) % interp_factor * &
-           nuclides(i_nuclide) % elastic(micro_xs(i_nuclide) % index_grid + 1)
-      ! First get the total scattering x/s
-      sigs_inel = (ONE - micro_xs(i_nuclide) % interp_factor) * &
-           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid) - &
-            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid)) + &
-           (micro_xs(i_nuclide) % interp_factor) * &
-           (nuclides(i_nuclide) % total(micro_xs(i_nuclide) % index_grid + 1) - &
-            nuclides(i_nuclide) % absorption(micro_xs(i_nuclide) % index_grid + 1))
-      ! Now take away elastic to get the total inelastic
-      sigs_inel = sigs_inel - sigs_el
-    else
-      sigs_el   = micro_xs(i_nuclide) % elastic
-      sigs_inel = micro_xs(i_nuclide) % total - &
-           micro_xs(i_nuclide) % absorption - &
-           sigs_el
-    end if
+    sigs_el   = micro_xs(i_nuclide) % elastic
+    sigs_inel = micro_xs(i_nuclide) % total - &
+         micro_xs(i_nuclide) % absorption - &
+         sigs_el
 
   end subroutine calc_scatter_xs
 
