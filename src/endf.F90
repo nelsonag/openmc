@@ -58,18 +58,22 @@ contains
       string = "events"
     case (SCORE_INVERSE_VELOCITY)
       string = "inverse-velocity"
+    case (SCORE_NDPP_SCATT)
+      string = "ndpp-scatter"
     case (SCORE_NDPP_SCATT_N)
-      string = "ndpp-scatt-n"
+      string = "ndpp-scatter-n"
     case (SCORE_NDPP_SCATT_PN)
-      string = "ndpp-scatt-pn"
+      string = "ndpp-scatter-pn"
     case (SCORE_NDPP_SCATT_YN)
-      string = "ndpp-scatt-yn"
+      string = "ndpp-scatter-yn"
+    case (SCORE_NDPP_NU_SCATT)
+      string = "ndpp-nu-scatter"
     case (SCORE_NDPP_NU_SCATT_N)
-      string = "ndpp-nu-scatt-n"
+      string = "ndpp-nu-scatter-n"
     case (SCORE_NDPP_NU_SCATT_PN)
-      string = "ndpp-nu-scatt-pn"
+      string = "ndpp-nu-scatter-pn"
     case (SCORE_NDPP_NU_SCATT_YN)
-      string = "ndpp-nu-scatt-yn"
+      string = "ndpp-nu-scatter-yn"
     case (SCORE_NDPP_CHI)
       string = "ndpp-chi"
     case (SCORE_NDPP_CHI_P)

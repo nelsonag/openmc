@@ -805,7 +805,7 @@ class XSdata(object):
 
         Parameters
         ----------
-        chi: openmc.mgxs.Chi
+        chi: {openmc.mgxs.Chi, openmc.mgxs.NdppChi}
             MGXS Object containing chi for the domain of interest.
         nuclide : str
             Individual nuclide (or 'total' if obtaining material-wise data)
@@ -827,7 +827,7 @@ class XSdata(object):
                       'matrix!'
                 raise ValueError(msg)
 
-        check_type('chi', chi, openmc.mgxs.Chi)
+        check_type('chi', chi, (openmc.mgxs.Chi, openmc.mgxs.NdppChi))
         check_value('energy_groups', chi.energy_groups, [self.energy_groups])
         check_value('domain_type', chi.domain_type,
                     ['universe', 'cell', 'material'])
@@ -938,7 +938,8 @@ class XSdata(object):
         """
 
         check_type('nuscatter', nuscatter, (openmc.mgxs.NuScatterMatrixXS,
-                                            openmc.mgxs.MultiplicityMatrixXS))
+                                            openmc.mgxs.MultiplicityMatrixXS,
+                                            openmc.mgxs.NdppMultiplicityMatrixXS))
         check_value('energy_groups', nuscatter.energy_groups,
                     [self.energy_groups])
         check_value('domain_type', nuscatter.domain_type,
@@ -958,7 +959,8 @@ class XSdata(object):
         if self.representation is 'isotropic':
             nuscatt = nuscatter.get_xs(nuclides=nuclide,
                                        xs_type=xs_type, moment=0)
-            if isinstance(nuscatter, openmc.mgxs.MultiplicityMatrixXS):
+            if (isinstance(nuscatter, openmc.mgxs.MultiplicityMatrixXS) or
+                isinstance(nuscatter, openmc.mgxs.NdppMultiplicityMatrixXS)):
                 self._multiplicity = nuscatt
             else:
                 scatt = scatter.get_xs(nuclides=nuclide,

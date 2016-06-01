@@ -873,11 +873,24 @@ class Library(object):
             xsdata.set_multiplicity_mgxs(mymgxs, xs_type=xs_type,
                                          nuclide=[nuclide])
             using_multiplicity = True
-        # multiplicity wil fall back to using scatter and nu-scatter
+        elif 'ndpp multiplicity matrix' in self.mgxs_types:
+            mymgxs = self.get_mgxs(domain, 'ndpp multiplicity matrix')
+            xsdata.set_multiplicity_mgxs(mymgxs, xs_type=xs_type,
+                                         nuclide=[nuclide])
+            using_multiplicity = True
+        # multiplicity will fall back to using scatter and nu-scatter
         elif ((('scatter matrix' in self.mgxs_types) and
-               ('nu-scatter matrix' in self.mgxs_types))):
-            scatt_mgxs = self.get_mgxs(domain, 'scatter matrix')
-            nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+               ('nu-scatter matrix' in self.mgxs_types)) or
+              (('ndpp scatter matrix' in self.mgxs_types) and
+               ('ndpp nu-scatter matrix' in self.mgxs_types))):
+            if 'scatter matrix' in self.mgxs_types:
+                scatt_mgxs = self.get_mgxs(domain, 'scatter matrix')
+            else:
+                scatt_mgxs = self.get_mgxs(domain, 'ndpp scatter matrix')
+            if 'nu-scatter matrix' in self.mgxs_types:
+                nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+            else:
+                nuscatt_mgxs = self.get_mgxs(domain, 'ndpp nu-scatter matrix')
             xsdata.set_multiplicity_mgxs(nuscatt_mgxs, scatt_mgxs,
                                          xs_type=xs_type, nuclide=[nuclide])
             using_multiplicity = True
@@ -885,12 +898,20 @@ class Library(object):
             using_multiplicity = False
 
         if using_multiplicity:
-            nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+            if 'nu-scatter matrix' in self.mgxs_types:
+                nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+            elif 'ndpp nu-scatter matrix' in self.mgxs_types:
+                nuscatt_mgxs = self.get_mgxs(domain, 'ndpp nu-scatter matrix')
             xsdata.set_scatter_mgxs(nuscatt_mgxs, xs_type=xs_type,
                                     nuclide=[nuclide])
         else:
-            if 'nu-scatter matrix' in self.mgxs_types:
-                nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+            if ((('nu-scatter matrix' in self.mgxs_types) or
+                 ('ndpp nu-scatter matrix' in self.mgxs_types))):
+                if 'nu-scatter matrix' in self.mgxs_types:
+                    nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+                elif 'ndpp nu-scatter matrix' in self.mgxs_types:
+                    nuscatt_mgxs = self.get_mgxs(domain,
+                                                 'ndpp nu-scatter matrix')
                 xsdata.set_scatter_mgxs(nuscatt_mgxs, xs_type=xs_type,
                                         nuclide=[nuclide])
 
@@ -1134,14 +1155,16 @@ class Library(object):
             msg = '"absorption" MGXS type is required but not provided.'
             warn(msg)
         # Ensure nu-scattering matrix is required
-        if 'nu-scatter matrix' not in self.mgxs_types:
+        if ((('nu-scatter matrix' not in self.mgxs_types) and
+             ('ndpp nu-scatter matrix' not in self.mgxs_types))):
             error_flag = True
             msg = '"nu-scatter matrix" MGXS type is required but not provided.'
             warn(msg)
         else:
             # Ok, now see the status of scatter and/or multiplicity
             if ((('scatter matrix' not in self.mgxs_types) and
-                 ('multiplicity matrix' not in self.mgxs_types))):
+                 (('multiplicity matrix' not in self.mgxs_types) and
+                  ('ndpp multiplicity matrix' not in self.mgxs_types)))):
                 # We dont have data needed for multiplicity matrix, therefore
                 # we need total, and not transport.
                 if 'total' not in self.mgxs_types:

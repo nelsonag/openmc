@@ -277,10 +277,12 @@ contains
       t => tallies(i)
       SCORE_LOOP: do j = 1, t % n_score_bins
         select case (t % score_bins(j))
-        case (SCORE_NDPP_SCATT_N, SCORE_NDPP_SCATT_PN, SCORE_NDPP_SCATT_YN)
+        case (SCORE_NDPP_SCATT, SCORE_NDPP_SCATT_N, SCORE_NDPP_SCATT_PN, SCORE_NDPP_SCATT_YN)
           get_scatt = .true.
-          if (t % moment_order(j) > scatt_order) then
-            scatt_order = t % moment_order(j)
+          if (t % score_bins(j) == SCORE_NDPP_SCATT) then
+            scatt_order = max(0, scatt_order)
+          else if (t % moment_order(j) > scatt_order) then
+            scatt_order = max(t % moment_order(j), scatt_order)
           end if
 
           ! Find if we need macroscopic data and microscopic data
@@ -291,10 +293,12 @@ contains
             keep_micro_s = .true.
           end if
 
-        case (SCORE_NDPP_NU_SCATT_N, SCORE_NDPP_NU_SCATT_PN, SCORE_NDPP_NU_SCATT_YN)
+        case (SCORE_NDPP_NU_SCATT, SCORE_NDPP_NU_SCATT_N, SCORE_NDPP_NU_SCATT_PN, SCORE_NDPP_NU_SCATT_YN)
           get_nuscatt = .true.
-          if (t % moment_order(j) > scatt_order) then
-            scatt_order = t % moment_order(j)
+          if (t % score_bins(j) == SCORE_NDPP_NU_SCATT) then
+            scatt_order = max(0, scatt_order)
+          else if (t % moment_order(j) > scatt_order) then
+            scatt_order = max(t % moment_order(j), scatt_order)
           end if
 
           ! Find if we need macroscopic data and microscopic data
@@ -487,6 +491,36 @@ contains
 
         ! Check to see if the correct filters and orders are requested
         select case (t % score_bins(j))
+        case (SCORE_NDPP_SCATT, SCORE_NDPP_NU_SCATT)
+          ! We found the correct score, get comparing!
+
+          ! Compare the energyin and energyout filters of this tally to the
+          ! energy_bins_ metadata of the NDPP library.
+          ! Check the energyin filter first.
+          i_filter = t % find_filter(FILTER_ENERGYIN)
+          ! We have already checked to ensure some energyin filter exists,
+          ! reducing the cases to check. First we check the size, so that we
+          ! can use the Fortran intrinsic ALL to check the actual values
+          if (t % filters(i_filter) % n_bins /= ndpp_groups) then
+            call fatal_error("Number of groups in NDPP Library do " // &
+                 "not match that requested in tally!")
+          end if
+          ! Now we can check the actual group boundaries.
+          if (any(t % filters(i_filter) % real_bins /= ndpp_energy_bins)) then
+            call fatal_error("NDPP Library group structure does not " // &
+                 "match that requested in tally!")
+          end if
+          ! Repeat the same steps as above,
+          ! but this time for the energyout filter
+          i_filter = t % find_filter(FILTER_ENERGYOUT)
+          if (t % filters(i_filter) % n_bins /= ndpp_groups) then
+            call fatal_error("Number of groups in NDPP Library do not " // &
+                 "match that requested in tally!")
+          end if
+          if (any(t % filters(i_filter) % real_bins /= ndpp_energy_bins)) then
+            call fatal_error("NDPP Library group structure does not " // &
+                 "match that requested in tally!")
+          end if
         case (SCORE_NDPP_SCATT_N, SCORE_NDPP_NU_SCATT_N)
           ! We found the correct score, get comparing!
           ! First check the scattering order

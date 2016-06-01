@@ -346,7 +346,8 @@ contains
           end associate
         end if
 
-      case (SCORE_NDPP_SCATT_N,  SCORE_NDPP_NU_SCATT_N, &
+      case (SCORE_NDPP_SCATT,  SCORE_NDPP_NU_SCATT, &
+            SCORE_NDPP_SCATT_N,  SCORE_NDPP_NU_SCATT_N, &
             SCORE_NDPP_SCATT_PN, SCORE_NDPP_NU_SCATT_PN, &
             SCORE_NDPP_SCATT_YN, SCORE_NDPP_NU_SCATT_YN)
         if (t % estimator == ESTIMATOR_ANALOG) then
@@ -374,7 +375,6 @@ contains
             score = flux
           end if
         end if
-
 
       case (SCORE_NDPP_CHI, SCORE_NDPP_CHI_P, SCORE_NDPP_CHI_D)
         if (t % estimator /= ESTIMATOR_TRACKLENGTH) then
@@ -1323,6 +1323,49 @@ contains
              + score * calc_pn(n, p % mu)
       end do
       i = i + t % moment_order(i)
+
+
+    case (SCORE_NDPP_SCATT, SCORE_NDPP_NU_SCATT)
+      if (score_bin == SCORE_NDPP_SCATT) then
+        nuscatter = .false.
+      else
+        nuscatter = .true.
+      end if
+      if (t % estimator /= ESTIMATOR_TRACKLENGTH) then
+        if (ndpp_macroscopic .and. (i_nuclide == -1)) then
+          call tally_macro_mat_ndpp_n(p % material, &
+               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+               score_index, filter_index - &
+               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+               0, score, nuscatter, p % last_E, t % results)
+        else
+          call tally_ndpp_n(p % event_nuclide, &
+               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+               score_index, filter_index - &
+               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+               0, score, .true., nuscatter, p % last_E, t % results)
+        end if
+      else
+        if (i_nuclide > 0) then
+          call tally_ndpp_n(i_nuclide, &
+               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+               score_index, filter_index - &
+               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+               0, score, .false., nuscatter, p % E, t % results)
+        else if (ndpp_macroscopic) then
+          call tally_macro_mat_ndpp_n(p % material, &
+               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+               score_index, filter_index - &
+               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+               0, score, nuscatter, p % E, t % results)
+        else
+          call tally_macro_ndpp_n(p % material, &
+               matching_bins(t % find_filter(FILTER_ENERGYIN)), &
+               score_index, filter_index - &
+               matching_bins(t % find_filter(FILTER_ENERGYOUT)) + 1, &
+               0, score, nuscatter, p % E, t % results)
+        end if
+      end if
 
 
     case (SCORE_NDPP_SCATT_N, SCORE_NDPP_NU_SCATT_N)
