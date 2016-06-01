@@ -52,9 +52,9 @@ contains
 
     ! Write version information
     write(UNIT=OUTPUT_UNIT, FMT=*) &
-         '     Copyright:      2011-2015 Massachusetts Institute of Technology'
+         '     Copyright:      2011-2016 Massachusetts Institute of Technology'
     write(UNIT=OUTPUT_UNIT, FMT=*) &
-         '     License:        http://mit-crpg.github.io/openmc/license.html'
+         '     License:        http://openmc.readthedocs.io/en/latest/license.html'
     write(UNIT=OUTPUT_UNIT, FMT='(6X,"Version:",8X,I1,".",I1,".",I1)') &
          VERSION_MAJOR, VERSION_MINOR, VERSION_RELEASE
 #ifdef GIT_SHA1
@@ -777,8 +777,6 @@ contains
     score_names(abs(SCORE_TOTAL))              = "Total Reaction Rate"
     score_names(abs(SCORE_SCATTER))            = "Scattering Rate"
     score_names(abs(SCORE_NU_SCATTER))         = "Scattering Production Rate"
-    score_names(abs(SCORE_TRANSPORT))          = "Transport Rate"
-    score_names(abs(SCORE_N_1N))               = "(n,1n) Rate"
     score_names(abs(SCORE_ABSORPTION))         = "Absorption Rate"
     score_names(abs(SCORE_FISSION))            = "Fission Rate"
     score_names(abs(SCORE_NU_FISSION))         = "Nu-Fission Rate"

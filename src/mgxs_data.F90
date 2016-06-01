@@ -125,7 +125,7 @@ contains
 
           ! Now read in the data specific to the type we just declared
           call nuclides_MG(i_nuclide) % obj % init_file(node_xsdata, &
-               energy_groups,get_kfiss,get_fiss,max_order,i_listing)
+               energy_groups, get_kfiss, get_fiss, max_order, i_listing)
 
           ! Add name and alias to dictionary
           call already_read % add(name)
@@ -164,8 +164,6 @@ contains
 
   subroutine create_macro_xs()
     integer :: i_mat ! index in materials array
-    integer :: i             ! loop index over nuclides
-    integer :: l             ! Loop over score bins
     type(Material), pointer :: mat ! current material
     integer :: scatt_type
 
@@ -186,8 +184,8 @@ contains
       type is (MgxsAngle)
         allocate(MgxsAngle :: macro_xs(i_mat) % obj)
       end select
-      call macro_xs(i_mat) % obj % combine(mat,nuclides_MG,energy_groups, &
-                                           max_order,scatt_type,i_mat)
+      call macro_xs(i_mat) % obj % combine(mat, nuclides_MG, energy_groups, &
+                                           max_order, scatt_type, i_mat)
     end do
   end subroutine create_macro_xs
 

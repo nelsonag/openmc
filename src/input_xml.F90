@@ -92,18 +92,22 @@ contains
     type(NodeList), pointer :: node_scat_list => null()
     type(NodeList), pointer :: node_source_list => null()
 
-    ! Display output message
-    call write_message("Reading settings XML file...", 5)
-
     ! Check if settings.xml exists
     filename = trim(path_input) // "settings.xml"
     inquire(FILE=filename, EXIST=file_exists)
     if (.not. file_exists) then
-      call fatal_error("Settings XML file '" // trim(filename) // "' does not &
-           &exist! In order to run OpenMC, you first need a set of input files;&
-           & at a minimum, this includes settings.xml, geometry.xml, and &
-           &materials.xml. Please consult the user's guide at &
-           &http://mit-crpg.github.io/openmc for further information.")
+      if (run_mode /= MODE_PLOTTING) then
+        call fatal_error("Settings XML file '" // trim(filename) // "' does &
+             &not exist! In order to run OpenMC, you first need a set of input &
+             &files; at a minimum, this includes settings.xml, geometry.xml, &
+             &and materials.xml. Please consult the user's guide at &
+             &http://mit-crpg.github.io/openmc for further information.")
+      else
+        ! The settings.xml file is optional if we just want to make a plot.
+        return
+      end if
+    else
+      call write_message("Reading settings XML file...", 5)
     end if
 
     ! Parse settings.xml file
@@ -149,7 +153,7 @@ contains
         else
           call get_environment_variable("OPENMC_MG_CROSS_SECTIONS", env_variable)
           if (len_trim(env_variable) == 0) then
-            call fatal_error("No cross_sections.xml file was specified in &
+            call fatal_error("No mgxs.xml file was specified in &
                  &settings.xml or in the OPENMC_MG_CROSS_SECTIONS environment &
                  &variable. OpenMC needs such a file to identify where to &
                  &find the cross section libraries. Please consult the user's &
@@ -1109,6 +1113,8 @@ contains
     integer :: universe_num
     integer :: n_cells_in_univ
     integer :: coeffs_reqd
+    integer :: i_xmin, i_xmax, i_ymin, i_ymax, i_zmin, i_zmax
+    real(8) :: xmin, xmax, ymin, ymax, zmin, zmax
     integer, allocatable :: temp_int_array(:)
     real(8) :: phi, theta, psi
     real(8), allocatable :: coeffs(:)
@@ -1387,6 +1393,13 @@ contains
       call fatal_error("No surfaces found in geometry.xml!")
     end if
 
+    xmin = INFINITY
+    xmax = -INFINITY
+    ymin = INFINITY
+    ymax = -INFINITY
+    zmin = INFINITY
+    zmax = -INFINITY
+
     ! Allocate cells array
     allocate(surfaces(n_surfaces))
 
@@ -1478,10 +1491,28 @@ contains
       select type(s)
       type is (SurfaceXPlane)
         s%x0 = coeffs(1)
+
+        ! Determine outer surfaces
+        xmin = min(xmin, s % x0)
+        xmax = max(xmax, s % x0)
+        if (xmin == s % x0) i_xmin = i
+        if (xmax == s % x0) i_xmax = i
       type is (SurfaceYPlane)
         s%y0 = coeffs(1)
+
+        ! Determine outer surfaces
+        ymin = min(ymin, s % y0)
+        ymax = max(ymax, s % y0)
+        if (ymin == s % y0) i_ymin = i
+        if (ymax == s % y0) i_ymax = i
       type is (SurfaceZPlane)
         s%z0 = coeffs(1)
+
+        ! Determine outer surfaces
+        zmin = min(zmin, s % z0)
+        zmax = max(zmax, s % z0)
+        if (zmin == s % z0) i_zmin = i
+        if (zmax == s % z0) i_zmax = i
       type is (SurfacePlane)
         s%A = coeffs(1)
         s%B = coeffs(2)
@@ -1548,11 +1579,19 @@ contains
       case ('reflective', 'reflect', 'reflecting')
         s%bc = BC_REFLECT
         boundary_exists = .true.
+      case ('periodic')
+        s%bc = BC_PERIODIC
+        boundary_exists = .true.
+
+        ! Check for specification of periodic surface
+        if (check_for_node(node_surf, "periodic_surface_id")) then
+          call get_node_value(node_surf, "periodic_surface_id", &
+               s % i_periodic)
+        end if
       case default
         call fatal_error("Unknown boundary condition '" // trim(word) // &
              &"' specified on surface " // trim(to_str(s%id)))
       end select
-
       ! Add surface to dictionary
       call surface_dict % add_key(s%id, i)
     end do
@@ -1562,6 +1601,67 @@ contains
     if (.not. boundary_exists) then
       call fatal_error("No boundary conditions were applied to any surfaces!")
     end if
+
+    ! Determine opposite side for periodic boundaries
+    do i = 1, size(surfaces)
+      if (surfaces(i) % obj % bc == BC_PERIODIC) then
+        select type (surf => surfaces(i) % obj)
+        type is (SurfaceXPlane)
+          if (surf % i_periodic == NONE) then
+            if (i == i_xmin) then
+              surf % i_periodic = i_xmax
+            elseif (i == i_xmax) then
+              surf % i_periodic = i_xmin
+            else
+              call fatal_error("Periodic boundary condition applied to &
+                   &interior surface.")
+            end if
+          else
+            surf % i_periodic = surface_dict % get_key(surf % i_periodic)
+          end if
+
+        type is (SurfaceYPlane)
+          if (surf % i_periodic == NONE) then
+            if (i == i_ymin) then
+              surf % i_periodic = i_ymax
+            elseif (i == i_ymax) then
+              surf % i_periodic = i_ymin
+            else
+              call fatal_error("Periodic boundary condition applied to &
+                   &interior surface.")
+            end if
+          else
+            surf % i_periodic = surface_dict % get_key(surf % i_periodic)
+          end if
+
+        type is (SurfaceZPlane)
+          if (surf % i_periodic == NONE) then
+            if (i == i_zmin) then
+              surf % i_periodic = i_zmax
+            elseif (i == i_zmax) then
+              surf % i_periodic = i_zmin
+            else
+              call fatal_error("Periodic boundary condition applied to &
+                   &interior surface.")
+            end if
+          else
+            surf % i_periodic = surface_dict % get_key(surf % i_periodic)
+          end if
+
+        class default
+          call fatal_error("Periodic boundary condition applied to &
+               &non-planar surface.")
+        end select
+
+        ! Make sure opposite surface is also periodic
+        associate (surf => surfaces(i) % obj)
+          if (surfaces(surf % i_periodic) % obj % bc /= BC_PERIODIC) then
+            call fatal_error("Could not find matching surface for periodic &
+                 &boundary on surface " // trim(to_str(surf % id)) // ".")
+          end if
+        end associate
+      end if
+    end do
 
     ! ==========================================================================
     ! READ LATTICES FROM GEOMETRY.XML
@@ -3375,28 +3475,14 @@ contains
             end if
 
           case ('scatter-n')
-            if (n_order == 0) then
-              t % score_bins(j) = SCORE_SCATTER
-            else
-              t % score_bins(j) = SCORE_SCATTER_N
-              ! Set tally estimator to analog
-              t % estimator = ESTIMATOR_ANALOG
-            end if
+            t % score_bins(j) = SCORE_SCATTER_N
             t % moment_order(j) = n_order
+            t % estimator = ESTIMATOR_ANALOG
 
           case ('nu-scatter-n')
-            if (n_order == 0) then
-              t % score_bins(j) = SCORE_NU_SCATTER
-            else
-              t % score_bins(j) = SCORE_NU_SCATTER_N
-              ! Set tally estimator to analog for CE mode
-              ! (MG mode has all data available without a collision being
-              ! necessary)
-              if (run_CE) then
-                t % estimator = ESTIMATOR_ANALOG
-              end if
-            end if
+            t % score_bins(j) = SCORE_NU_SCATTER_N
             t % moment_order(j) = n_order
+            t % estimator = ESTIMATOR_ANALOG
 
           case ('scatter-pn')
             t % estimator = ESTIMATOR_ANALOG
@@ -3715,22 +3801,12 @@ contains
             end if
 
           case('transport')
-            t % score_bins(j) = SCORE_TRANSPORT
-
-            ! Set tally estimator to analog
-            t % estimator = ESTIMATOR_ANALOG
-          case ('diffusion')
-            call fatal_error("Diffusion score no longer supported for tallies, &
+            call fatal_error("Transport score no longer supported for tallies, &
                  &please remove")
-          case ('n1n')
-            if (run_CE) then
-              t % score_bins(j) = SCORE_N_1N
 
-              ! Set tally estimator to analog
-              t % estimator = ESTIMATOR_ANALOG
-            else
-              call fatal_error("Cannot tally n1n rate in multi-group mode!")
-            end if
+          case ('n1n')
+            call fatal_error("n1n score no longer supported for tallies, &
+                 &please remove")
           case ('n2n', '(n,2n)')
             t % score_bins(j) = N_2N
 
@@ -4842,24 +4918,24 @@ contains
   subroutine read_mg_cross_sections_xml()
 
     integer :: i           ! loop index
-    logical :: file_exists ! does cross_sections.xml exist?
+    logical :: file_exists ! does mgxs.xml exist?
     type(XsListing), pointer :: listing => null()
     type(Node), pointer :: doc => null()
     type(Node), pointer :: node_xsdata => null()
     type(NodeList), pointer :: node_xsdata_list => null()
     real(8), allocatable :: rev_energy_bins(:)
 
-    ! Check if cross_sections.xml exists
+    ! Check if mgxs.xml exists
     inquire(FILE=path_cross_sections, EXIST=file_exists)
     if (.not. file_exists) then
-      ! Could not find cross_sections.xml file
+      ! Could not find mgxs.xml file
       call fatal_error("Cross sections XML file '" &
            // trim(path_cross_sections) // "' does not exist!")
     end if
 
     call write_message("Reading cross sections XML file...", 5)
 
-    ! Parse cross_sections.xml file
+    ! Parse mgxs.xml file
     call open_xmldoc(doc, path_cross_sections)
 
     if (check_for_node(doc, "groups")) then
@@ -4907,7 +4983,7 @@ contains
     ! Allocate xs_listings array
     if (n_listings == 0) then
       call fatal_error("At least one <xsdata> element must be present in &
-                       &cross_sections.xml file!")
+                       &mgxs.xml file!")
     else
       allocate(xs_listings(n_listings))
     end if

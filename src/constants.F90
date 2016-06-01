@@ -37,7 +37,7 @@ module constants
   real(8), parameter :: FP_COINCIDENT = 1e-12_8
 
   ! Maximum number of collisions/crossings
-  integer, parameter :: MAX_EVENTS = 10000
+  integer, parameter :: MAX_EVENTS = 1000000
   integer, parameter :: MAX_SAMPLE = 100000
 
   ! Maximum number of secondary particles created
@@ -279,7 +279,7 @@ module constants
        EVENT_ABSORB  =  2
 
   ! Tally score type
-  integer, parameter :: N_SCORE_TYPES = 31
+  integer, parameter :: N_SCORE_TYPES = 29
   integer, parameter :: &
        SCORE_FLUX               = -1,  & ! flux
        SCORE_TOTAL              = -2,  & ! total reaction rate
@@ -289,29 +289,27 @@ module constants
        SCORE_SCATTER_PN         = -6,  & ! system for scoring 0th through nth moment
        SCORE_NU_SCATTER_N       = -7,  & ! arbitrary nu-scattering moment
        SCORE_NU_SCATTER_PN      = -8,  & ! system for scoring 0th through nth nu-scatter moment
-       SCORE_TRANSPORT          = -9,  & ! transport reaction rate
-       SCORE_N_1N               = -10, & ! (n,1n) rate
-       SCORE_ABSORPTION         = -11, & ! absorption rate
-       SCORE_FISSION            = -12, & ! fission rate
-       SCORE_NU_FISSION         = -13, & ! neutron production rate
-       SCORE_KAPPA_FISSION      = -14, & ! fission energy production rate
-       SCORE_CURRENT            = -15, & ! partial current
-       SCORE_FLUX_YN            = -16, & ! angular moment of flux
-       SCORE_TOTAL_YN           = -17, & ! angular moment of total reaction rate
-       SCORE_SCATTER_YN         = -18, & ! angular flux-weighted scattering moment (0:N)
-       SCORE_NU_SCATTER_YN      = -19, & ! angular flux-weighted nu-scattering moment (0:N)
-       SCORE_EVENTS             = -20, & ! number of events
-       SCORE_DELAYED_NU_FISSION = -21, & ! delayed neutron production rate
-       SCORE_INVERSE_VELOCITY   = -22, & ! flux-weighted inverse velocity
-       SCORE_NDPP_SCATT_N       = -23, & ! pre-integrated version of score_scatter_n
-       SCORE_NDPP_SCATT_PN      = -24, & ! pre-integrated version of score_scatter_pn
-       SCORE_NDPP_SCATT_YN      = -25, & ! pre-integrated version of score_scatter_yn
-       SCORE_NDPP_NU_SCATT_N    = -26, & ! pre-integrated version of score_nu_scatter_n
-       SCORE_NDPP_NU_SCATT_PN   = -27, & ! pre-integrated version of score_nu_scatter_pn
-       SCORE_NDPP_NU_SCATT_YN   = -28, & ! pre-integrated version of score_nu_scatter_yn
-       SCORE_NDPP_CHI           = -29, & ! pre-integrated total fission spectra
-       SCORE_NDPP_CHI_P         = -30, & ! pre-integrated prompt fission spectra
-       SCORE_NDPP_CHI_D         = -31    ! pre-integrated delayed fission spectra
+       SCORE_ABSORPTION         = -9,  & ! absorption rate
+       SCORE_FISSION            = -10, & ! fission rate
+       SCORE_NU_FISSION         = -11, & ! neutron production rate
+       SCORE_KAPPA_FISSION      = -12, & ! fission energy production rate
+       SCORE_CURRENT            = -13, & ! partial current
+       SCORE_FLUX_YN            = -14, & ! angular moment of flux
+       SCORE_TOTAL_YN           = -15, & ! angular moment of total reaction rate
+       SCORE_SCATTER_YN         = -16, & ! angular flux-weighted scattering moment (0:N)
+       SCORE_NU_SCATTER_YN      = -17, & ! angular flux-weighted nu-scattering moment (0:N)
+       SCORE_EVENTS             = -18, & ! number of events
+       SCORE_DELAYED_NU_FISSION = -19, & ! delayed neutron production rate
+       SCORE_INVERSE_VELOCITY   = -20, & ! flux-weighted inverse velocity
+       SCORE_NDPP_SCATT_N       = -21, & ! pre-integrated version of score_scatter_n
+       SCORE_NDPP_SCATT_PN      = -22, & ! pre-integrated version of score_scatter_pn
+       SCORE_NDPP_SCATT_YN      = -23, & ! pre-integrated version of score_scatter_yn
+       SCORE_NDPP_NU_SCATT_N    = -24, & ! pre-integrated version of score_nu_scatter_n
+       SCORE_NDPP_NU_SCATT_PN   = -25, & ! pre-integrated version of score_nu_scatter_pn
+       SCORE_NDPP_NU_SCATT_YN   = -26, & ! pre-integrated version of score_nu_scatter_yn
+       SCORE_NDPP_CHI           = -27, & ! pre-integrated total fission spectra
+       SCORE_NDPP_CHI_P         = -28, & ! pre-integrated prompt fission spectra
+       SCORE_NDPP_CHI_D         = -29    ! pre-integrated delayed fission spectra
 
   ! Maximum scattering order supported
   integer, parameter :: MAX_ANG_ORDER = 10

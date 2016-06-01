@@ -38,8 +38,10 @@ class Summary(object):
         self._opencg_geometry = None
 
         self._read_metadata()
+        self._read_nuclides()
         self._read_geometry()
         self._read_tallies()
+        self._f.close()
 
     @property
     def openmc_geometry(self):
@@ -55,8 +57,8 @@ class Summary(object):
     def _read_metadata(self):
         # Read OpenMC version
         self.version = [self._f['version_major'].value,
-                         self._f['version_minor'].value,
-                         self._f['version_release'].value]
+                        self._f['version_minor'].value,
+                        self._f['version_release'].value]
         # Read date and time
         self.date_and_time = self._f['date_and_time'][...]
 
@@ -65,10 +67,22 @@ class Summary(object):
 
         self.n_batches = self._f['n_batches'].value
         self.n_particles = self._f['n_particles'].value
-        self.n_active = self._f['n_active'].value
-        self.n_inactive = self._f['n_inactive'].value
-        self.gen_per_batch = self._f['gen_per_batch'].value
+        if 'n_inactive' in self._f:
+            self.n_active = self._f['n_active'].value
+            self.n_inactive = self._f['n_inactive'].value
+            self.gen_per_batch = self._f['gen_per_batch'].value
         self.n_procs = self._f['n_procs'].value
+
+    def _read_nuclides(self):
+        self.nuclides = {}
+        n_nuclides = self._f['nuclides/n_nuclides_total'].value
+        names = self._f['nuclides/names'].value
+        awrs = self._f['nuclides/awrs'].value
+        zaids = self._f['nuclides/zaids'].value
+        for n in range(n_nuclides):
+            name = names[n].decode()
+            name = name[:name.find('.')]
+            self.nuclides[name] = (zaids[n], awrs[n])
 
     def _read_geometry(self):
         # Read in and initialize the Materials and Geometry
@@ -266,7 +280,7 @@ class Summary(object):
                     rotation = \
                       self._f['geometry/cells'][key]['rotation'][...]
                     rotation = np.asarray(rotation, dtype=np.int)
-                    cell.rotation = rotation
+                    cell._rotation = rotation
 
             # Store Cell fill information for after Universe/Lattice creation
             self._cell_fills[index] = (fill_type, fill)
@@ -344,7 +358,6 @@ class Summary(object):
 
                 # Create the Lattice
                 lattice = openmc.RectLattice(lattice_id=lattice_id, name=name)
-                lattice.dimension = tuple(dimension)
                 lattice.lower_left = lower_left
                 lattice.pitch = pitch
 
@@ -354,7 +367,7 @@ class Summary(object):
 
                 # Build array of Universe pointers for the Lattice
                 universes = \
-                    np.ndarray(tuple(universe_ids.shape), dtype=openmc.Universe)
+                    np.empty(tuple(universe_ids.shape), dtype=openmc.Universe)
 
                 for z in range(universe_ids.shape[0]):
                     for y in range(universe_ids.shape[1]):
@@ -378,19 +391,17 @@ class Summary(object):
                 self.lattices[index] = lattice
 
             if lattice_type == 'hexagonal':
-                n_rings = self._f['geometry/lattices'][key]['n_rings'][0]
-                n_axial = self._f['geometry/lattices'][key]['n_axial'][0]
+                n_rings = self._f['geometry/lattices'][key]['n_rings'].value
+                n_axial = self._f['geometry/lattices'][key]['n_axial'].value
                 center = self._f['geometry/lattices'][key]['center'][...]
                 pitch = self._f['geometry/lattices'][key]['pitch'][...]
-                outer = self._f['geometry/lattices'][key]['outer'][0]
+                outer = self._f['geometry/lattices'][key]['outer'].value
 
                 universe_ids = self._f[
                     'geometry/lattices'][key]['universes'][...]
 
                 # Create the Lattice
                 lattice = openmc.HexLattice(lattice_id=lattice_id, name=name)
-                lattice.num_rings = n_rings
-                lattice.num_axial = n_axial
                 lattice.center = center
                 lattice.pitch = pitch
 
@@ -403,12 +414,12 @@ class Summary(object):
                 # (x, alpha, z) to the Python API's format of a ragged nested
                 # list of (z, ring, theta).
                 universes = []
-                for z in range(lattice.num_axial):
+                for z in range(n_axial):
                     # Add a list for this axial level.
                     universes.append([])
-                    x = lattice.num_rings - 1
-                    a = 2*lattice.num_rings - 2
-                    for r in range(lattice.num_rings - 1, 0, -1):
+                    x = n_rings - 1
+                    a = 2*n_rings - 2
+                    for r in range(n_rings - 1, 0, -1):
                         # Add a list for this ring.
                         universes[-1].append([])
 
@@ -482,13 +493,13 @@ class Summary(object):
             # Retrieve the object corresponding to the fill type and ID
             if fill_type == 'normal':
                 if isinstance(fill_id, Iterable):
-                    fill = [self.get_material_by_id(mat) if mat > 0 else 'void'
+                    fill = [self.get_material_by_id(mat) if mat > 0 else None
                             for mat in fill_id]
                 else:
                     if fill_id > 0:
                         fill = self.get_material_by_id(fill_id)
                     else:
-                        fill = 'void'
+                        fill = None
             elif fill_type == 'universe':
                 fill = self.get_universe_by_id(fill_id)
             else:
@@ -584,7 +595,7 @@ class Summary(object):
 
         Returns
         -------
-        material : openmc.material.Material
+        material : openmc.Material
             Material with given id
 
         """
@@ -605,7 +616,7 @@ class Summary(object):
 
         Returns
         -------
-        surface : openmc.surface.Surface
+        surface : openmc.Surface
             Surface with given id
 
         """
@@ -626,7 +637,7 @@ class Summary(object):
 
         Returns
         -------
-        cell : openmc.universe.Cell
+        cell : openmc.Cell
             Cell with given id
 
         """
@@ -647,7 +658,7 @@ class Summary(object):
 
         Returns
         -------
-        universe : openmc.universe.Universe
+        universe : openmc.Universe
             Universe with given id
 
         """
@@ -668,7 +679,7 @@ class Summary(object):
 
         Returns
         -------
-        lattice : openmc.universe.Lattice
+        lattice : openmc.Lattice
             Lattice with given id
 
         """
