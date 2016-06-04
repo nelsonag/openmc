@@ -538,7 +538,7 @@ class XSdata(object):
             msg = 'Provided chi iterable does not have the expected shape.'
             raise ValueError(msg)
 
-        self._chi = npchi
+        self._chi = npchi / np.sum(npchi)
 
         if self.use_chi is not None:
             self.use_chi = True
@@ -833,8 +833,12 @@ class XSdata(object):
                     ['universe', 'cell', 'material'])
 
         if self.representation is 'isotropic':
+            # Get Chi
             self._chi = chi.get_xs(nuclides=nuclide,
                                    xs_type=xs_type)
+            # Normalize Chi
+            self._chi = self._chi / np.sum(self._chi)
+
         elif self.representation is 'angle':
             msg = 'Angular-Dependent MGXS have not yet been implemented'
             raise ValueError(msg)

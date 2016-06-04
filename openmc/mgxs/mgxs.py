@@ -486,6 +486,8 @@ class MGXS(object):
             mgxs = NuFissionMatrixXS(domain, domain_type, energy_groups)
         elif mgxs_type == 'chi':
             mgxs = Chi(domain, domain_type, energy_groups)
+        elif mgxs_type == 'ndpp scatter matrix':
+            mgxs = NdppScatterMatrixXS(domain, domain_type, energy_groups)
         elif mgxs_type == 'ndpp nu-scatter matrix':
             mgxs = NdppNuScatterMatrixXS(domain, domain_type, energy_groups)
         elif mgxs_type == 'ndpp multiplicity matrix':
@@ -4341,6 +4343,10 @@ class NdppScatterMatrixXS(ScatterMatrixXS):
         self._rxn_type = 'ndpp-scatter'
         self._hdf5_key = 'ndpp scatter matrix'
 
+    @property
+    def estimator(self):
+        return 'tracklength'
+
 
 class NdppNuScatterMatrixXS(ScatterMatrixXS):
     """A scattering production matrix multi-group cross section for one or
@@ -4435,6 +4441,10 @@ class NdppNuScatterMatrixXS(ScatterMatrixXS):
         self._rxn_type = 'ndpp-nu-scatter'
         self._hdf5_key = 'ndpp nu-scatter matrix'
 
+    @property
+    def estimator(self):
+        return 'tracklength'
+
 
 class NdppMultiplicityMatrixXS(MatrixMGXS):
     """The scattering multiplicity matrix using Ndpp data.
@@ -4523,6 +4533,10 @@ class NdppMultiplicityMatrixXS(MatrixMGXS):
                                                        groups, by_nuclide,
                                                        name)
         self._rxn_type = 'ndpp multiplicity matrix'
+
+    @property
+    def estimator(self):
+        return 'tracklength'
 
     @property
     def scores(self):
@@ -4645,6 +4659,23 @@ class NdppChi(MGXS):
         self._rxn_type = 'ndpp-chi'
 
     @property
+    def estimator(self):
+        return 'tracklength'
+
+    @property
+    def scores(self):
+        scores = ['ndpp-chi']
+        return scores
+
+    @property
+    def filters(self):
+        # Create the non-domain specific Filters for the Tallies
+        group_edges = self.energy_groups.group_edges
+        energyout = openmc.Filter('energyout', group_edges)
+
+        return [[energyout]]
+
+    @property
     def xs_tally(self):
         if self._xs_tally is None:
             if self.tallies is None:
@@ -4653,8 +4684,7 @@ class NdppChi(MGXS):
                 raise ValueError(msg)
 
             # Normalize the Chi data
-            the_sum = np.sum(self.rxn_rate_tally)
-            self._xs_tally = self.rxn_rate_tally / the_sum
+            self._xs_tally = self.rxn_rate_tally
             self._compute_xs()
 
         return self._xs_tally

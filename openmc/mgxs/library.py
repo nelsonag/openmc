@@ -863,6 +863,9 @@ class Library(object):
             if 'chi' in self.mgxs_types:
                 mymgxs = self.get_mgxs(domain, 'chi')
                 xsdata.set_chi_mgxs(mymgxs, xs_type=xs_type, nuclide=[nuclide])
+            if 'ndpp chi' in self.mgxs_types:
+                mymgxs = self.get_mgxs(domain, 'ndpp chi')
+                xsdata.set_chi_mgxs(mymgxs, xs_type=xs_type, nuclide=[nuclide])
             if 'nu-fission' in self.mgxs_types:
                 mymgxs = self.get_mgxs(domain, 'nu-fission')
                 xsdata.set_nu_fission_mgxs(mymgxs, xs_type=xs_type,
