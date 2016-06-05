@@ -50,9 +50,9 @@ DOMAIN_TYPES = ['cell',
 
 # Supported domain classes
 # TODO: Implement Mesh domains
-_DOMAINS = [openmc.Cell,
+_DOMAINS = (openmc.Cell,
             openmc.Universe,
-            openmc.Material]
+            openmc.Material)
 
 
 class MGXS(object):
@@ -368,7 +368,7 @@ class MGXS(object):
 
     @domain.setter
     def domain(self, domain):
-        cv.check_type('domain', domain, tuple(_DOMAINS))
+        cv.check_type('domain', domain, _DOMAINS)
         self._domain = domain
 
         # Assign a domain type
@@ -1946,11 +1946,30 @@ class MatrixMGXS(MGXS):
 
 
 class TotalXS(MGXS):
-    """A total multi-group cross section.
+    r"""A total multi-group cross section.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group total cross sections for multi-group neutronics calculations. At
+    a minimum, one needs to set the :attr:`TotalXS.energy_groups` and
+    :attr:`TotalXS.domain` properties. Tallies for the flux and appropriate
+    reaction rates over the specified domain are generated automatically via the
+    :attr:`TotalXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`TotalXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    total cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \sigma_t (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -1958,7 +1977,7 @@ class TotalXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -1993,7 +2012,9 @@ class TotalXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`TotalXS.tally_keys` property and values
+        are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2034,11 +2055,39 @@ class TotalXS(MGXS):
 
 
 class TransportXS(MGXS):
-    """A transport-corrected total multi-group cross section.
+    r"""A transport-corrected total multi-group cross section.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`TransportXS.energy_groups` and
+    :attr:`TransportXS.domain` properties. Tallies for the flux and appropriate
+    reaction rates over the specified domain are generated automatically via the
+    :attr:`TransportXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`TransportXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    transport-corrected total cross section is calculated as:
+
+    .. math::
+
+       \langle \sigma_t \phi \rangle &= \int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \sigma_t (r, E) \psi
+       (r, E, \Omega) \\
+       \langle \sigma_{s1} \phi \rangle &= \int_{r \in V} dr
+       \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \int_{4\pi}
+       d\Omega' \int_0^\infty dE' \int_{-1}^1 d\mu \; \mu \sigma_s
+       (r, E' \rightarrow E, \Omega' \cdot \Omega)
+       \phi (r, E', \Omega) \\
+       \langle \phi \rangle &= \int_{r \in V} dr \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega) \\
+       \sigma_{tr} &= \frac{\langle \sigma_t \phi \rangle - \langle \sigma_{s1}
+       \phi \rangle}{\langle \phi \rangle}
 
     Parameters
     ----------
@@ -2046,7 +2095,7 @@ class TransportXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2081,7 +2130,9 @@ class TransportXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`TransportXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2147,12 +2198,26 @@ class TransportXS(MGXS):
 
 
 class NuTransportXS(TransportXS):
-    """A transport-corrected total multi-group cross section which
+    r"""A transport-corrected total multi-group cross section which
     accounts for neutron multiplicity in scattering reactions.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`NuTransportXS.energy_groups` and
+    :attr:`NuTransportXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`NuTransportXS.tallies` property, which can then
+    be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`NuTransportXS.xs_tally` property.
+
+    The calculation of the transport-corrected cross section is the same as that
+    for :class:`TransportXS` except that the scattering multiplicity is
+    accounted for.
 
     Parameters
     ----------
@@ -2160,7 +2225,7 @@ class NuTransportXS(TransportXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2195,7 +2260,9 @@ class NuTransportXS(TransportXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`NuTransportXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2244,11 +2311,34 @@ class NuTransportXS(TransportXS):
 
 
 class AbsorptionXS(MGXS):
-    """An absorption multi-group cross section.
+    r"""An absorption multi-group cross section.
+
+    Absorption is defined as all reactions that do not produce secondary
+    neutrons (disappearance) plus fission reactions.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group absorption cross sections for multi-group neutronics
+    calculations. At a minimum, one needs to set the
+    :attr:`AbsorptionXS.energy_groups` and :attr:`AbsorptionXS.domain`
+    properties. Tallies for the flux and appropriate reaction rates over the
+    specified domain are generated automatically via the
+    :attr:`AbsorptionXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`AbsorptionXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    absorption cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \sigma_a (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -2256,7 +2346,7 @@ class AbsorptionXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2291,7 +2381,9 @@ class AbsorptionXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`AbsorptionXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2332,16 +2424,37 @@ class AbsorptionXS(MGXS):
 
 
 class CaptureXS(MGXS):
-    """A capture multi-group cross section.
+    r"""A capture multi-group cross section.
 
     The neutron capture reaction rate is defined as the difference between
     OpenMC's 'absorption' and 'fission' reaction rate score types. This includes
     not only radiative capture, but all forms of neutron disappearance aside
-    from fission (e.g., MT > 100).
+    from fission (i.e., MT > 100).
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group capture cross sections for multi-group neutronics
+    calculations. At a minimum, one needs to set the
+    :attr:`CaptureXS.energy_groups` and :attr:`CaptureXS.domain`
+    properties. Tallies for the flux and appropriate reaction rates over the
+    specified domain are generated automatically via the
+    :attr:`CaptureXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`CaptureXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    capture cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \left [ \sigma_a (r, E) \psi (r, E, \Omega) - \sigma_f (r, E) \psi (r, E,
+       \Omega) \right ]}{\int_{r \in V} dr \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -2349,7 +2462,7 @@ class CaptureXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2384,7 +2497,9 @@ class CaptureXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`CaptureXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2437,11 +2552,31 @@ class CaptureXS(MGXS):
 
 
 class FissionXS(MGXS):
-    """A fission multi-group cross section.
+    r"""A fission multi-group cross section.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group fission cross sections for multi-group neutronics
+    calculations. At a minimum, one needs to set the
+    :attr:`FissionXS.energy_groups` and :attr:`FissionXS.domain`
+    properties. Tallies for the flux and appropriate reaction rates over the
+    specified domain are generated automatically via the
+    :attr:`FissionXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`FissionXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    fission cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \sigma_f (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -2449,7 +2584,7 @@ class FissionXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2484,7 +2619,9 @@ class FissionXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`FissionXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2525,11 +2662,32 @@ class FissionXS(MGXS):
 
 
 class NuFissionXS(MGXS):
-    """A fission production multi-group cross section.
+    r"""A fission neutron production multi-group cross section.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group fission neutron production cross sections for multi-group
+    neutronics calculations. At a minimum, one needs to set the
+    :attr:`NuFissionXS.energy_groups` and :attr:`NuFissionXS.domain`
+    properties. Tallies for the flux and appropriate reaction rates over the
+    specified domain are generated automatically via the
+    :attr:`NuFissionXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`NuFissionXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    fission neutron production cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \nu\sigma_f (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
+
 
     Parameters
     ----------
@@ -2537,7 +2695,7 @@ class NuFissionXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2572,7 +2730,9 @@ class NuFissionXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`NuFissionXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2613,11 +2773,37 @@ class NuFissionXS(MGXS):
 
 
 class KappaFissionXS(MGXS):
-    """A recoverable fission energy production rate multi-group cross section.
+    r"""A recoverable fission energy production rate multi-group cross section.
+
+    The recoverable energy per fission, :math:`\kappa`, is defined as the
+    fission product kinetic energy, prompt and delayed neutron kinetic energies,
+    prompt and delayed :math:`\gamma`-ray total energies, and the total energy
+    released by the delayed :math:`\beta` particles. The neutrino energy does
+    not contribute to this response. The prompt and delayed :math:`\gamma`-rays
+    are assumed to deposit their energy locally.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`KappaFissionXS.energy_groups` and
+    :attr:`KappaFissionXS.domain` properties. Tallies for the flux and appropriate
+    reaction rates over the specified domain are generated automatically via the
+    :attr:`KappaFissionXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`KappaFissionXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    recoverable fission energy production rate cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \kappa\sigma_f (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -2625,7 +2811,7 @@ class KappaFissionXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2660,7 +2846,9 @@ class KappaFissionXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`KappaFissionXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2701,11 +2889,34 @@ class KappaFissionXS(MGXS):
 
 
 class ScatterXS(MGXS):
-    """A scatter multi-group cross section.
+    r"""A scattering multi-group cross section.
+
+    The scattering cross section is defined as the difference between the total
+    and absorption cross sections.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`ScatterXS.energy_groups` and
+    :attr:`ScatterXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`ScatterXS.tallies` property, which can
+    then be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`ScatterXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    scattering cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \left [ \sigma_t (r, E) \psi (r, E, \Omega) - \sigma_a (r, E) \psi (r, E,
+       \Omega) \right ]}{\int_{r \in V} dr \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
 
     Parameters
     ----------
@@ -2713,7 +2924,7 @@ class ScatterXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2748,7 +2959,9 @@ class ScatterXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`ScatterXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2789,11 +3002,36 @@ class ScatterXS(MGXS):
 
 
 class NuScatterXS(MGXS):
-    """A nu-scatter multi-group cross section.
+    r"""A scattering neutron production multi-group cross section.
+
+    The neutron production from scattering is defined as the average number of
+    neutrons produced from all neutron-producing reactions except for fission.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`NuScatterXS.energy_groups` and
+    :attr:`NuScatterXS.domain` properties. Tallies for the flux and appropriate
+    reaction rates over the specified domain are generated automatically via the
+    :attr:`NuScatterXS.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`NuScatterXS.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    scattering neutron production cross section is calculated as:
+
+    .. math::
+
+       \frac{\int_{r \in V} dr \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \;
+       \sum_i \upsilon_i \sigma_i (r, E) \psi (r, E, \Omega)}{\int_{r \in V} dr
+       \int_{4\pi} d\Omega \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega)}.
+
+    where :math:`\upsilon_i` is the multiplicity of the :math:`i`-th scattering
+    reaction.
 
     Parameters
     ----------
@@ -2801,7 +3039,7 @@ class NuScatterXS(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2836,7 +3074,9 @@ class NuScatterXS(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`NuScatterXS.tally_keys` property and
+        values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -2881,12 +3121,47 @@ class NuScatterXS(MGXS):
 
 
 class ScatterMatrixXS(MatrixMGXS):
-    """A scattering matrix multi-group cross section for one or more Legendre
+    r"""A scattering matrix multi-group cross section for one or more Legendre
     moments.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`ScatterMatrixXS.energy_groups` and
+    :attr:`ScatterMatrixXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`ScatterMatrixXS.tallies` property, which can
+    then be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`ScatterMatrixXS.xs_tally` property.
+
+    For a spatial domain :math:`V`, incoming energy group
+    :math:`[E_{g'},E_{g'-1}]`, and outgoing energy group :math:`[E_g,E_{g-1}]`,
+    the scattering moments are calculated as:
+
+    .. math::
+
+       \langle \sigma_{s,\ell,g'\rightarrow g} \phi \rangle &= \int_{r \in V} dr
+       \int_{4\pi} d\Omega' \int_{E_{g'}}^{E_{g'-1}} dE' \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; P_\ell (\Omega \cdot \Omega') \sigma_s (r, E'
+       \rightarrow E, \Omega' \cdot \Omega) \psi(r, E', \Omega')\\
+       \langle \phi \rangle &= \int_{r \in V} dr \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega) \\
+       \sigma_{s,\ell,g'\rightarrow g} &= \frac{\langle
+       \sigma_{s,\ell,g'\rightarrow g} \phi \rangle}{\langle \phi \rangle}
+
+    If the order is zero and a :math:`P_0` transport-correction is applied
+    (default), the scattering matrix elements are:
+
+    .. math::
+
+       \sigma_{s,g'\rightarrow g} = \frac{\langle \sigma_{s,0,g'\rightarrow g}
+       \phi \rangle - \delta_{gg'} \sum_{g''} \langle \sigma_{s,1,g''\rightarrow
+       g} \phi \rangle}{\langle \phi \rangle}
+
 
     Parameters
     ----------
@@ -2894,7 +3169,7 @@ class ScatterMatrixXS(MatrixMGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -2907,7 +3182,7 @@ class ScatterMatrixXS(MatrixMGXS):
     correction : 'P0' or None
         Apply the P0 correction to scattering matrices if set to 'P0'
     legendre_order : int
-        The highest legendre moment in the scattering matrix (default is 0)
+        The highest Legendre moment in the scattering matrix (default is 0)
     name : str, optional
         Name of the multi-group cross section
     rxn_type : str
@@ -2933,7 +3208,9 @@ class ScatterMatrixXS(MatrixMGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`ScatterMatrixXS.tally_keys` property
+        and values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -3519,7 +3796,21 @@ class NuScatterMatrixXS(ScatterMatrixXS):
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`NuScatterMatrixXS.energy_groups` and
+    :attr:`NuScatterMatrixXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`NuScatterMatrixXS.tallies` property, which can
+    then be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`NuScatterMatrixXS.xs_tally` property.
+
+    The calculation of the scattering-production matrix is the same as that for
+    :class:`ScatterMatrixXS` except that the scattering multiplicity is
+    accounted for.
 
     Parameters
     ----------
@@ -3527,7 +3818,7 @@ class NuScatterMatrixXS(ScatterMatrixXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -3566,7 +3857,9 @@ class NuScatterMatrixXS(ScatterMatrixXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`NuScatterMatrixXS.tally_keys` property
+        and values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -3608,11 +3901,42 @@ class NuScatterMatrixXS(ScatterMatrixXS):
 
 
 class MultiplicityMatrixXS(MatrixMGXS):
-    """The scattering multiplicity matrix.
+    r"""The scattering multiplicity matrix.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`MultiplicityMatrixXS.energy_groups` and
+    :attr:`MultiplicityMatrixXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`MultiplicityMatrixXS.tallies` property, which
+    can then be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`MultiplicityMatrixXS.xs_tally`
+    property.
+
+    For a spatial domain :math:`V`, incoming energy group
+    :math:`[E_{g'},E_{g'-1}]`, and outgoing energy group :math:`[E_g,E_{g-1}]`,
+    the multiplicity is calculated as:
+
+    .. math::
+
+       \langle \upsilon \sigma_{s,g'\rightarrow g} \phi \rangle &= \int_{r \in
+       D} dr \int_{4\pi} d\Omega' \int_{E_{g'}}^{E_{g'-1}} dE' \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \sum_i \upsilon_i \sigma_i (r, E' \rightarrow
+       E, \Omega' \cdot \Omega) \psi(r, E', \Omega') \\
+       \langle \sigma_{s,g'\rightarrow g} \phi \rangle &= \int_{r \in
+       D} dr \int_{4\pi} d\Omega' \int_{E_{g'}}^{E_{g'-1}} dE' \int_{4\pi}
+       d\Omega \int_{E_g}^{E_{g-1}} dE \; \sum_i \upsilon_i \sigma_i (r, E' \rightarrow
+       E, \Omega' \cdot \Omega) \psi(r, E', \Omega') \\
+       \upsilon_{g'\rightarrow g} &= \frac{\langle \upsilon
+       \sigma_{s,g'\rightarrow g} \rangle}{\langle \sigma_{s,g'\rightarrow g}
+       \rangle}
+
+    where :math:`\upsilon_i` is the multiplicity for the :math:`i`-th reaction.
 
     Parameters
     ----------
@@ -3620,7 +3944,7 @@ class MultiplicityMatrixXS(MatrixMGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -3655,7 +3979,9 @@ class MultiplicityMatrixXS(MatrixMGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`MultiplicityMatrixXS.tally_keys`
+        property and values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -3729,11 +4055,35 @@ class MultiplicityMatrixXS(MatrixMGXS):
 
 
 class NuFissionMatrixXS(MatrixMGXS):
-    """A fission production matrix multi-group cross section.
+    r"""A fission production matrix multi-group cross section.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`NuFissionMatrixXS.energy_groups` and
+    :attr:`NuFissionMatrixXS.domain` properties. Tallies for the flux and
+    appropriate reaction rates over the specified domain are generated
+    automatically via the :attr:`NuFissionMatrixXS.tallies` property, which can
+    then be appended to a :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`NuFissionMatrixXS.xs_tally` property.
+
+    For a spatial domain :math:`V`, incoming energy group
+    :math:`[E_{g'},E_{g'-1}]`, and outgoing energy group :math:`[E_g,E_{g-1}]`,
+    the fission production is calculated as:
+
+    .. math::
+
+       \langle \nu\sigma_{f,g'\rightarrow g} \phi \rangle &= \int_{r \in V} dr
+       \int_{4\pi} d\Omega' \int_{E_{g'}}^{E_{g'-1}} dE' \int_{E_g}^{E_{g-1}} dE
+       \; \chi(E) \nu\sigma_f (r, E') \psi(r, E', \Omega')\\
+       \langle \phi \rangle &= \int_{r \in V} dr \int_{4\pi} d\Omega
+       \int_{E_g}^{E_{g-1}} dE \; \psi (r, E, \Omega) \\
+       \nu\sigma_{f,g'\rightarrow g} &= \frac{\langle \nu\sigma_{f,g'\rightarrow
+       g} \phi \rangle}{\langle \phi \rangle}
 
     Parameters
     ----------
@@ -3741,7 +4091,7 @@ class NuFissionMatrixXS(MatrixMGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -3776,7 +4126,9 @@ class NuFissionMatrixXS(MatrixMGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`NuFissionMatrixXS.tally_keys`
+        property and values are instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
@@ -3818,11 +4170,35 @@ class NuFissionMatrixXS(MatrixMGXS):
 
 
 class Chi(MGXS):
-    """The fission spectrum.
+    r"""The fission spectrum.
 
     This class can be used for both OpenMC input generation and tally data
     post-processing to compute spatially-homogenized and energy-integrated
-    multi-group cross sections for multi-group neutronics calculations.
+    multi-group cross sections for multi-group neutronics calculations. At a
+    minimum, one needs to set the :attr:`Chi.energy_groups` and
+    :attr:`Chi.domain` properties. Tallies for the flux and appropriate reaction
+    rates over the specified domain are generated automatically via the
+    :attr:`Chi.tallies` property, which can then be appended to a
+    :class:`openmc.Tallies` instance.
+
+    For post-processing, the :meth:`MGXS.load_from_statepoint` will pull in the
+    necessary data to compute multi-group cross sections from a
+    :class:`openmc.StatePoint` instance. The derived multi-group cross section
+    can then be obtained from the :attr:`Chi.xs_tally` property.
+
+    For a spatial domain :math:`V` and energy group :math:`[E_g,E_{g-1}]`, the
+    fission spectrum is calculated as:
+
+    .. math::
+
+       \langle \nu\sigma_{f,\rightarrow g} \phi \rangle &= \int_{r \in V} dr
+       \int_{4\pi} d\Omega' \int_0^\infty dE' \int_{E_g}^{E_{g-1}} dE \; \chi(E)
+       \nu\sigma_f (r, E') \psi(r, E', \Omega')\\
+       \langle \nu\sigma_f \phi \rangle &= \int_{r \in V} dr \int_{4\pi}
+       d\Omega' \int_0^\infty dE' \int_0^\infty dE \; \chi(E) \nu\sigma_f (r,
+       E') \psi(r, E', \Omega') \\
+       \chi_g &= \frac{\langle \nu\sigma_{f,\rightarrow g} \phi \rangle}{\langle
+       \nu\sigma_f \phi \rangle}
 
     Parameters
     ----------
@@ -3830,7 +4206,7 @@ class Chi(MGXS):
         The domain for spatial homogenization
     domain_type : {'material', 'cell', 'distribcell', 'universe'}
         The domain type for spatial homogenization
-    energy_groups : openmc.mgxs.EnergyGroups
+    groups : openmc.mgxs.EnergyGroups
         The energy group structure for energy condensation
     by_nuclide : bool
         If true, computes cross sections for each nuclide in domain
@@ -3865,7 +4241,9 @@ class Chi(MGXS):
     estimator : {'tracklength', 'analog'}
         The tally estimator used to compute the multi-group cross section
     tallies : collections.OrderedDict
-        OpenMC tallies needed to compute the multi-group cross section
+        OpenMC tallies needed to compute the multi-group cross section. The keys
+        are strings listed in the :attr:`Chi.tally_keys` property and values are
+        instances of :class:`openmc.Tally`.
     rxn_rate_tally : openmc.Tally
         Derived tally for the reaction rate tally used in the numerator to
         compute the multi-group cross section. This attribute is None
