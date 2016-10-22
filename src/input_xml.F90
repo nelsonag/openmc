@@ -3683,6 +3683,14 @@ contains
 
           case ('events')
             t % score_bins(j) = SCORE_EVENTS
+          case ('xi')
+            t % score_bins(j) = SCORE_XI
+            t % estimator = ESTIMATOR_ANALOG
+
+            ! Disallow for MG mode
+            if (.not. run_CE) then
+              call fatal_error("Cannot tally xi in multi-group mode")
+            end if
 
           case ('elastic', '(n,elastic)')
             t % score_bins(j) = ELASTIC

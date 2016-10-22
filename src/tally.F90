@@ -1013,6 +1013,41 @@ contains
           end if
         end if
 
+      case (SCORE_XI)
+        ! Only analog estimators are available.
+        ! Skip any event where the particle didn't scatter
+        if (p % event /= EVENT_SCATTER) cycle SCORE_LOOP
+
+        if (survival_biasing) then
+          ! We need to account for the fact that some weight was already
+          ! absorbed
+          score = p % last_wgt + p % absorb_wgt
+        else
+          score = p % last_wgt
+        end if
+
+        ! To account for scattering production, we need to use the
+        ! pre-collision weight times the yield as the estimate for the number
+        ! of neutrons exiting a reaction with neutrons in the exit channel
+        if (p % event_MT == ELASTIC .or. p % event_MT == N_LEVEL .or. &
+             (p % event_MT >= N_N1 .and. p % event_MT <= N_NC)) then
+          ! Don't waste time on very common reactions we know have
+          ! multiplicities of one.
+          score = score
+        else
+          m = nuclides(p % event_nuclide) % reaction_index % &
+               get_key(p % event_MT)
+
+          ! Get yield and apply to score
+          associate (rxn => nuclides(p % event_nuclide) % reactions(m))
+            score = score &
+                 * rxn % products(1) % yield % evaluate(p % last_E)
+          end associate
+        end if
+
+        ! Now actually score the lethargy gain
+        score = score * flux * log(p % last_E / p % E)
+
       case default
         if (t % estimator == ESTIMATOR_ANALOG) then
           ! Any other score is assumed to be a MT number. Thus, we just need
