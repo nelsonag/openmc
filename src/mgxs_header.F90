@@ -131,7 +131,7 @@ module mgxs_header
       integer, intent(in)                 :: method     ! Type of temperature access
     end subroutine mgxs_combine_
 
-    pure function mgxs_get_xs_(this, xstype, gin, gout, uvw, mu, dg) result(xs_val)
+    pure function mgxs_get_xs_(this, xstype, gin, gout, uvw, mu, dg, order) result(xs_val)
       import Mgxs
       class(Mgxs), intent(in)       :: this
       character(*), intent(in)      :: xstype ! Cross Section Type
@@ -140,6 +140,7 @@ module mgxs_header
       real(8), optional, intent(in) :: uvw(3) ! Requested Angle
       real(8), optional, intent(in) :: mu     ! Change in angle
       integer, optional, intent(in) :: dg     ! Delayed group
+      integer, optional, intent(in) :: order  ! Scattering order
       real(8)                       :: xs_val ! Resultant xs
     end function mgxs_get_xs_
 
@@ -3014,7 +3015,7 @@ module mgxs_header
 ! MGXS*_GET_XS returns the requested data cross section data
 !===============================================================================
 
-    pure function mgxsiso_get_xs(this, xstype, gin, gout, uvw, mu, dg) result(xs)
+    pure function mgxsiso_get_xs(this, xstype, gin, gout, uvw, mu, dg, order) result(xs)
       class(MgxsIso), intent(in)    :: this   ! The Xs to get data from
       character(*) , intent(in)     :: xstype ! Type of xs requested
       integer, intent(in)           :: gin    ! Incoming Energy group
@@ -3022,6 +3023,7 @@ module mgxs_header
       real(8), optional, intent(in) :: uvw(3) ! Requested Angle
       real(8), optional, intent(in) :: mu     ! Change in angle
       integer, optional, intent(in) :: dg     ! Delayed group
+      integer, optional, intent(in) :: order  ! Scattering order
       real(8)                       :: xs ! Requested x/s
       integer                       :: t ! temperature index
 
@@ -3093,6 +3095,13 @@ module mgxs_header
           if (gout < this % xs(t) % scatter % gmin(gin) .or. &
                gout > this % xs(t) % scatter % gmax(gin)) then
             xs = ZERO
+          else if (present(order)) then
+            if (order < size(this % xs(t) % scatter % dist(gin) % data, dim=1)) then
+              xs = this % xs(t) % scatter % scattxs(gin) * &
+                   this % xs(t) % scatter % dist(gin) % data(order - 1, gout)
+            else
+              xs = ZERO
+            end if
           else
             xs = this % xs(t) % scatter % scattxs(gin) * &
                  this % xs(t) % scatter % energy(gin) % data(gout)
@@ -3144,7 +3153,7 @@ module mgxs_header
 
     end function mgxsiso_get_xs
 
-    pure function mgxsang_get_xs(this, xstype, gin, gout, uvw, mu, dg) result(xs)
+    pure function mgxsang_get_xs(this, xstype, gin, gout, uvw, mu, dg, order) result(xs)
       class(MgxsAngle), intent(in)  :: this   ! The Mgxs to initialize
       character(*) , intent(in)     :: xstype ! Type of xs requested
       integer, intent(in)           :: gin    ! Incoming Energy group
@@ -3152,6 +3161,7 @@ module mgxs_header
       real(8), optional, intent(in) :: uvw(3) ! Requested Angle
       real(8), optional, intent(in) :: mu     ! Change in angle
       integer, optional, intent(in) :: dg     ! Delayed group
+      integer, optional, intent(in) :: order  ! Scattering order
       real(8)                       :: xs ! Requested x/s
 
       integer :: iazi, ipol, t
