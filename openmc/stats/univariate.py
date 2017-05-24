@@ -9,6 +9,12 @@ import numpy as np
 
 import openmc.checkvalue as cv
 from openmc.mixin import EqualityMixin
+try:
+    import pyximport
+    pyximport.install(setup_args={'include_dirs': [np.get_include()]})
+    from .univariate_methods_cython import *
+except ImportError:
+    from .univariate_methods import *
 
 
 _INTERPOLATION_SCHEMES = ['histogram', 'linear-linear', 'linear-log',
@@ -23,8 +29,13 @@ class Univariate(EqualityMixin):
     specific probability distribution.
 
     """
+
     def __init__(self):
         pass
+
+    @abstractmethod
+    def __call__(self, x):
+        return NotImplementedError
 
     @abstractmethod
     def to_xml_element(self, element_name):
@@ -33,6 +44,13 @@ class Univariate(EqualityMixin):
     @abstractmethod
     def __len__(self):
         return 0
+
+    def get_domain(self, Ein=None):
+        return self._x[0], self._x[-1]
+
+    @abstractmethod
+    def integrate(self, lo, hi):
+        pass
 
 
 class Discrete(Univariate):
@@ -44,16 +62,16 @@ class Discrete(Univariate):
 
     Parameters
     ----------
-    x : Iterable of float
+    x : Iterable of Real
         Values of the random variable
-    p : Iterable of float
+    p : Iterable of Real
         Discrete probability for each value
 
     Attributes
     ----------
-    x : Iterable of float
+    x : Iterable of Real
         Values of the random variable
-    p : Iterable of float
+    p : Iterable of Real
         Discrete probability for each value
 
     """
@@ -65,6 +83,14 @@ class Discrete(Univariate):
 
     def __len__(self):
         return len(self.x)
+
+    def __call__(self, x):
+        # Handle both array and scalar input
+        if isinstance(x, Iterable):
+            return np.fromiter((discrete_call(self, x_i) for x_i in x),
+                               np.float, len(x))
+        else:
+            return discrete_call(self, x)
 
     @property
     def x(self):
@@ -90,6 +116,15 @@ class Discrete(Univariate):
             cv.check_greater_than('discrete probability', pk, 0.0, True)
         self._p = p
 
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return discrete_call(self, x)
+
+    def integrate(self, lo, hi):
+        cv.check_type('lo', lo, Real)
+        cv.check_type('hi', hi, Real)
+        return discrete_integrate(self, lo, hi)
+
     def to_xml_element(self, element_name):
         """Return XML representation of the discrete distribution
 
@@ -108,7 +143,8 @@ class Discrete(Univariate):
         element.set("type", "discrete")
 
         params = ET.SubElement(element, "parameters")
-        params.text = ' '.join(map(str, self.x)) + ' ' + ' '.join(map(str, self.p))
+        params.text = ' '.join(map(str, self.x)) + ' ' + \
+            ' '.join(map(str, self.p))
 
         return element
 
@@ -118,16 +154,16 @@ class Uniform(Univariate):
 
     Parameters
     ----------
-    a : float, optional
+    a : Real, optional
         Lower bound of the sampling interval. Defaults to zero.
-    b : float, optional
+    b : Real, optional
         Upper bound of the sampling interval. Defaults to unity.
 
     Attributes
     ----------
-    a : float
+    a : Real
         Lower bound of the sampling interval
-    b : float
+    b : Real
         Upper bound of the sampling interval
 
     """
@@ -136,6 +172,15 @@ class Uniform(Univariate):
         super(Uniform, self).__init__()
         self.a = a
         self.b = b
+        cv.check_greater_than('b > a', b, minimum=a)
+
+    def __call__(self, x):
+        # Handle both array and scalar input
+        if isinstance(x, Iterable):
+            return np.fromiter((uniform_call(self, x_i) for x_i in x),
+                               np.float, len(x))
+        else:
+            return uniform_call(self, x)
 
     def __len__(self):
         return 2
@@ -158,11 +203,17 @@ class Uniform(Univariate):
         cv.check_type('Uniform b', b, Real)
         self._b = b
 
-    def to_tabular(self):
-        prob = 1./(self.b - self.a)
-        t = Tabular([self.a, self.b], [prob, prob], 'histogram')
-        t.c = [0., 1.]
-        return t
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return uniform_call(self, x)
+
+    def get_domain(self, Ein=None):
+        return self._a, self._b
+
+    def integrate(self, lo, hi):
+        cv.check_type('lo', lo, Real)
+        cv.check_type('hi', hi, Real)
+        return uniform_integrate(self, lo, hi)
 
     def to_xml_element(self, element_name):
         """Return XML representation of the uniform distribution
@@ -193,12 +244,12 @@ class Maxwell(Univariate):
 
     Parameters
     ----------
-    theta : float
+    theta : Real
         Effective temperature for distribution
 
     Attributes
     ----------
-    theta : float
+    theta : Real
         Effective temperature for distribution
 
     """
@@ -206,6 +257,14 @@ class Maxwell(Univariate):
     def __init__(self, theta):
         super(Maxwell, self).__init__()
         self.theta = theta
+
+    def __call__(self, x):
+        # Handle both array and scalar input
+        if isinstance(x, Iterable):
+            return np.fromiter((maxwell_call(self, x_i) for x_i in x),
+                               np.float, len(x))
+        else:
+            return maxwell_call(self, x)
 
     def __len__(self):
         return 1
@@ -219,6 +278,13 @@ class Maxwell(Univariate):
         cv.check_type('Maxwell temperature', theta, Real)
         cv.check_greater_than('Maxwell temperature', theta, 0.0)
         self._theta = theta
+
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return maxwell_call(self, x)
+
+    def get_domain(self, Ein=None):
+        return 0., np.inf
 
     def to_xml_element(self, element_name):
         """Return XML representation of the Maxwellian distribution
@@ -249,16 +315,16 @@ class Watt(Univariate):
 
     Parameters
     ----------
-    a : float
+    a : Real
         First parameter of distribution
-    b : float
+    b : Real
         Second parameter of distribution
 
     Attributes
     ----------
-    a : float
+    a : Real
         First parameter of distribution
-    b : float
+    b : Real
         Second parameter of distribution
 
     """
@@ -267,6 +333,14 @@ class Watt(Univariate):
         super(Watt, self).__init__()
         self.a = a
         self.b = b
+
+    def __call__(self, x):
+        # Handle both array and scalar input
+        if isinstance(x, Iterable):
+            return np.fromiter((watt_call(self, x_i) for x_i in x),
+                               np.float, len(x))
+        else:
+            return watt_call(self, x)
 
     def __len__(self):
         return 2
@@ -290,6 +364,13 @@ class Watt(Univariate):
         cv.check_type('Watt b', b, Real)
         cv.check_greater_than('Watt b', b, 0.0)
         self._b = b
+
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return watt_call(self, x)
+
+    def get_domain(self, Ein=None):
+        return 0., np.inf
 
     def to_xml_element(self, element_name):
         """Return XML representation of the Watt distribution
@@ -320,9 +401,9 @@ class Tabular(Univariate):
 
     Parameters
     ----------
-    x : Iterable of float
+    x : Iterable of Real
         Tabulated values of the random variable
-    p : Iterable of float
+    p : Iterable of Real
         Tabulated probabilities
     interpolation : {'histogram', 'linear-linear', 'linear-log', 'log-linear', 'log-log'}, optional
         Indicate whether the density function is constant between tabulated
@@ -332,9 +413,9 @@ class Tabular(Univariate):
 
     Attributes
     ----------
-    x : Iterable of float
+    x : Iterable of Real
         Tabulated values of the random variable
-    p : Iterable of float
+    p : Iterable of Real
         Tabulated probabilities
     interpolation : {'histogram', 'linear-linear', 'linear-log', 'log-linear', 'log-log'}, optional
         Indicate whether the density function is constant between tabulated
@@ -349,6 +430,14 @@ class Tabular(Univariate):
         self.x = x
         self.p = p
         self.interpolation = interpolation
+
+    def __call__(self, x):
+        # Handle both array and scalar input
+        if isinstance(x, Iterable):
+            return np.fromiter((tabular_call(self, x_i) for x_i in x),
+                               np.float, len(x))
+        else:
+            return tabular_call(self, x)
 
     def __len__(self):
         return len(self.x)
@@ -382,6 +471,15 @@ class Tabular(Univariate):
     def interpolation(self, interpolation):
         cv.check_value('interpolation', interpolation, _INTERPOLATION_SCHEMES)
         self._interpolation = interpolation
+
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return tabular_call(self, x)
+
+    def integrate(self, lo, hi):
+        cv.check_type('lo', lo, Real)
+        cv.check_type('hi', hi, Real)
+        return tabular_integrate(self, lo, hi)
 
     def to_xml_element(self, element_name):
         """Return XML representation of the tabular distribution
@@ -449,6 +547,27 @@ class Legendre(Univariate):
         self._legendre_polynomial = np.polynomial.legendre.Legendre(
             coefficients)
 
+    def _eval(self, x):
+        """The same as __call__ without the overhead"""
+        return self._legendre_polynomial(x)
+
+    def get_domain(self, Ein=None):
+        return -1., 1.
+
+    def integrate(self, lo, hi):
+        # Quadrature integration will be exact, so lets just do that.
+        xlo = max(-1., lo)
+        xhi = min(1., hi)
+
+        # Use the legendre order to find the value of n for the quadrature
+        quad_order = int(ceil(0.5 * (float(self.coefficients.shape[0]) + 1.)))
+
+        # Just use Scipy's integration methods until this is identified as a
+        # bottleneck
+        result = sint.fixed_quad(self, xlo, xhi, n=quad_order)
+
+        return result
+
     def to_xml_element(self, element_name):
         raise NotImplementedError
 
@@ -477,6 +596,12 @@ class Mixture(Univariate):
         self.probability = probability
         self.distribution = distribution
 
+    def __call__(self, x):
+        value = 0.
+        for i in range(len(self.probability)):
+            value += self.probability[i] * self.distribution[i](x)
+        return value
+
     def __len__(self):
         return sum(len(d) for d in self.distribution)
 
@@ -502,6 +627,21 @@ class Mixture(Univariate):
         cv.check_type('mixture distribution components', distribution,
                       Iterable, Univariate)
         self._distribution = distribution
+
+    def get_domain(self, Ein=None):
+        low, high = (np.inf, -np.inf)
+        for distrib in self.distribution:
+            my_low, my_high = distrib.domain
+            low = min(low, my_low)
+            high = max(high, my_high)
+        return (low, high)
+
+    def integrate(self, lo, hi):
+        value = 0.
+        for i in range(len(self.probability)):
+            value += self.probability[i] * \
+                self.distribution[i].integrate(lo, hi)
+        return value
 
     def to_xml_element(self, element_name):
         raise NotImplementedError

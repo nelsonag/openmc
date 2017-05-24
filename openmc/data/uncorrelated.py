@@ -1,6 +1,9 @@
 import numpy as np
+import scipy.integrate as sint
+import scipy.special as ss
 
 import openmc.checkvalue as cv
+import openmc.stats
 from .angle_energy import AngleEnergy
 from .energy_distribution import EnergyDistribution
 from .angle_distribution import AngleDistribution

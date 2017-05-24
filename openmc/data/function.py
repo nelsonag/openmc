@@ -6,9 +6,17 @@ from six import add_metaclass
 import numpy as np
 
 import openmc.data
+import openmc.stats
 import openmc.checkvalue as cv
 from openmc.mixin import EqualityMixin
 from .data import EV_PER_MEV
+try:
+    import pyximport
+    pyximport.install(setup_args={'include_dirs': [np.get_include(),
+                                                   '../stats/']})
+    from .function_methods_cython import *
+except ImportError:
+    from .function_methods import *
 
 INTERPOLATION_SCHEME = {1: 'histogram', 2: 'linear-linear', 3: 'linear-log',
                         4: 'log-linear', 5: 'log-log'}
@@ -17,8 +25,12 @@ INTERPOLATION_SCHEME = {1: 'histogram', 2: 'linear-linear', 3: 'linear-log',
 @add_metaclass(ABCMeta)
 class Function1D(EqualityMixin):
     """A function of one independent variable with HDF5 support."""
+
+    __metaclass__ = ABCMeta
+
     @abstractmethod
-    def __call__(self): pass
+    def __call__(self, x):
+        pass
 
     @abstractmethod
     def to_hdf5(self, group, name='xy'):
@@ -52,8 +64,8 @@ class Function1D(EqualityMixin):
         for subclass in cls.__subclasses__():
             if dataset.attrs['type'].decode() == subclass.__name__:
                 return subclass.from_hdf5(dataset)
-        raise ValueError("Unrecognized Function1D class: '"
-                         + dataset.attrs['type'].decode() + "'")
+        raise ValueError("Unrecognized Function1D class: '" +
+                         dataset.attrs['type'].decode() + "'")
 
 
 class Tabulated1D(Function1D):
@@ -113,62 +125,7 @@ class Tabulated1D(Function1D):
         self.y = np.asarray(y)
 
     def __call__(self, x):
-        # Check if input is array or scalar
-        if isinstance(x, Iterable):
-            iterable = True
-            x = np.array(x)
-        else:
-            iterable = False
-            x = np.array([x], dtype=float)
-
-        # Create output array
-        y = np.zeros_like(x)
-
-        # Get indices for interpolation
-        idx = np.searchsorted(self.x, x, side='right') - 1
-
-        # Loop over interpolation regions
-        for k in range(len(self.breakpoints)):
-            # Get indices for the begining and ending of this region
-            i_begin = self.breakpoints[k-1] - 1 if k > 0 else 0
-            i_end = self.breakpoints[k] - 1
-
-            # Figure out which idx values lie within this region
-            contained = (idx >= i_begin) & (idx < i_end)
-
-            xk = x[contained]                 # x values in this region
-            xi = self.x[idx[contained]]       # low edge of corresponding bins
-            xi1 = self.x[idx[contained] + 1]  # high edge of corresponding bins
-            yi = self.y[idx[contained]]
-            yi1 = self.y[idx[contained] + 1]
-
-            if self.interpolation[k] == 1:
-                # Histogram
-                y[contained] = yi
-
-            elif self.interpolation[k] == 2:
-                # Linear-linear
-                y[contained] = yi + (xk - xi)/(xi1 - xi)*(yi1 - yi)
-
-            elif self.interpolation[k] == 3:
-                # Linear-log
-                y[contained] = yi + np.log(xk/xi)/np.log(xi1/xi)*(yi1 - yi)
-
-            elif self.interpolation[k] == 4:
-                # Log-linear
-                y[contained] = yi*np.exp((xk - xi)/(xi1 - xi)*np.log(yi1/yi))
-
-            elif self.interpolation[k] == 5:
-                # Log-log
-                y[contained] = (yi*np.exp(np.log(xk/xi)/np.log(xi1/xi)
-                                *np.log(yi1/yi)))
-
-        # In some cases, x values might be outside the tabulated region due only
-        # to precision, so we check if they're close and set them equal if so.
-        y[np.isclose(x, self.x[0], atol=1e-14)] = self.y[0]
-        y[np.isclose(x, self.x[-1], atol=1e-14)] = self.y[-1]
-
-        return y if iterable else y[0]
+        return tabulated1d_call(self, x)
 
     def __len__(self):
         return len(self.x)
@@ -217,6 +174,9 @@ class Tabulated1D(Function1D):
         cv.check_type('interpolation', interpolation, Iterable, Integral)
         self._interpolation = interpolation
 
+    def get_domain(self, Ein=None):
+        return (self._x[0], self._x[-1])
+
     def integral(self):
         """Integral of the tabulated function over its tabulated range.
 
@@ -229,44 +189,45 @@ class Tabulated1D(Function1D):
         """
 
         # Create output array
-        partial_sum = np.zeros(len(self.x) - 1)
+        partial_sum = np.zeros(len(this.x) - 1)
 
         i_low = 0
-        for k in range(len(self.breakpoints)):
+        for k in range(len(this.breakpoints)):
             # Determine which x values are within this interpolation range
-            i_high = self.breakpoints[k] - 1
+            i_high = this.breakpoints[k] - 1
 
             # Get x values and bounding (x,y) pairs
-            x0 = self.x[i_low:i_high]
-            x1 = self.x[i_low + 1:i_high + 1]
-            y0 = self.y[i_low:i_high]
-            y1 = self.y[i_low + 1:i_high + 1]
+            x0 = this.x[i_low:i_high]
+            x1 = this.x[i_low + 1:i_high + 1]
+            y0 = this.y[i_low:i_high]
+            y1 = this.y[i_low + 1:i_high + 1]
 
-            if self.interpolation[k] == 1:
+            if this.interpolation[k] == 1:
                 # Histogram
-                partial_sum[i_low:i_high] = y0*(x1 - x0)
+                partial_sum[i_low:i_high] = y0 * (x1 - x0)
 
-            elif self.interpolation[k] == 2:
+            elif this.interpolation[k] == 2:
                 # Linear-linear
-                m = (y1 - y0)/(x1 - x0)
-                partial_sum[i_low:i_high] = (y0 - m*x0)*(x1 - x0) + \
-                                            m*(x1**2 - x0**2)/2
+                m = (y1 - y0) / (x1 - x0)
+                partial_sum[i_low:i_high] = (y0 - m * x0) * (x1 - x0) + \
+                    m * (x1**2 - x0**2) / 2
 
-            elif self.interpolation[k] == 3:
+            elif this.interpolation[k] == 3:
                 # Linear-log
-                logx = np.log(x1/x0)
-                m = (y1 - y0)/logx
-                partial_sum[i_low:i_high] = y0 + m*(x1*(logx - 1) + x0)
+                logx = np.log(x1 / x0)
+                m = (y1 - y0) / logx
+                partial_sum[i_low:i_high] = y0 + m * (x1 * (logx - 1) + x0)
 
-            elif self.interpolation[k] == 4:
+            elif this.interpolation[k] == 4:
                 # Log-linear
-                m = np.log(y1/y0)/(x1 - x0)
-                partial_sum[i_low:i_high] = y0/m*(np.exp(m*(x1 - x0)) - 1)
+                m = np.log(y1 / y0) / (x1 - x0)
+                partial_sum[i_low:i_high] = y0 / m * (np.exp(m * (x1 - x0)) -
+                                                      1)
 
-            elif self.interpolation[k] == 5:
+            elif this.interpolation[k] == 5:
                 # Log-log
-                m = np.log(y1/y0)/np.log(x1/x0)
-                partial_sum[i_low:i_high] = y0/((m + 1)*x0**m)*(
+                m = np.log(y1 / y0) / np.log(x1 / x0)
+                partial_sum[i_low:i_high] = y0 / ((m + 1) * x0**m) * (
                     x1**(m + 1) - x0**(m + 1))
 
             i_low = i_high
@@ -306,8 +267,8 @@ class Tabulated1D(Function1D):
 
         """
         if dataset.attrs['type'].decode() != cls.__name__:
-            raise ValueError("Expected an HDF5 attribute 'type' equal to '"
-                             + cls.__name__ + "'")
+            raise ValueError("Expected an HDF5 attribute 'type' equal to '" +
+                             cls.__name__ + "'")
 
         x = dataset.value[0, :]
         y = dataset.value[1, :]
@@ -362,6 +323,9 @@ class Tabulated1D(Function1D):
 
 
 class Polynomial(np.polynomial.Polynomial, Function1D):
+    def get_domain(self, Ein=None):
+        return self.domain
+
     def to_hdf5(self, group, name='xy'):
         """Write polynomial function to an HDF5 group
 
@@ -457,6 +421,14 @@ class Combination(EqualityMixin):
         cv.check_length('operations', operations, length, length_max=length)
         self._operations = operations
 
+    def get_domain(self, Ein=None):
+        low, high = (np.inf, -np.inf)
+        for func in self.functions:
+            my_low, my_high = func.domain
+            low = min(low, my_low)
+            high = max(high, my_high)
+        return (low, high)
+
 
 class Sum(EqualityMixin):
     """Sum of multiple functions.
@@ -491,6 +463,14 @@ class Sum(EqualityMixin):
     def functions(self, functions):
         cv.check_type('functions', functions, Iterable, Callable)
         self._functions = functions
+
+    def get_domain(self, Ein=None):
+        low, high = (np.inf, -np.inf)
+        for func in self.functions:
+            my_low, my_high = func.domain
+            low = min(low, my_low)
+            high = max(high, my_high)
+        return (low, high)
 
 
 class Regions1D(EqualityMixin):
@@ -548,6 +528,11 @@ class Regions1D(EqualityMixin):
     def breakpoints(self, breakpoints):
         cv.check_iterable_type('breakpoints', breakpoints, Real)
         self._breakpoints = breakpoints
+
+    def get_domain(self, Ein=None):
+        low_domain = self.functions[0].domain
+        high_domain = self.functions[-1].domain
+        return (low_domain[0], high_domain[1])
 
 
 class ResonancesWithBackground(EqualityMixin):

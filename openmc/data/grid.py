@@ -10,8 +10,8 @@ def linearize(x, f, tolerance=0.001):
         Initial x values at which the function should be evaluated
     f : Callable
         Function of a single variable
-    tolerance : float
-        Tolerance on the interpolation error
+    tolerance : float, optional
+        Tolerance on the interpolation error; defaults to 0.1%
 
     Returns
     -------
@@ -21,6 +21,7 @@ def linearize(x, f, tolerance=0.001):
         Tabulated values of the dependent variable
 
     """
+
     # Initialize output arrays
     x_out = []
     y_out = []
@@ -36,11 +37,12 @@ def linearize(x, f, tolerance=0.001):
         while True:
             x_high, x_low = x_stack[-2:]
             y_high, y_low = y_stack[-2:]
-            x_mid = 0.5*(x_low + x_high)
+            x_mid = 0.5 * (x_low + x_high)
             y_mid = f(x_mid)
 
-            y_interp = y_low + (y_high - y_low)/(x_high - x_low)*(x_mid - x_low)
-            error = abs((y_interp - y_mid)/y_mid)
+            y_interp = y_low + (y_high - y_low) / (x_high - x_low) * \
+                (x_mid - x_low)
+            error = abs((y_interp - y_mid) / y_mid)
             if error > tolerance:
                 x_stack.insert(-1, x_mid)
                 y_stack.insert(-1, y_mid)
@@ -54,6 +56,7 @@ def linearize(x, f, tolerance=0.001):
     y_out.append(y_stack.pop())
 
     return np.array(x_out), np.array(y_out)
+
 
 def thin(x, y, tolerance=0.001):
     """Check for (x,y) points that can be removed.
@@ -84,15 +87,15 @@ def thin(x, y, tolerance=0.001):
     i_right = 2
 
     while i_left < N - 2 and i_right < N:
-        m = (y[i_right] - y[i_left])/(x[i_right] - x[i_left])
+        m = (y[i_right] - y[i_left]) / (x[i_right] - x[i_left])
 
         for i in range(i_left + 1, i_right):
             # Determine error in interpolated point
-            y_interp = y[i_left] + m*(x[i] - x[i_left])
+            y_interp = y[i_left] + m * (x[i] - x[i_left])
             if abs(y[i]) > 0.:
-                error = abs((y_interp - y[i])/y[i])
+                error = abs((y_interp - y[i]) / y[i])
             else:
-                error = 2*tolerance
+                error = 2. * tolerance
 
             if error > tolerance:
                 for i_remove in range(i_left + 1, i_right - 1):
