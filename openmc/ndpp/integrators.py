@@ -203,13 +203,13 @@ def _preprocess_nbody(this, Ein):
 ###############################################################################
 
 
-def max_func(Eout, mu, args):
+def max_func(Eout, func, mu, args):
     # Function used to find the maximum value of the FGK(Eout) at a given mu
     func(mu, Eout, *args, _FGK_RESULT)
     return -_FGK_RESULT[0]
 
 
-def root_func(Eout, mu, args, value):
+def root_func(Eout, func, mu, args, value):
     # Function used to find the root of the FGK(Eout) at a given mu
     func(mu, Eout, *args, _FGK_RESULT)
     return _FGK_RESULT[0] - value
@@ -255,17 +255,17 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     # Now find the maximum value so we can bracket our range and also use it
     # to find our roots (when function passes tolerance * max)
     maximum = sopt.minimize_scalar(
-        max_func, bracket=[0., Ein + 12. / alpha], args=(_MU_BACK, args))
+        max_func, bracket=[0., Ein + 12. / alpha], args=(func, _MU_BACK, args))
     Eout_peak = maximum.x
     func_peak = -maximum.fun
 
     # Now find the upper and lower roots around this peak
     Eout_min_back = \
         sopt.brentq(root_func, 0., Eout_peak,
-                    args=(_MU_BACK, args, _FGK_ROOT_TOL * func_peak))
+                    args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
     Eout_max_back = \
         sopt.brentq(root_func, Eout_peak, 20.e6,
-                    args=(_MU_BACK, args, _FGK_ROOT_TOL * func_peak))
+                    args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
 
     # Now we have to repeat for the top end;
     # Here we dont do mu=1, since the problem is unstable at mu=1, Ein=Eout,
@@ -275,13 +275,15 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     # Instead we search at mu=0.9 and linearly interpolate to mu=1.
     maximum = \
         sopt.minimize_scalar(max_func, bracket=[0., Ein + 12. / alpha],
-                             args=(_MU_FWD, args))
+                             args=(func, _MU_FWD, args))
     Eout_peak = maximum.x
     func_peak = -maximum.fun
     Eout_min_fwd = sopt.brentq(root_func, 0., Eout_peak,
-                               args=(_MU_FWD, args, _FGK_ROOT_TOL * func_peak))
+                               args=(func, _MU_FWD, args,
+                                     _FGK_ROOT_TOL * func_peak))
     Eout_max_fwd = sopt.brentq(root_func, Eout_peak, 20.e6,
-                               args=(_MU_FWD, args, _FGK_ROOT_TOL * func_peak))
+                               args=(func, _MU_FWD, args,
+                                     _FGK_ROOT_TOL * func_peak))
 
     Eout_min_fwd = (1. - _INTERP_MU) * Eout_min_back + \
         _INTERP_MU * Eout_min_fwd

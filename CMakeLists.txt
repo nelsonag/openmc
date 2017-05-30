@@ -288,6 +288,7 @@ set(LIBOPENMC_FORTRAN_SRC
   src/hdf5_interface.F90
   src/initialize.F90
   src/input_xml.F90
+  src/jagged_header.F90
   src/list_header.F90
   src/material_header.F90
   src/math.F90
@@ -299,6 +300,7 @@ set(LIBOPENMC_FORTRAN_SRC
   src/mgxs_header.F90
   src/multipole.F90
   src/multipole_header.F90
+  src/ndpp_header.F90
   src/nuclide_header.F90
   src/output.F90
   src/particle_header.F90

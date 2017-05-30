@@ -3,23 +3,11 @@ module scattdata_header
   use algorithm,  only: binary_search
   use constants
   use error,      only: fatal_error
+  use jagged_header
   use math
   use random_lcg, only: prn
 
   implicit none
-
-
-!===============================================================================
-! JAGGED1D and JAGGED2D is a type which allows for jagged 1-D or 2-D array.
-!===============================================================================
-
-  type :: Jagged2D
-    real(8), allocatable :: data(:, :)
-  end type Jagged2D
-
-  type :: Jagged1D
-    real(8), allocatable :: data(:)
-  end type Jagged1D
 
 !===============================================================================
 ! SCATTDATA contains all the data to describe the scattering energy and

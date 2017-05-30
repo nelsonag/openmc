@@ -261,7 +261,7 @@ contains
   end function attribute_exists
 
 !===============================================================================
-! CHECK_GROUP Checks to see if a group exists in the object
+! OBJECT_EXISTS Checks to see if an object exists
 !===============================================================================
 
   function object_exists(object_id, name) result(exists)

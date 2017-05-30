@@ -67,7 +67,7 @@ class Ndpp(object):
     kTs : Iterable of float, optional
         Subset of temperatures of the target nuclide to process from the
         `library`. The temperatures have units of eV. Default is to process all
-        temperatures in the library.
+        temperatures in the library except for the 0K data
     num_threads : int, optional
         Number of threads to use for the parallel calculation. Defaults to all
         CPU threads available.
@@ -157,6 +157,8 @@ class Ndpp(object):
         self.group_structure = group_structure
         self.scatter_format = scatter_format
         self.order = order
+        if kTs is None:
+            kTs = [kT for kT in library.kTs if kT > 0.]
         self.kTs = kTs
         self.num_threads = num_threads
         self.tolerance = tolerance
@@ -965,7 +967,8 @@ class Ndpp(object):
 
         # Write basic data
         g = f.create_group(self.library.name)
-        g.attrs['group structure'] = self.group_edges
+        g.create_dataset('group structure', self.group_edges)
+        g.attrs['fissionable'] = (self.fissionable)
         g.attrs['scatter_format'] = np.string_(self.scatter_format)
         g.attrs['order'] = self.order
         g.attrs['freegas_cutoff'] = self.freegas_cutoff
