@@ -14,6 +14,8 @@ module global
   use material_header,  only: Material
   use mesh_header,      only: RegularMesh
   use mgxs_header,      only: Mgxs, MgxsContainer
+  use ndpp_header,      only: Ndpp
+  use ndpp_material_header, only: NdppMaterial
   use nuclide_header
   use plot_header,      only: ObjectPlot
   use sab_header,       only: SAlphaBeta
@@ -300,6 +302,20 @@ module global
   real(8) :: weight_cutoff = 0.25_8
   real(8) :: energy_cutoff = ZERO
   real(8) :: weight_survive = ONE
+
+  ! ============================================================================
+  ! NDPP PREPROCESSED TALLY VARIABLES
+
+  logical :: use_ndpp_data = .false.  ! Should we get pre-processed data library
+  character(MAX_FILE_LEN) :: ndpp_lib ! File which stores ndpp library data
+  ! Storage for the combined elastic & inelastic data to be tallied for the
+  ! case of NDPP scattering.
+  ! Dimensions are: (Scattering Order, Incoming Energy)
+  real(8), allocatable :: ndpp_outgoing(:, :)
+!$omp threadprivate(ndpp_outgoing)
+
+  ! Storage for the NDPP materials
+  type(NdppMaterial), allocatable :: ndpp_materials(:)
 
   ! ============================================================================
   ! MISCELLANEOUS VARIABLES

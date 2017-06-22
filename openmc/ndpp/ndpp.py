@@ -7,13 +7,13 @@ from numbers import Integral, Real
 import numpy as np
 import h5py
 
-import openmc
 from openmc.data.data import K_BOLTZMANN
 from openmc.data.endf import SUM_RULES
 from openmc.data.neutron import IncidentNeutron
 from openmc.data.thermal import ThermalScattering
+from openmc.mgxs import EnergyGroups
 import openmc.checkvalue as cv
-from . import NDPP_VERSION, NDPP_VERSION_MAJOR
+from . import NDPP_VERSION_MAJOR
 from .evaluators import *
 
 if sys.version_info[0] >= 3:
@@ -85,9 +85,14 @@ class Ndpp(object):
         `doppler` is provided, then the cross section variation is included in
         the free-gas kernel. The `doppler` method can only be used if `0K`
         elastic scattering data is present in the `library`. Defaults to `cxs`.
+    minimum_relative_threshold : float, optional
+        The minimum threshold for which outgoing data will be included in the
+        output files. Defaults to 1.E-10.
 
     Attributes
     ----------
+    name : str
+        Name of the library in this dataset.
     group_structure : openmc.mgxs.EnergyGroups
         Energy group structure for energy condensation
     library : openmc.data.IncidentNeutron or openmc.data.ThermalScattering
@@ -115,15 +120,20 @@ class Ndpp(object):
         The array has a shape of (len(elastic_energy), num_groups, order). This
         data is provided in a dictionary where the key is the temperature of
         the data set.
-    elastic_energy : dict of str to np.array
+    elastic_energy : dict of str to np.ndarray
         Incoming energy grid for the elastic scattering data (in eV). This
         data is provided in a dictionary where the key is the temperature of
         the data set.
+    nu_inelastic : np.ndarray
+        Inelastic scattering data, inluding the scattering multiplicity
+        [(n,xn)], calculated by the pre-processor for later use in tallying of
+        multi-group scattering matrices by OpenMC. The array has a shape of
+        (len(scatter_energy), num_groups, order)
     inelastic : np.ndarray
         Inelastic scattering data calculated by the pre-processor for later use
         in tallying of multi-group scattering matrices by OpenMC.
         The array has a shape of (len(scatter_energy), num_groups, order)
-    inelastic_energy : np.array
+    inelastic_energy : np.ndarray
         Incoming energy grid for the inelastic scattering data (in eV)
     total_chi : np.ndarray
         Data calculated by the pre-processor for later use in tallying of
@@ -137,7 +147,7 @@ class Ndpp(object):
         Data calculated by the pre-processor for later use in tallying of
         multi-group delayed fission spectra data by OpenMC.
         The array has a shape of (len(chi_energy), num_groups)
-    chi_energy : np.array
+    chi_energy : np.ndarray
         Incoming energy grid for the fission spectra data (in eV)
     freegas_cutoff : float
         Multiplier of temperature in which the free-gas kernel is applied.
@@ -147,12 +157,16 @@ class Ndpp(object):
         `doppler` is provided, then the cross section variation is included in
         the free-gas kernel. The `doppler` method can only be used if `0K`
         elastic scattering data is present in the `library`.
+    minimum_relative_threshold : float
+        The minimum threshold for which outgoing data will be included in the
+        output files.
 
     """
 
     def __init__(self, library, group_structure, scatter_format,
                  order, kTs=None, num_threads=None, tolerance=0.001,
-                 freegas_cutoff=None, freegas_method='cxs'):
+                 freegas_cutoff=None, freegas_method='cxs',
+                 minimum_relative_threshold=1.e-10):
         self.library = library
         self.group_structure = group_structure
         self.scatter_format = scatter_format
@@ -164,6 +178,7 @@ class Ndpp(object):
         self.tolerance = tolerance
         self.elastic = {}
         self.elastic_energy = {}
+        self.nu_inelastic = None
         self.inelastic = None
         self.inelastic_energy = None
         self.total_chi = {}
@@ -171,6 +186,7 @@ class Ndpp(object):
         self.delayed_chi = {}
         self.chi_energy = {}
         self.fissionable = False
+        self.num_delayed_groups = 0
 
         if freegas_cutoff is None:
             if library.atomic_weight_ratio < 1.:
@@ -182,6 +198,11 @@ class Ndpp(object):
         else:
             self.freegas_cutoff = freegas_cutoff
         self.freegas_method = freegas_method
+        self.minimum_relative_threshold = minimum_relative_threshold
+
+    @property
+    def name(self):
+        return self._library.name
 
     @property
     def library(self):
@@ -220,8 +241,16 @@ class Ndpp(object):
         return self._freegas_method
 
     @property
+    def minimum_relative_threshold(self):
+        return self._minimum_relative_threshold
+
+    @property
     def fissionable(self):
         return self._fissionable
+
+    @property
+    def num_delayed_groups(self):
+        return self._num_delayed_groups
 
     @property
     def elastic(self):
@@ -234,6 +263,10 @@ class Ndpp(object):
     @property
     def inelastic(self):
         return self._inelastic
+
+    @property
+    def nu_inelastic(self):
+        return self._nu_inelastic
 
     @property
     def inelastic_energy(self):
@@ -286,7 +319,7 @@ class Ndpp(object):
     @group_structure.setter
     def group_structure(self, group_structure):
         cv.check_type('group_structure', group_structure,
-                      openmc.mgxs.EnergyGroups)
+                      EnergyGroups)
         self._group_structure = group_structure
 
     @scatter_format.setter
@@ -341,10 +374,23 @@ class Ndpp(object):
                        _FREEGAS_METHODS)
         self._freegas_method = freegas_method
 
+    @minimum_relative_threshold.setter
+    def minimum_relative_threshold(self, minimum_relative_threshold):
+        cv.check_type('minimum_relative_threshold',
+                      minimum_relative_threshold, Real)
+        cv.check_greater_than('minimum_relative_threshold',
+                              minimum_relative_threshold, 0., equality=True)
+        self._minimum_relative_threshold = minimum_relative_threshold
+
     @fissionable.setter
     def fissionable(self, fissionable):
         cv.check_type('fissionable', fissionable, bool)
         self._fissionable = fissionable
+
+    @num_delayed_groups.setter
+    def num_delayed_groups(self, num_delayed_groups):
+        cv.check_type('num_delayed_groups', num_delayed_groups, Integral)
+        self._num_delayed_groups = num_delayed_groups
 
     @elastic.setter
     def elastic(self, elastic):
@@ -361,6 +407,12 @@ class Ndpp(object):
         if inelastic is not None:
             cv.check_type('inelastic', inelastic, np.ndarray)
         self._inelastic = inelastic
+
+    @nu_inelastic.setter
+    def nu_inelastic(self, nu_inelastic):
+        if nu_inelastic is not None:
+            cv.check_type('nu_inelastic', nu_inelastic, np.ndarray)
+        self._nu_inelastic = nu_inelastic
 
     @inelastic_energy.setter
     def inelastic_energy(self, inelastic_energy):
@@ -574,7 +626,7 @@ class Ndpp(object):
         results = np.concatenate(results)
 
         # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints
+        # includes the endpoints of each bracketed region
         Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
         results = results[unique_indices, ...]
 
@@ -683,7 +735,7 @@ class Ndpp(object):
         results = np.concatenate(results)
 
         # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints
+        # includes the endpoints of each bracketed region
         Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
         self.elastic[strT] = results[unique_indices, ...]
 
@@ -704,9 +756,6 @@ class Ndpp(object):
         self.elastic[strT] = np.concatenate((self.elastic[strT],
                                              [self.elastic[strT][-1, :, :]]))
 
-        # Invert the grouping order to match standard multi-group ordering
-        self.elastic[strT] = self.elastic[strT][:, ::-1, :]
-
     def _compute_inelastic(self, kT, strT):
         """Computes the pre-processed energy-angle data from the inelastic
         scattering reactions of an IncidentNeutron dataset.
@@ -725,14 +774,17 @@ class Ndpp(object):
         thresholds = []
         for r in _INELASTIC_MTS.intersection(set(self.library.reactions)):
             rxn = self.library.reactions[r]
-            Emin = min(Emin, rxn.xs[strT].x[0])
-            rxns.append(rxn)
-            xs_funcs.append(rxn.xs[strT])
-            thresholds.append(rxn.xs[strT].x[0])
+            include = False
             for p in rxn.products:
                 if p.particle == 'neutron' and p.emission_mode == 'prompt':
                     products.append(p)
+                    include = True
                     continue
+            if include:
+                Emin = min(Emin, rxn.xs[strT].x[0])
+                rxns.append(rxn)
+                xs_funcs.append(rxn.xs[strT])
+                thresholds.append(rxn.xs[strT].x[0])
 
         # If we found no inelastic data, dont waste time with the rest
         if not rxns:
@@ -754,7 +806,6 @@ class Ndpp(object):
         # chunks at the same time.
 
         # Begin by setting the intervals to evaluate
-        thresholds.insert(0, self.group_edges[0])
         thresholds.append(self.group_edges[-1])
         Ein_intervals = np.clip(thresholds, self.group_edges[0],
                                 self.group_edges[-1])
@@ -816,18 +867,30 @@ class Ndpp(object):
         results = np.concatenate(results)
 
         # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints
+        # includes the endpoints of each bracketed region
         Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
-        self.inelastic = results[unique_indices, ...]
+        self.nu_inelastic = results[unique_indices, ...]
 
-        # Finally add a top and bottom point to use as interpolation
+        # Finally add a top point to use as interpolation
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
         self.inelastic_energy = Ein_grid
-        self.inelastic = np.concatenate((self.inelastic,
-                                         [self.inelastic[-1, :, :]]))
+        self.nu_inelastic = np.concatenate((self.nu_inelastic,
+                                            [self.nu_inelastic[-1, :, :]]))
 
-        # Invert the grouping order to match standard multi-group ordering
-        self.inelastic = self.inelastic[:, ::-1, :]
+        # Convert the nu_inelastic data into inelastic data, we will do this by
+        # normalizing nu_inelastic and scale by the inelastic_xs
+        inelastic_xs = get_inelastic_xs(self.inelastic_energy, rxns, xs_funcs)
+        inelastic = np.zeros_like(self.nu_inelastic)
+        if self.scatter_format == 'legendre':
+            norm = np.sum(self.nu_inelastic[:, :, 0], axis=1)
+        else:
+            norm = np.sum(self.nu_inelastic, axis=(1, 2))
+
+        for e in range(len(self.inelastic_energy)):
+            if norm[e] > 0.:
+                inelastic[e] = \
+                    self.nu_inelastic[e, :, :] / norm[e] * inelastic_xs[e]
+        self.inelastic = inelastic
 
     def _compute_chi(self, kT, strT):
         """Computes the pre-processed fission spectral data from an
@@ -870,7 +933,6 @@ class Ndpp(object):
         # chunks at the same time.
 
         # Begin by setting the intervals to evaluate
-        thresholds.insert(0, self.group_edges[0])
         thresholds.append(self.group_edges[-1])
         Ein_intervals = np.clip(thresholds, self.group_edges[0],
                                 self.group_edges[-1])
@@ -926,7 +988,7 @@ class Ndpp(object):
         results = np.concatenate(results)
 
         # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints
+        # includes the endpoints of each bracketed region
         Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
         results = results[unique_indices, ...]
 
@@ -939,40 +1001,27 @@ class Ndpp(object):
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
         results = np.concatenate((results, [results[-1, :, :]]))
 
-        # Invert the grouping order to match standard multi-group ordering
-        results = results[:, :, ::-1]
-
         # Finally store the incoming energy grid and chi values
-        self._chi_energy[strT] = Ein_grid[:]
-        self._total_chi[strT] = results[:, 0, :]
-        self._prompt_chi[strT] = results[:, 1, :]
-        self._delayed_chi[strT] = results[:, 2:, :]
+        self.chi_energy[strT] = Ein_grid[:]
+        self.total_chi[strT] = results[:, 0, :]
+        self.prompt_chi[strT] = results[:, 1, :]
+        self.delayed_chi[strT] = results[:, 2:, :]
+        self.num_delayed_groups = n_delayed
 
-    def export_to_hdf5(self, path, mode='a'):
+    def to_hdf5(self, file):
         """Export processed data to an HDF5 file.
 
         Parameters
         ----------
-        path : str
-            Path to write HDF5 file to
-        mode : {'r', r+', 'w', 'x', 'a'}
-            Mode that is used to open the HDF5 file. This is the second
-             argument to the :class:`h5py.File` constructor.
+        file : h5py.File
+            HDF5 File (a root Group) to write to
 
         """
 
         # Open file and write version
-        f = h5py.File(path, mode, libver='latest')
-        f.attrs['version'] = np.array(NDPP_VERSION)
-
-        # Write basic data
-        g = f.create_group(self.library.name)
-        g.create_dataset('group structure', self.group_edges)
+        g = file.create_group(self.name)
         g.attrs['fissionable'] = (self.fissionable)
-        g.attrs['scatter_format'] = np.string_(self.scatter_format)
-        g.attrs['order'] = self.order
-        g.attrs['freegas_cutoff'] = self.freegas_cutoff
-        g.attrs['freegas_method'] = np.string_(self.freegas_method)
+        g.attrs['num_delayed_groups'] = self.num_delayed_groups
         ktg = g.create_group('kTs')
         for i, temperature in enumerate(self.temperatures):
             ktg.create_dataset(temperature, data=self.kTs[i])
@@ -980,7 +1029,8 @@ class Ndpp(object):
         # Add temperature dependent data
         for T, energy in self.elastic_energy.items():
             g_out_bounds, flattened = _sparsify(energy, self.elastic[T],
-                                                self.scatter_format)
+                                                self.scatter_format,
+                                                self.minimum_relative_threshold)
             Tgroup = g.create_group(T)
             Tgroup.create_dataset('elastic_energy', data=energy)
             Tgroup.create_dataset('elastic', data=flattened)
@@ -991,21 +1041,48 @@ class Ndpp(object):
         if self.inelastic_energy is not None:
             g_out_bounds, flattened = _sparsify(self.inelastic_energy,
                                                 self.inelastic,
-                                                self.scatter_format)
+                                                self.scatter_format,
+                                                self.minimum_relative_threshold)
             g.create_dataset('inelastic_energy', data=self.inelastic_energy)
             g.create_dataset('inelastic', data=flattened)
             g.create_dataset("inelastic_g_min", data=g_out_bounds[:, 0])
             g.create_dataset("inelastic_g_max", data=g_out_bounds[:, 1])
+            g_out_bounds, flattened = _sparsify(self.inelastic_energy,
+                                                self.nu_inelastic,
+                                                self.scatter_format,
+                                                self.minimum_relative_threshold)
+            g.create_dataset('nu_inelastic', data=flattened)
 
         if self.chi_energy:
             for T, energy in self.chi_energy.items():
                 Tgroup = g[T]
                 Tgroup.create_dataset('chi_energy', data=energy)
-                Tgroup.create_dataset('total_chi', data=self.total_chi[T])
-                Tgroup.create_dataset('prompt_chi', data=self.prompt_chi[T])
-                Tgroup.create_dataset('delayed_chi', data=self.delayed_chi[T])
-
-        f.close()
+                g_out_bounds, flattened = \
+                    _sparsify(energy, self.total_chi[T], 'chi',
+                              self.minimum_relative_threshold)
+                Tgroup.create_dataset('total_chi', data=flattened)
+                g_out_bounds, flattened = \
+                    _sparsify(energy, self.prompt_chi[T], 'chi',
+                              self.minimum_relative_threshold)
+                Tgroup.create_dataset("total_chi_g_min",
+                                      data=g_out_bounds[:, 0])
+                Tgroup.create_dataset("total_chi_g_max",
+                                      data=g_out_bounds[:, 1])
+                Tgroup.create_dataset('prompt_chi', data=flattened)
+                Tgroup.create_dataset("prompt_chi_g_min",
+                                      data=g_out_bounds[:, 0])
+                Tgroup.create_dataset("prompt_chi_g_max",
+                                      data=g_out_bounds[:, 1])
+                dgroup = Tgroup.create_group('delayed_chi')
+                for c in range(self.num_delayed_groups):
+                    g_out_bounds, flattened = \
+                        _sparsify(energy, self.delayed_chi[T][:, c, :], 'chi',
+                                  self.minimum_relative_threshold)
+                    dgroup.create_dataset(str(c + 1), data=flattened)
+                    dgroup.create_dataset(str(c + 1) + "_g_min",
+                                          data=g_out_bounds[:, 0])
+                    dgroup.create_dataset(str(c + 1) + "_g_max",
+                                          data=g_out_bounds[:, 1])
 
     @classmethod
     def from_hdf5(cls, group_or_filename):
@@ -1047,7 +1124,7 @@ class Ndpp(object):
             group = list(h5file.values())[0]
 
         group_structure = \
-            openmc.mgxs.EnergyGroups(group.attrs['group_structure'])
+            EnergyGroups(group.attrs['group_structure'])
         scatter_format = group.attrs['scatter_format']
         order = group.attrs['order']
         freegas_cutoff = group.attrs['freegas_cutoff']
@@ -1083,8 +1160,21 @@ class Ndpp(object):
         if 'inelastic_energy' in group:
             data.inelastic_energy = group['inelastic_energy'].value[:]
             data.inelastic = group['inelastic'].value[:]
+            data.nu_inelastic = group['nu_inelastic'].value[:]
 
         return data
+
+
+def get_inelastic_xs(Eins, rxns, xs_func):
+    inelastic_xs = np.zeros_like(Eins)
+    # Get the cross section for each reaction/product pair
+    for r, rxn in enumerate(rxns):
+        xs = xs_func[r]
+        for e, Ein in enumerate(Eins):
+            if Ein > xs._x[0]:
+                inelastic_xs[e] += xs(Ein)
+
+    return inelastic_xs
 
 
 def initialize_quadrature(order):
@@ -1148,7 +1238,7 @@ def initialize_quadrature(order):
     return mus_k, wgts
 
 
-def _sparsify(energy, data, datatype):
+def _sparsify(energy, data, datatype, min_rel_threshold):
     g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
     for ei in range(len(energy)):
         if datatype == 'legendre':
@@ -1159,6 +1249,10 @@ def _sparsify(energy, data, datatype):
                        axis=1)
         elif datatype == 'chi':
             matrix = data[ei, :]
+
+        # Apply the relative threshold
+        thresh = np.sum(matrix) * min_rel_threshold
+        matrix[matrix < thresh] = 0.
 
         nz = np.nonzero(matrix)
         # It is possible that there only zeros in matrix
@@ -1174,13 +1268,12 @@ def _sparsify(energy, data, datatype):
     flattened = []
     for ei in range(len(energy)):
         if datatype is not 'chi':
-            for g_out in range(g_out_bounds[ei, 0],
-                               g_out_bounds[ei, 1] + 1):
+            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
                 for l in range(len(data[ei, g_out, :])):
                     flattened.append(data[ei, g_out, l])
         else:
-            flattened.append(
-                data[ei, g_out_bounds[ei, 0]: g_out_bounds[ei, 1] + 1])
+            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
+                flattened.append(data[ei, g_out])
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1

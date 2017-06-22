@@ -9,10 +9,11 @@ module ndpp_header
        open_dataset, read_dataset, close_dataset, get_shape, get_datasets, &
        object_exists, get_name, get_groups
   use jagged_header
-  use nuclide_header, only: EnergyGrid
+  use math,           only: calc_rn
   use random_lcg,     only: prn
   use stl_vector,     only: VectorInt, VectorReal
   use string
+  use tally_header,   only: TallyObject
 
   implicit none
 
@@ -28,13 +29,26 @@ module ndpp_header
   integer :: NDPP_N_LOG_BINS = 100 ! Number of log bins to use
 
 !===============================================================================
-! GROUPTRANSFER contains the jagged array of data for a given temperature
+! ENERGYGRID stores the energy grid used with a logarithmic grid map.
+! This is also used by nuclide_header
 !===============================================================================
 
-  type GroupTransfer
-    type(Jagged2D), allocatable :: data(:)
-  end type GroupTransfer
+  type EnergyGrid
+    integer, allocatable :: grid_index(:) ! log grid mapping indices
+    real(8), allocatable :: energy(:)     ! energy values corresponding to xs
+  end type EnergyGrid
 
+!===============================================================================
+! MOMENTMATRIX and MATRIX contain the jagged array of data for a given Ein
+!===============================================================================
+
+  type MomentMatrix
+    type(Jagged2D), allocatable :: at_Ein(:)
+  end type MomentMatrix
+
+  type Matrix
+    type(Jagged1D), allocatable :: at_Ein(:)
+  end type Matrix
 
 !===============================================================================
 ! NDPP contains and processes the pre-processed data used to improve tallying
@@ -42,10 +56,10 @@ module ndpp_header
 !===============================================================================
 
   type Ndpp
-    character(MAX_WORD_LEN) :: name   ! name of nuclide, e.g. U235
-    real(8), allocatable    :: kTs(:) ! temperature in eV (k*T)
+    real(8), allocatable :: kTs(:) ! temperature in eV (k*T)
 
     ! Meta-data information
+    integer       :: num_groups         ! Number of groups
     logical       :: fissionable        ! is it fissionable?
     logical       :: has_inelastic      ! If inelastic data is included
     character(10) :: scatter_format     ! either "legendre", or "histogram"
@@ -57,29 +71,30 @@ module ndpp_header
     integer :: temperature_method
 
     ! Elastic data
-    type(EnergyGrid),    allocatable :: elastic_grid(:) ! Ein grid for each kT
-    type(GroupTransfer), allocatable :: elastic(:) ! Elastic data for each kT
+    type(EnergyGrid),   allocatable :: elastic_grid(:) ! Ein grid for each kT
+    type(MomentMatrix), allocatable :: elastic(:)  ! Elastic data for each kT
     real(8), allocatable :: elastic_log_spacing(:) ! spacing on logarithmic grid
 
     ! Inelastic data
     ! This is temperature independent and so looks like elastic without being
     ! an array
-    type(EnergyGrid)            :: inelastic_grid ! Ein grid for inelastic data
-    type(Jagged2D), allocatable :: inelastic(:)   ! Inlastic data
+    type(EnergyGrid)   :: inelastic_grid ! Ein grid for inelastic data
+    type(MomentMatrix) :: inelastic      ! Inelastic data
+    type(MomentMatrix) :: nu_inelastic   ! Inelastic Production data
     real(8) :: inelastic_log_spacing ! spacing on logarithmic grid
 
     ! Chi spectra data (temperature dependent)
-    type(EnergyGrid),    allocatable :: chi_grid(:) ! Ein grid for each kT
-    type(Jagged2D),      allocatable :: chi(:)      ! Total chi for each kT
-    type(Jagged2D),      allocatable :: chi_p(:)    ! Prompt chi for each kT
-    type(GroupTransfer), allocatable :: chi_d(:)    ! Delayed chi for each kT
-    real(8), allocatable :: chi_log_spacing(:) ! spacing on logarithmic grid
+    type(EnergyGrid), allocatable :: chi_grid(:) ! Ein grid for each kT
+    type(Matrix),     allocatable :: chi(:)      ! Total chi for each kT
+    type(Matrix),     allocatable :: chi_p(:)    ! Prompt chi for each kT
+    type(Matrix),     allocatable :: chi_d(:, :) ! Delayed chi for each kT & precursor
+    real(8), allocatable :: chi_log_spacing(:)   ! spacing on logarithmic grid
 
   contains
     procedure :: from_hdf5 => ndpp_from_hdf5
-    procedure :: get_elastic_data => ndpp_get_elastic_data
-    procedure :: get_chi_data => ndpp_get_chi_data
-    procedure :: get_delayed_chi_data => ndpp_get_delayed_chi_data
+    procedure :: tally_scatter => ndpp_tally_scatter
+    procedure :: tally_chi => ndpp_tally_chi
+    procedure :: tally_delayed_chi => ndpp_tally_delayed_chi
   end type Ndpp
 
   contains
@@ -89,21 +104,21 @@ module ndpp_header
 !===============================================================================
 
   subroutine ndpp_from_hdf5(this, group_id, temperature, method, tolerance, &
-                            master, group_edges, scatter_format)
+                            master, num_groups, scatter_format, order)
     class(Ndpp),      intent(inout)  :: this
     integer(HID_T),   intent(inout)  :: group_id       ! HDF5 group to gather from
     type(VectorReal), intent(in)     :: temperature    ! requested temperatures
     integer,          intent(inout)  :: method         ! kT interpolation method
     real(8),          intent(in)     :: tolerance      ! kT interp tolerance
-    real(8), allocatable, intent(in) :: group_edges(:) ! Expected group structure
+    integer,          intent(in)     :: num_groups     ! Number of energy groups
     character(len=*), intent(in)     :: scatter_format ! legendre or histogram
+    integer,          intent(in)     :: order          ! Legendre order/ histogram bins
     logical,          intent(in)     :: master         ! if this is the master proc
 
-    integer :: i
+    integer :: i, c
     integer :: i_closest
     integer :: n_temperature
-    integer(HID_T) :: energy_dset, kT_group, temp_group
-    integer(SIZE_T) :: name_len
+    integer(HID_T) :: kT_group, temp_group, chi_group, energy_dset
     integer(HSIZE_T) :: j
     integer(HSIZE_T) :: dims(1)
     character(MAX_WORD_LEN) :: temp_str
@@ -113,48 +128,20 @@ module ndpp_header
     real(8) :: temp_actual
     type(VectorInt) :: temps_to_read
     integer :: order_dim
-    integer :: groups
-    real(8), allocatable :: lib_group_edges(:)
 
-    ! Get name of nuclide from group
-    name_len = len(this % name)
-    this % name = get_name(group_id, name_len)
-
-    ! Get rid of leading '/'
-    this % name = trim(this % name(2:))
-
-    ! Get meta-data and check as soon as we get it
-    energy_dset = open_dataset(group_id, 'group_structure')
-    call get_shape(energy_dset, dims)
-    allocate(lib_group_edges(dims(1)))
-    call read_dataset(lib_group_edges, energy_dset)
-    call close_dataset(energy_dset)
-
-    if ((size(lib_group_edges) /= size(group_edges)) .or. &
-        (any(lib_group_edges /= group_edges))) then
-      call fatal_error("NDPP Library does not contain matching group structure")
-    end if
-
-    call read_attribute(this % scatter_format, group_id, 'scatter_format')
-    if (trim(this % scatter_format) /= trim(scatter_format)) then
-      call fatal_error("NDPP Library does not include the correct &
-                       &scatter_format type")
-    end if
-    call read_attribute(this % order, group_id, 'order')
+    this % order = order
     call read_attribute(this % fissionable, group_id, 'fissionable')
     call read_attribute(this % num_delayed_groups, group_id, &
                         'num_delayed_groups')
+    this % scatter_format = scatter_format
     if (trim(this % scatter_format) == 'legendre') then
       order_dim = this % order + 1
     else
       order_dim = this % order
     end if
-    groups = size(group_edges) - 1
+    this % num_groups = num_groups
 
     kT_group = open_group(group_id, 'kTs')
-
-    !!!! WHAT ABOUT 0K DATA??? WILL IT BE IN TEMPERATURE VECTOR?
-    !!!! IF SO, SKIP IT HERE, BUT DONT ALLOCATE SPACE FOR IT?
 
     ! Determine temperatures available
     call get_datasets(kT_group, dset_names)
@@ -169,9 +156,8 @@ module ndpp_header
     ! If only one temperature is available, revert to nearest temperature
     if (size(temps_available) == 1 .and. method == TEMPERATURE_INTERPOLATION) then
       if (master) then
-        call warning("NDPP data for " // trim(this % name) // " are only &
-             &available at one temperature. Reverting to nearest temperature &
-             &method.")
+        call warning("NDPP data only available at one temperature. Reverting &
+                     &to nearest temperature method.")
       end if
       method = TEMPERATURE_NEAREST
     end if
@@ -190,8 +176,7 @@ module ndpp_header
           end if
         else
           call fatal_error("NDPP library does not contain data &
-               &for " // trim(this % name) // " at or near " // &
-               trim(to_str(nint(temp_desired))) // " K.")
+               &at or near " // trim(to_str(nint(temp_desired))) // " K.")
         end if
       end do
 
@@ -214,9 +199,9 @@ module ndpp_header
           end if
         end do
 
-        call fatal_error("NDPP library does not contain data &
-             &for " // trim(this % name) // " at temperatures that bound " // &
-             trim(to_str(nint(temp_desired))) // " K.")
+        call fatal_error("NDPP library does not contain data at temperatures &
+                         &that bound " // &
+                         trim(to_str(nint(temp_desired))) // " K.")
       end do TEMP_LOOP
     end select
 
@@ -235,7 +220,7 @@ module ndpp_header
       allocate(this % chi_grid(n_temperature))
       allocate(this % chi(n_temperature))
       allocate(this % chi_p(n_temperature))
-      allocate(this % chi_d(n_temperature))
+      allocate(this % chi_d(this % num_delayed_groups, n_temperature))
       allocate(this % chi_log_spacing(n_temperature))
     end if
 
@@ -267,23 +252,30 @@ module ndpp_header
                                  order_dim, this % elastic(i))
 
       if (this % fissionable) then
-        energy_dset = open_dataset(temp_group, 'chi_energy')
-        call get_shape(energy_dset, dims)
-        allocate(this % chi_grid(i) % energy(int(dims(1))))
-        call read_dataset(this % chi_grid(i) % energy, energy_dset)
-        call close_dataset(energy_dset)
+        ! energy_dset = open_dataset(temp_group, 'chi_energy')
+        ! call get_shape(energy_dset, dims)
+        ! allocate(this % chi_grid(i) % energy(int(dims(1))))
+        ! call read_dataset(this % chi_grid(i) % energy, energy_dset)
+        ! call close_dataset(energy_dset)
 
-        ! Initialize the logarithmic grid for the chi data
-        call initialize_logarithmic_grid(this % chi_grid(i), &
-                                         this % chi_log_spacing(i))
+        ! ! Initialize the logarithmic grid for the chi data
+        ! call initialize_logarithmic_grid(this % chi_grid(i), &
+        !                                  this % chi_log_spacing(i))
 
-        allocate(this % chi(i) % data(groups, int(dims(1))))
-        call read_dataset(this % chi(i) % data, temp_group, 'total_chi')
-        allocate(this % chi_p(i) % data(groups, int(dims(1))))
-        call read_dataset(this % chi_p(i) % data, temp_group, 'prompt_chi')
-        call sparse_data_from_hdf5(temp_group, 'delayed_chi', int(dims(1)), &
-                                   this % num_delayed_groups, &
-                                   this % chi_d(i) % data)
+        ! call sparse_chi_data_from_hdf5(temp_group, 'total_chi', int(dims(1)), &
+        !                                this % chi(i))
+        ! call sparse_chi_data_from_hdf5(temp_group, 'prompt_chi', int(dims(1)), &
+        !                                this % chi_p(i))
+
+        ! ! Open up the delayed chi group
+        ! chi_group = open_group(temp_group, "delayed_chi")
+
+        ! ! Loop through all the groups and get the data
+        ! do c = 1, this % num_delayed_groups
+        !   call sparse_chi_data_from_hdf5(chi_group, to_str(c), &
+        !                                  int(dims(1)), this % chi_d(c, i))
+        ! end do
+        ! call close_group(chi_group)
       end if
 
       call close_group(temp_group)
@@ -291,7 +283,7 @@ module ndpp_header
 
     ! Read temperature-independent inelastic data
     if (object_exists(group_id, 'inelastic_energy')) then
-      this % has_inelastic = .True.
+      this % has_inelastic = .true.
       energy_dset = open_dataset(group_id, 'inelastic_energy')
       call get_shape(energy_dset, dims)
       allocate(this % inelastic_grid % energy(int(dims(1))))
@@ -302,95 +294,166 @@ module ndpp_header
       call initialize_logarithmic_grid(this % inelastic_grid, &
                                        this % inelastic_log_spacing)
 
-      call sparse_data_from_hdf5(temp_group, 'inelastic', int(dims(1)), &
-                                 order_dim, this % inelastic(i))
+      call sparse_data_from_hdf5(group_id, 'inelastic', int(dims(1)), &
+                                 order_dim, this % inelastic)
+      call sparse_data_from_hdf5(group_id, 'nu_inelastic', int(dims(1)), &
+                                 order_dim, this % nu_inelastic)
     end if
-
-    call close_group(group_id)
 
   end subroutine ndpp_from_hdf5
 
 !===============================================================================
-! NDPP_GET_*_DATA produces the requested data for tallying purposes
+! NDPP_GET_* produces the requested data for tallying purposes
 !===============================================================================
 
-  function ndpp_get_elastic_data(this, Ein, kT, orders) result(data)
-    class(Ndpp), intent(in) :: this
-    real(8),     intent(in) :: Ein    ! Incoming energy
-    real(8),     intent(in) :: kT     ! Requested temperature
-    integer,     intent(in) :: orders ! Orders to include
+!===============================================================================
+! NDPP_TALLY_SCATTER scores the tally data using the NDPP data
+!===============================================================================
 
-    real(8), allocatable :: data(:, :) ! combined data
-    integer :: t
+  subroutine ndpp_tally_scatter(this, Ein, kT, ndpp_outgoing, t, &
+                                i_score, i_filter, score_bin, order, wgt, uvw, &
+                                elastic_xs)
+    class(Ndpp),       intent(in)    :: this
+    real(8),           intent(in)    :: Ein
+    real(8),           intent(in)    :: kT
+    real(8),           intent(inout) :: ndpp_outgoing(:, :)
+    type(TallyObject), intent(inout) :: t
+    integer,           intent(in)    :: i_score
+    integer,           intent(in)    :: i_filter
+    integer,           intent(in)    :: score_bin
+    integer,           intent(in)    :: order
+    real(8),           intent(in)    :: wgt
+    real(8),           intent(in)    :: uvw(3)
+    real(8),           intent(in)    :: elastic_xs
 
-    ! First, find the temperature index
-    t = find_temperature_index(this % kTs, this % temperature_method, kT)
+    integer :: gmin, gmax, f_lo, f_hi, s_lo, s_hi, num_nm, n, f
+    real(8), allocatable :: moments(:)
 
-    call interp_data(Ein, orders, this % elastic_grid(t), &
-                     this % elastic_log_spacing(t), this % elastic(t) % data, &
-                     data)
+    if (score_bin == SCORE_NDPP_NU_SCATTER_N .or. &
+        score_bin == SCORE_NDPP_NU_SCATTER_PN .or. &
+        score_bin == SCORE_NDPP_NU_SCATTER_YN) then
+      call get_scatter(this, Ein, kT, order, ndpp_outgoing, elastic_xs, &
+                       .true., gmin, gmax)
+    else
+      call get_scatter(this, Ein, kT, order, ndpp_outgoing, elastic_xs, &
+                       .false., gmin, gmax)
+    end if
 
-  end function ndpp_get_elastic_data
+    f_lo = i_filter + gmin - 1
+    f_hi = i_filter + gmax - 1
 
-  function ndpp_get_inelastic_data(this, Ein, orders) result(data)
-    class(Ndpp), intent(in) :: this
-    real(8),     intent(in) :: Ein    ! Incoming energy
-    integer,     intent(in) :: orders ! Orders to include
+    ! Score the data type
+    select case(score_bin)
 
-    real(8), allocatable :: data(:, :) ! combined data
+    case (SCORE_NDPP_SCATTER_N, SCORE_NDPP_NU_SCATTER_N)
+!$omp critical(case_nu_scatt_n)
+      t % results(RESULT_VALUE, i_score, f_lo: f_hi) = &
+           t % results(RESULT_VALUE, i_score, f_lo: f_hi) + &
+           ndpp_outgoing(1, gmin: gmax) * wgt
+!$omp end critical(case_nu_scatt_n)
 
-    call interp_data(Ein, orders, this % inelastic_grid, &
-                     this % inelastic_log_spacing, this % inelastic, data)
+    case (SCORE_NDPP_SCATTER_PN, SCORE_NDPP_NU_SCATTER_PN)
+      s_lo = i_score
+      s_hi = i_score + order
+!$omp critical(case_nu_scatt_pn)
+    t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) = &
+         t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) + &
+         ndpp_outgoing(1: order + 1, gmin: gmax) * wgt
+!$omp end critical(case_nu_scatt_pn)
 
-  end function ndpp_get_inelastic_data
+    case (SCORE_NDPP_SCATTER_YN, SCORE_NDPP_NU_SCATTER_YN)
+      num_nm = 1
+      s_lo = i_score - 1
+      ! Find the order for a collection of requested moments
+      ! and store the moment contribution of each
+      do n = 0, order
+        ! determine scoring bin index
+        s_lo = s_lo + num_nm
+        s_hi = s_lo + num_nm - 1
+        ! Update number of total n,m bins for this n (m = [-n: n])
+        num_nm = 2 * n + 1
 
-  function ndpp_get_chi_data(this, Ein, kT, chi_type) result(data)
+        moments = calc_rn(n, uvw) * wgt
+        do f = f_lo, f_hi
+          ! multiply score by the angular flux moments and store
+!$omp critical (case_nu_scatt_yn)
+          t % results(RESULT_VALUE, s_lo: s_hi, f) = &
+               t % results(RESULT_VALUE, s_lo: s_hi, f) + &
+               ndpp_outgoing(n, f + 1 - i_filter) * moments
+!$omp end critical (case_nu_scatt_yn)
+        end do
+      end do
+    end select
+
+  end subroutine ndpp_tally_scatter
+
+  subroutine ndpp_tally_chi(this, Ein, kT, chi_type, data)
     class(Ndpp), intent(in) :: this
     real(8),     intent(in) :: Ein      ! Incoming energy
     real(8),     intent(in) :: kT       ! Requested temperature
     integer,     intent(in) :: chi_type ! total, prompt, or total delayed
+    real(8), intent(inout) :: data(:, :) ! combined data
 
-    real(8), allocatable :: data(:) ! combined data
-    real(8), allocatable :: data_2d(:, :) ! for delayed data only
+    type(Jagged1D), allocatable :: delay_data(:)
 
-    integer :: t
+    integer :: t, c, lo, hi, g
 
     ! First, find the temperature index
     t = find_temperature_index(this % kTs, this % temperature_method, kT)
 
-    if (chi_type == NDPP_CHI_T) then
-      call interp_chi_data(Ein, this % chi_grid(t), &
-                           this % chi_log_spacing(t), this % chi(t) % data, &
-                           data)
-    else if (chi_type == NDPP_CHI_P) then
-      call interp_chi_data(Ein, this % chi_grid(t), &
-                           this % chi_log_spacing(t), this % chi_p(t) % data, &
-                        data)
-    else if (chi_type == NDPP_CHI_D) then
-      call interp_data(Ein, this % num_delayed_groups, this % chi_grid(t), &
-                       this % chi_log_spacing(t), this % chi_d(t) % data, &
-                       data_2d)
-      allocate(data(size(data_2d, dim=2)))
-      data = sum(data_2d, dim=1)
-    end if
+    ! if (chi_type == NDPP_CHI_T) then
+    !   call interp_chi_data(Ein, this % chi_grid(t), &
+    !                        this % chi_log_spacing(t), this % chi(t) % at_Ein, data)
+    !   ! subroutine interp_chi_data(Ein, grid, log_spacing, data_source, data)
+    ! else if (chi_type == NDPP_CHI_P) then
+    !   call interp_chi_data(Ein, this % chi_grid(t), &
+    !                        this % chi_log_spacing(t), this % chi_p(t) % at_Ein, &
+    !                     data)
+    ! else if (chi_type == NDPP_CHI_D) then
+    !   allocate(delay_data(this % num_delayed_groups))
+    !   lo = 1
+    !   hi = this % num_groups
+    !   do c = 1, this % num_delayed_groups
+    !     call interp_chi_data(Ein, this % chi_grid(t), &
+    !                          this % chi_log_spacing(t), &
+    !                          this % chi_d(c, t) % at_Ein, delay_data(c) % data)
+    !     if (lbound(delay_data(c) % data, dim=1) > lo) then
+    !       lo = lbound(delay_data(c) % data, dim=1)
+    !     end if
+    !     if (ubound(delay_data(c) % data, dim=1) > hi) then
+    !       hi = ubound(delay_data(c) % data, dim=1)
+    !     end if
+    !   end do
+    !   allocate(data(lo: hi))
+    !   data = ZERO
+    !   do c = 1, this % num_delayed_groups
+    !     do g = lbound(delay_data(c) % data, dim=1), &
+    !            ubound(delay_data(c) % data, dim=1)
+    !       data(g) = data(g) + delay_data(c) % data(g)
+    !     end do
+    !   end do
+    ! end if
 
-  end function ndpp_get_chi_data
+  end subroutine ndpp_tally_chi
 
-  function ndpp_get_delayed_chi_data(this, Ein, kT) result(data)
+  subroutine ndpp_tally_delayed_chi(this, Ein, kT, chi_data)
     class(Ndpp), intent(in) :: this
-    real(8),     intent(in) :: Ein      ! Incoming energy
-    real(8),     intent(in) :: kT       ! Requested temperature
-
-    real(8), allocatable :: data(:, :)
-    integer :: t
+    real(8),     intent(in) :: Ein  ! Incoming energy
+    real(8),     intent(in) :: kT   ! Requested temperature
+    type(Jagged1D), intent(inout), allocatable :: chi_data(:)
+    integer :: t, c
 
     ! First, find the temperature index
     t = find_temperature_index(this % kTs, this % temperature_method, kT)
 
-    call interp_data(Ein, this % num_delayed_groups, this % chi_grid(t), &
-                     this % chi_log_spacing(t), this % chi_d(t) % data, data)
+    allocate(chi_data(this % num_delayed_groups))
 
-  end function ndpp_get_delayed_chi_data
+    do c = 1, this % num_delayed_groups
+      call interp_chi_data(Ein, this % chi_grid(t), this % chi_log_spacing(t), &
+                           this % chi_d(c, t) % at_Ein, chi_data(c) % data)
+    end do
+
+  end subroutine ndpp_tally_delayed_chi
 
 !==============================================================================
 ! SUPPORT FUNCTIONS
@@ -399,13 +462,74 @@ module ndpp_header
   subroutine sparse_data_from_hdf5(group_id, name, data_length, order_dim, &
                                    output_data)
     integer(HID_T), intent(inout) :: group_id    ! Group ID to get data from
-    character(10),  intent(in)    :: name        ! name of dataset get
-    integer,        intent(in)    :: data_length ! Length of vector to obtain
-    integer,        intent(in)    :: order_dim   ! Legendre or histogram order
-    type(Jagged2D), allocatable, intent(inout) :: output_data(:)
+    character(len=*), intent(in)  :: name        ! name of dataset get
+    integer,          intent(in)  :: data_length ! Length of vector to obtain
+    integer,          intent(in)  :: order_dim   ! Legendre or histogram order
+    type(MomentMatrix), intent(inout) :: output_data
 
+    character(MAX_WORD_LEN) :: min_max_name
     integer, allocatable :: gmin(:), gmax(:)
     integer :: length, i, l, index, gout
+    real(8), allocatable :: temp_arr(:)
+
+    ! Get scattering data
+    if (.not. object_exists(group_id, trim(name))) &
+         call fatal_error("Data does not exist within provided group!")
+
+    if (name == 'nu_inelastic') then
+      min_max_name = 'inelastic'
+    else
+      min_max_name = name
+    end if
+
+    ! Get the outgoing group boundary indices
+    if (object_exists(group_id,  trim(min_max_name) // "_g_min")) then
+      allocate(gmin(data_length))
+      call read_dataset(gmin, group_id, trim(min_max_name) // "_g_min")
+    else
+      call fatal_error("'g_min' for the requested data must be provided")
+    end if
+
+    if (object_exists(group_id, trim(min_max_name) // "_g_max")) then
+      allocate(gmax(data_length))
+      call read_dataset(gmax, group_id, trim(min_max_name) // "_g_max")
+    else
+      call fatal_error("'g_max' for the requested data must be provided")
+    end if
+
+    ! Now use this information to find the length of a container array
+    ! to hold the flattened data
+    length = 0
+    do i = 1, data_length
+      length = length + order_dim * (gmax(i) - gmin(i) + 1)
+    end do
+
+    ! Allocate flattened array
+    allocate(temp_arr(length))
+    call read_dataset(temp_arr, group_id, name)
+
+    ! Convert temp_arr to a jagged array
+    allocate(output_data % at_Ein(data_length))
+    index = 1
+    do i = 1, data_length
+      allocate(output_data % at_Ein(i) % data(order_dim, gmin(i):gmax(i)))
+      do gout = gmin(i), gmax(i)
+        do l = 1, order_dim
+          output_data % at_Ein(i) % data(l, gout) = temp_arr(index)
+          index = index + 1
+        end do
+      end do
+    end do
+  end subroutine sparse_data_from_hdf5
+
+  subroutine sparse_chi_data_from_hdf5(group_id, name, data_length, output_data)
+    integer(HID_T), intent(inout) :: group_id    ! Group ID to get data from
+    character(len=*),  intent(in) :: name        ! name of dataset get
+    integer,           intent(in) :: data_length ! Length of vector to obtain
+    type(Matrix),   intent(inout) :: output_data
+
+    integer, allocatable :: gmin(:), gmax(:)
+    integer :: length, i, index, gout
     real(8), allocatable :: temp_arr(:)
 
     ! Get scattering data
@@ -431,7 +555,7 @@ module ndpp_header
     ! to hold the flattened data
     length = 0
     do i = 1, data_length
-      length = length + order_dim * (gmax(i) - gmin(i) + 1)
+      length = length + (gmax(i) - gmin(i) + 1)
     end do
 
     ! Allocate flattened array
@@ -439,18 +563,16 @@ module ndpp_header
     call read_dataset(temp_arr, group_id, name)
 
     ! Convert temp_arr to a jagged array
-    allocate(output_data(data_length))
+    allocate(output_data % at_Ein(data_length))
     index = 1
     do i = 1, data_length
-      allocate(output_data(i) % data(order_dim, gmin(i):gmax(i)))
+      allocate(output_data % at_Ein(i) % data(gmin(i):gmax(i)))
       do gout = gmin(i), gmax(i)
-        do l = 1, order_dim
-          output_data(i) % data(l, gout) = temp_arr(index)
-          index = index + 1
-        end do
+        output_data % at_Ein(i) % data(gout) = temp_arr(index)
+        index = index + 1
       end do
     end do
-  end subroutine sparse_data_from_hdf5
+  end subroutine sparse_chi_data_from_hdf5
 
   subroutine initialize_logarithmic_grid(grid, log_spacing)
     type(EnergyGrid), intent(inout) :: grid
@@ -516,13 +638,71 @@ module ndpp_header
     end select
   end function find_temperature_index
 
-  subroutine interp_data(Ein, orders, grid, log_spacing, data_source, data)
+  subroutine interp_data(Ein, grid, log_spacing, at_Ein, data, gmin, gmax)
     real(8),          intent(in) :: Ein
-    integer,          intent(in) :: orders
     type(EnergyGrid), intent(in) :: grid
     real(8),          intent(in) :: log_spacing
-    type(Jagged2D), allocatable, intent(in) :: data_source(:)
-    real(8), allocatable, intent(inout) :: data(:, :)
+    type(Jagged2D), allocatable, intent(in) :: at_Ein(:)
+    real(8),          intent(inout) :: data(:, :)
+    integer,          intent(out)   :: gmin
+    integer,          intent(out)   :: gmax
+
+    integer :: e, e_low, e_high, g   ! energy indices
+    real(8) :: f                     ! Grid interpolant
+    integer :: low_gmin, low_gmax    ! Low data point gmin and gmax
+    integer :: high_gmin, high_gmax  ! High data point gmin and gmax
+
+    if (.not. allocated(grid % energy)) then
+      return
+    end if
+
+    if (Ein <= grid % energy(1)) then
+      e = 1
+      f = ZERO
+    else if (Ein >= grid % energy(size(grid % energy))) then
+      e = size(grid % energy) - 1
+      f = ONE
+    else
+      ! Find energy index on logarithmic energy grid
+      e = int(log(Ein / grid % energy(1)) / log_spacing)
+      ! Determine bounding indices based on which equal log-spaced
+      ! interval the energy is in
+      e_low  = grid % grid_index(e)
+      e_high = grid % grid_index(e + 1) + 1
+
+      ! Perform binary search over reduced range
+      e = binary_search(grid % energy(e_low:e_high), &
+                        e_high - e_low + 1, Ein) + e_low - 1
+
+      ! calculate interpolation factor
+      f = (Ein - grid % energy(e)) / &
+           (grid % energy(e + 1) - grid % energy(e))
+    end if
+
+    low_gmin = lbound(at_Ein(e) % data, dim=2)
+    low_gmax = ubound(at_Ein(e) % data, dim=2)
+    high_gmin = lbound(at_Ein(e + 1) % data, dim=2)
+    high_gmax = ubound(at_Ein(e + 1) % data, dim=2)
+
+    ! Interpolate to our solution
+    do g = low_gmin, low_gmax
+      data(:, g) = data(:, g) + (ONE - f) * at_Ein(e) % data(:, g)
+    end do
+    do g = high_gmin, high_gmax
+      data(:, g) = data(:, g) + f * at_Ein(e + 1) % data(:, g)
+    end do
+
+    gmin = min(low_gmin, high_gmin)
+    gmax = max(low_gmax, high_gmax)
+
+  end subroutine interp_data
+
+  subroutine interp_chi_data(Ein, grid, log_spacing, at_Ein, data)
+    real(8),          intent(in) :: Ein
+    type(EnergyGrid), intent(in) :: grid
+    real(8),          intent(in) :: log_spacing
+    type(Jagged1D), allocatable, intent(in) :: at_Ein(:)
+    real(8), allocatable, intent(inout) :: data(:)
 
     integer :: e, e_low, e_high, g   ! energy indices
     real(8) :: f                     ! Grid interpolant
@@ -552,68 +732,72 @@ module ndpp_header
            (grid % energy(e + 1) - grid % energy(e))
     end if
 
-    low_gmin = lbound(data_source(e) % data, dim=2)
-    low_gmax = ubound(data_source(e) % data, dim=2)
-    high_gmin = lbound(data_source(e + 1) % data, dim=2)
-    high_gmax = ubound(data_source(e + 1) % data, dim=2)
+    low_gmin = lbound(at_Ein(e) % data, dim=1)
+    low_gmax = ubound(at_Ein(e) % data, dim=1)
+    high_gmin = lbound(at_Ein(e + 1) % data, dim=1)
+    high_gmax = ubound(at_Ein(e + 1) % data, dim=1)
 
     ! Build storage space
-    allocate(data(orders, min(low_gmin, high_gmin):max(low_gmax, high_gmax)))
+    allocate(data(min(low_gmin, high_gmin):max(low_gmax, high_gmax)))
 
     ! Dont waste time setting all values equal to zero, we only need to set
     ! those where the high points are outside the low points
-    data(:, high_gmin: low_gmin) = ZERO
-    data(:, low_gmax: high_gmax) = ZERO
+    data(high_gmin: low_gmin) = ZERO
+    data(low_gmax: high_gmax) = ZERO
 
     ! Interpolate to our solution
     do g = low_gmin, low_gmax
-      data(:, g) = (ONE - f) * data_source(e) % data(:, g)
+      data(g) = (ONE - f) * at_Ein(e) % data(g)
     end do
     do g = high_gmin, high_gmax
-      data(:, g) = data(:, g) + f * data_source(e + 1) % data(:, g)
+      data(g) = data(g) + f * at_Ein(e + 1) % data(g)
     end do
 
-  end subroutine interp_data
+  end subroutine interp_chi_data
 
-  subroutine interp_chi_data(Ein, grid, log_spacing, data_source, data)
-    real(8),          intent(in) :: Ein
-    type(EnergyGrid), intent(in) :: grid
-    real(8),          intent(in) :: log_spacing
-    real(8), allocatable, intent(in) :: data_source(:, :)
-    real(8), allocatable, intent(inout) :: data(:)
+  subroutine get_scatter(this, Ein, kT, order, data, elastic_xs, nu, gmin, gmax)
+    class(Ndpp), intent(in) :: this
+    real(8),     intent(in) :: Ein   ! Incoming energy
+    real(8),     intent(in) :: kT    ! Requested temperature
+    integer,     intent(in) :: order ! Order to include
+    real(8),     intent(inout) :: data(:, :) ! combined data
+    real(8),     intent(in)  :: elastic_xs
+    logical,     intent(in)  :: nu
+    integer,     intent(out) :: gmin
+    integer,     intent(out) :: gmax
 
-    integer :: e, e_low, e_high ! energy indices
-    real(8) :: f                ! Grid interpolant
 
-    if (Ein <= grid % energy(1)) then
-      e = 1
-      f = ZERO
-    else if (Ein >= grid % energy(size(grid % energy))) then
-      e = size(grid % energy) - 1
-      f = ONE
+    integer :: t, el_gmin, el_gmax, inel_gmin, inel_gmax
+
+    data = ZERO
+
+    ! First, find the temperature index
+    t = find_temperature_index(this % kTs, this % temperature_method, kT)
+
+    call interp_data(Ein, this % elastic_grid(t), &
+                     this % elastic_log_spacing(t), &
+                     this % elastic(t) % at_Ein, data, el_gmin, el_gmax)
+    data(:, el_gmin: el_gmax) = elastic_xs * data(:, el_gmin: el_gmax)
+
+    if (this % has_inelastic) then
+      if (nu) then
+        call interp_data(Ein, this % inelastic_grid, &
+                         this % inelastic_log_spacing, &
+                         this % nu_inelastic % at_Ein, data, inel_gmin, &
+                         inel_gmax)
+      else
+        call interp_data(Ein, this % inelastic_grid, &
+                         this % inelastic_log_spacing, &
+                         this % inelastic % at_Ein, data, inel_gmin, inel_gmax)
+      end if
+      gmin = min(el_gmin, inel_gmin)
+      gmax = min(el_gmax, inel_gmax)
     else
-      ! Find energy index on logarithmic energy grid
-      e = int(log(Ein / grid % energy(1)) / log_spacing)
-      ! Determine bounding indices based on which equal log-spaced
-      ! interval the energy is in
-      e_low  = grid % grid_index(e)
-      e_high = grid % grid_index(e + 1) + 1
-
-      ! Perform binary search over reduced range
-      e = binary_search(grid % energy(e_low:e_high), &
-                        e_high - e_low + 1, Ein) + e_low - 1
-
-      ! calculate interpolation factor
-      f = (Ein - grid % energy(e)) / &
-           (grid % energy(e + 1) - grid % energy(e))
+      gmin = el_gmin
+      gmax = el_gmax
     end if
 
-    ! Build storage space
-    allocate(data(size(data_source, dim=2)))
+  end subroutine get_scatter
 
-    ! Interpolate to our solution
-    data(:) = (ONE - f) * data_source(e, :) + f * data_source(e + 1, :)
-
-  end subroutine interp_chi_data
 
 end module ndpp_header

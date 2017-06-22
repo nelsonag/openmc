@@ -261,10 +261,10 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
 
     # Now find the upper and lower roots around this peak
     Eout_min_back = \
-        sopt.brentq(root_func, 0., Eout_peak,
+        sopt.brentq(root_func, Eouts[0], Eout_peak,
                     args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
     Eout_max_back = \
-        sopt.brentq(root_func, Eout_peak, 20.e6,
+        sopt.brentq(root_func, Eout_peak, Eouts[-1],
                     args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
 
     # Now we have to repeat for the top end;
@@ -278,10 +278,10 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
                              args=(func, _MU_FWD, args))
     Eout_peak = maximum.x
     func_peak = -maximum.fun
-    Eout_min_fwd = sopt.brentq(root_func, 0., Eout_peak,
+    Eout_min_fwd = sopt.brentq(root_func, Eouts[0], Eout_peak,
                                args=(func, _MU_FWD, args,
                                      _FGK_ROOT_TOL * func_peak))
-    Eout_max_fwd = sopt.brentq(root_func, Eout_peak, 20.e6,
+    Eout_max_fwd = sopt.brentq(root_func, Eout_peak, Eouts[-1],
                                args=(func, _MU_FWD, args,
                                      _FGK_ROOT_TOL * func_peak))
 

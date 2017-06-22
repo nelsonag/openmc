@@ -11,6 +11,7 @@ module sab_header
   use hdf5_interface, only: read_attribute, get_shape, open_group, close_group, &
        open_dataset, read_dataset, close_dataset, get_datasets, object_exists, &
        get_name
+  use ndpp_header, only: Ndpp
   use secondary_correlated, only: CorrelatedAngleEnergy
   use stl_vector, only: VectorInt, VectorReal
   use string, only: to_str, str_to_int
@@ -74,6 +75,9 @@ module sab_header
 
     ! cross sections and distributions at each temperature
     type(SabData), allocatable :: data(:)
+
+    ! NDPP data
+    type(Ndpp) :: ndpp_data
   contains
     procedure :: from_hdf5 => salphabeta_from_hdf5
   end type SAlphaBeta

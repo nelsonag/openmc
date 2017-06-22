@@ -17,6 +17,7 @@ module nuclide_header
   use list_header, only: ListInt
   use math,        only: evaluate_legendre
   use multipole_header, only: MultipoleArray
+  use ndpp_header, only: Ndpp, EnergyGrid
   use product_header, only: AngleEnergyContainer
   use reaction_header, only: Reaction
   use secondary_uncorrelated, only: UncorrelatedAngleEnergy
@@ -30,11 +31,6 @@ module nuclide_header
 ! Nuclide contains the base nuclidic data for a nuclide described as needed
 ! for continuous-energy neutron transport.
 !===============================================================================
-
-  type EnergyGrid
-    integer, allocatable :: grid_index(:) ! log grid mapping indices
-    real(8), allocatable :: energy(:)     ! energy values corresponding to xs
-  end type EnergyGrid
 
   type SumXS
     real(8), allocatable :: total(:)      ! total cross section
@@ -93,6 +89,9 @@ module nuclide_header
     ! Fission energy release
     class(Function1D), allocatable :: fission_q_prompt ! prompt neutrons, gammas
     class(Function1D), allocatable :: fission_q_recov  ! neutrons, gammas, betas
+
+    ! NDPP data
+    type(Ndpp) :: ndpp_data
 
   contains
     procedure :: clear => nuclide_clear

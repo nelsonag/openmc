@@ -184,9 +184,6 @@ def do_neutron_scatter(Ein, awr, rxns, products, this, kT, mu_bins, xs_func,
             continue
 
         yield_xs = product.yield_(Ein) * xs(Ein)
-        # If the yield is 0, also dont waste time
-        if yield_xs <= 0.:
-            continue
 
         rxn_results = np.zeros((this.num_groups, this.num_angle))
         for d, distrib in enumerate(product.distribution):
@@ -201,7 +198,7 @@ def do_neutron_scatter(Ein, awr, rxns, products, this, kT, mu_bins, xs_func,
                                       rxn.q_value, mu_bins, this.order, xs,
                                       method, mus_grid, wgts)
 
-            # Now normalize and multiply by the yield, xs, and applicability
+            # Now normalize and multiply by applicability
             if this.scatter_format == 'legendre':
                 norm_factor = np.sum(unnorm_result[:, 0])
             else:
@@ -210,6 +207,7 @@ def do_neutron_scatter(Ein, awr, rxns, products, this, kT, mu_bins, xs_func,
                 rxn_results[:, :] += \
                     applicability * unnorm_result / norm_factor
 
+        # Factor in the yield
         results += yield_xs * rxn_results
 
     return results
@@ -238,9 +236,6 @@ def do_chi(Ein, awr, rxns, this, kT, xs_func, n_delayed):
                 delay_index += 1
 
             yield_xs = product.yield_(Ein) * xs
-            # If the yield is 0, also dont waste time
-            if yield_xs <= 0.:
-                continue
 
             rxn_results = np.zeros(this.num_groups)
 

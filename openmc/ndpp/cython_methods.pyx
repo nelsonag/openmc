@@ -518,7 +518,7 @@ cpdef integrate_corr_lab(double Ein, double[::1] Eouts,
 
 
 # NBODY
-# ------------
+# -----
 
 
 cdef class NBody:

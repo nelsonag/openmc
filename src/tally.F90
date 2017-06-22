@@ -15,6 +15,8 @@ module tally
                               mesh_intersects_3d
   use mesh_header,      only: RegularMesh
   use message_passing
+  use ndpp_header,      only: Ndpp
+  use ndpp_material_header, only: NdppMaterial
   use output,           only: header
   use particle_header,  only: LocalCoord, Particle
   use string,           only: to_str
@@ -103,6 +105,12 @@ contains
     real(8) :: f                    ! interpolation factor
     real(8) :: score                ! analog tally score
     real(8) :: E                    ! particle energy
+    real(8) :: uvw(3)               ! particle direction
+    real(8) :: kT                   ! current material temperature
+    integer :: ndpp_filter_index    ! Filter index adjusted to remove the Eout
+                                    ! filter (for NDPP purposes)
+    integer :: n                    ! Index of energyout filter
+    integer :: i_bin                ! Index in energyout filter of NDPP score
 
     i = 0
     SCORE_LOOP: do q = 1, t % n_user_score_bins
@@ -316,6 +324,97 @@ contains
             score = p % last_wgt * flux &
                  * rxn % products(1) % yield % evaluate(p % last_E)
           end associate
+        end if
+
+      case (SCORE_NDPP_SCATTER_N, SCORE_NDPP_NU_SCATTER_N, &
+            SCORE_NDPP_SCATTER_PN, SCORE_NDPP_NU_SCATTER_PN, &
+            SCORE_NDPP_SCATTER_YN, SCORE_NDPP_NU_SCATTER_YN)
+        ! Remove the outgoing energy bin from the filter index.
+        ! Since we checked earlier that this should be the inner-most filter,
+        ! We can just remove the outgoing bin from the filter index.
+        ! We will store this in a dummy variable, ndpp_filter_index, so
+        ! others scores dont have their filter modified
+        n = t % filter(t % find_filter(FILTER_ENERGYOUT))
+        i_bin = filter_matches(n) % i_bin
+        ndpp_filter_index = filter_index - &
+             filter_matches(n) % bins % data(i_bin) + 1
+
+        if (t % estimator == ESTIMATOR_TRACKLENGTH) then
+          E = p % E
+          uvw = p % coord(p % n_coord) % uvw
+        else
+          E = p % last_E
+          uvw = p % last_uvw
+        end if
+        kT = p % sqrtkT**2
+
+        if (t % estimator == ESTIMATOR_ANALOG) then
+          ! Skip any event where the particle didn't scatter
+          if (p % event == EVENT_SCATTER) then
+            ! Analog tallies are not to be multiplied by the scattering xs,
+            ! but the NDPP tallying methods will be including that xs, so
+            ! we have to remove it
+            if (micro_xs(p % event_nuclide) % index_sab > 0) then
+              score = flux * p % last_wgt / &
+                   micro_xs(p % event_nuclide) % elastic
+              associate (sab => &
+                   sab_tables(micro_xs(p % event_nuclide) % index_sab))
+                call sab % ndpp_data % tally_scatter( &
+                     E, kT, ndpp_outgoing, t, &
+                     score_index, ndpp_filter_index, score_bin, &
+                     t % moment_order(i), score, uvw, &
+                     micro_xs(p % event_nuclide) % elastic)
+              end associate
+            else
+              score = flux * p % last_wgt / &
+                   (micro_xs(p % event_nuclide) % total - &
+                    micro_xs(p % event_nuclide) % absorption)
+              call nuclides(p % event_nuclide) % ndpp_data % tally_scatter( &
+                   E, kT, ndpp_outgoing, t, &
+                   score_index, ndpp_filter_index, score_bin, &
+                   t % moment_order(i), score, uvw, &
+                   micro_xs(p % event_nuclide) % elastic)
+            end if
+          end if
+
+        else ! Collision and tracklength estimators
+          if (i_nuclide > 0) then
+            score = flux * atom_density
+
+            if (micro_xs(i_nuclide) % index_sab > 0) then
+              associate (sab => sab_tables(micro_xs(i_nuclide) % index_sab))
+                call sab % ndpp_data % tally_scatter( &
+                     E, kT, ndpp_outgoing, t, &
+                     score_index, ndpp_filter_index, score_bin, &
+                     t % moment_order(i), score, uvw, &
+                     micro_xs(i_nuclide) % elastic)
+              end associate
+            else
+              call nuclides(i_nuclide) % ndpp_data % tally_scatter( &
+                   E, kT, ndpp_outgoing, t, &
+                   score_index, ndpp_filter_index, score_bin, &
+                   t % moment_order(i), score, uvw, &
+                   micro_xs(i_nuclide) % elastic)
+            end if
+          else
+            score = flux * (material_xs % total - material_xs % absorption)
+
+            call ndpp_materials(p % material) % tally_scatter( &
+                 E, kT, ndpp_outgoing, t, &
+                 score_index, ndpp_filter_index, score_bin, &
+                 t % moment_order(i), score, uvw, micro_xs)
+          end if
+        end if
+
+        ! Skip the remaining orders since we have already taken care of them
+        if (score_bin == SCORE_NDPP_SCATTER_PN .or. &
+            score_bin == SCORE_NDPP_NU_SCATTER_PN) then
+          i = i + t % moment_order(i)
+          cycle SCORE_LOOP
+        else if (score_bin == SCORE_NDPP_SCATTER_YN .or. &
+                 score_bin == SCORE_NDPP_NU_SCATTER_YN) then
+          i = i + (t % moment_order(i) + 1)**2 - 1
+          cycle SCORE_LOOP
         end if
 
 

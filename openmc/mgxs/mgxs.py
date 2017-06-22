@@ -35,6 +35,8 @@ MGXS_TYPES = ['total',
               'scatter probability matrix',
               'consistent scatter matrix',
               'consistent nu-scatter matrix',
+              'ndpp scatter matrix',
+              'ndpp nu-scatter matrix',
               'chi',
               'chi-prompt',
               'inverse-velocity',
@@ -742,6 +744,12 @@ class MGXS(object):
         elif mgxs_type == 'consistent nu-scatter matrix':
             mgxs = ScatterMatrixXS(domain, domain_type, energy_groups, nu=True)
             mgxs.formulation = 'consistent'
+        elif mgxs_type == 'ndpp scatter matrix':
+            mgxs = ScatterMatrixXS(domain, domain_type, energy_groups)
+            mgxs.formulation = 'ndpp'
+        elif mgxs_type == 'ndpp nu-scatter matrix':
+            mgxs = ScatterMatrixXS(domain, domain_type, energy_groups, nu=True)
+            mgxs.formulation = 'ndpp'
         elif mgxs_type == 'nu-fission matrix':
             mgxs = NuFissionMatrixXS(domain, domain_type, energy_groups)
         elif mgxs_type == 'chi':
@@ -3627,7 +3635,7 @@ class ScatterMatrixXS(MatrixMGXS):
 
     Attributes
     ----------
-    formulation : 'simple' or 'consistent'
+    formulation : 'simple', 'consistent', or 'ndpp'
         The calculation approach to use ('simple' by default). The 'simple'
         formulation simply divides the group-to-group scattering rates by
         the groupwise flux, each computed from analog tally estimators. The
@@ -3636,7 +3644,9 @@ class ScatterMatrixXS(MatrixMGXS):
         from tracklength tallies and the latter computed from analog tallies.
         The 'consistent' formulation is designed to better conserve reaction
         rate balance with the total and absorption cross sections computed
-        using tracklength tally estimators.
+        using tracklength tally estimators. The 'ndpp' approach uses
+        pre-integrated nuclear data from the openmc.ndpp data and tracklength
+        estimators.
     correction : 'P0' or None
         Apply the P0 correction to scattering matrices if set to 'P0'; this is
         used only if :attr:`ScatterMatrixXS.scatter_format` is 'legendre'
@@ -3793,9 +3803,24 @@ class ScatterMatrixXS(MatrixMGXS):
                     if self.correction:
                         scores.append('{}-1'.format(self.rxn_type))
                 else:
-                    scores.append('{}-P{}'.format(self.rxn_type, self.legendre_order))
+                    scores.append('{}-P{}'.format(self.rxn_type,
+                                                  self.legendre_order))
             elif self.scatter_format == 'histogram':
                 scores += [self.rxn_type]
+
+        elif self.formulation == 'ndpp':
+            scores = ['flux']
+
+            if self.scatter_format == 'legendre':
+                if self.legendre_order == 0:
+                    scores.append('ndpp-{}-0'.format(self.rxn_type))
+                    if self.correction:
+                        scores.append('ndpp-{}-1'.format(self.rxn_type))
+                else:
+                    scores.append('ndpp-{}-P{}'.format(self.rxn_type,
+                                                       self.legendre_order))
+            elif self.scatter_format == 'histogram':
+                scores += ['ndpp-{}'.format(self.rxn_type)]
 
         else:
             # Add scores for groupwise scattering cross section
@@ -3822,7 +3847,7 @@ class ScatterMatrixXS(MatrixMGXS):
 
     @property
     def tally_keys(self):
-        if self.formulation == 'simple':
+        if self.formulation == 'simple' or self.formulation == 'ndpp':
             return super(ScatterMatrixXS, self).tally_keys
         else:
             # Add keys for groupwise scattering cross section
@@ -3845,6 +3870,8 @@ class ScatterMatrixXS(MatrixMGXS):
     def estimator(self):
         if self.formulation == 'simple':
             return self._estimator
+        elif self.formulation == 'ndpp':
+            return ['tracklength', 'tracklength']
         else:
             # Add estimators for groupwise scattering cross section
             estimators = ['tracklength', 'tracklength']
@@ -3864,7 +3891,7 @@ class ScatterMatrixXS(MatrixMGXS):
 
     @property
     def filters(self):
-        if self.formulation == 'simple':
+        if self.formulation == 'simple' or self.formulation == 'ndpp':
             group_edges = self.energy_groups.group_edges
             energy = openmc.EnergyFilter(group_edges)
             energyout = openmc.EnergyoutFilter(group_edges)
@@ -3910,12 +3937,19 @@ class ScatterMatrixXS(MatrixMGXS):
 
         if self._rxn_rate_tally is None:
 
-            if self.formulation == 'simple':
+            if self.formulation == 'simple' or self.formulation == 'ndpp':
                 if self.scatter_format == 'legendre':
+                    # Set if using ndpp or not
+                    if self.formulation == 'ndpp':
+                        pretext = 'ndpp-'
+                    else:
+                        pretext = ''
                     # If using P0 correction subtract scatter-1 from the diagonal
                     if self.correction == 'P0' and self.legendre_order == 0:
-                        scatter_p0 = self.tallies['{}-0'.format(self.rxn_type)]
-                        scatter_p1 = self.tallies['{}-1'.format(self.rxn_type)]
+                        scatter_p0 = self.tallies[pretext +
+                                                  '{}-0'.format(self.rxn_type)]
+                        scatter_p1 = self.tallies[pretext +
+                                                  '{}-1'.format(self.rxn_type)]
                         energy_filter = scatter_p0.find_filter(openmc.EnergyFilter)
 
                         # Transform scatter-p1 tally into an energyin/out matrix
@@ -3926,19 +3960,13 @@ class ScatterMatrixXS(MatrixMGXS):
 
                     # Extract scattering moment reaction rate Tally
                     elif self.legendre_order == 0:
-                        tally_key = '{}-{}'.format(self.rxn_type,
-                                                   self.legendre_order)
+                        tally_key = pretext + \
+                            '{}-{}'.format(self.rxn_type, self.legendre_order)
                         self._rxn_rate_tally = self.tallies[tally_key]
                     else:
-                        tally_key = '{}-P{}'.format(self.rxn_type,
-                                                    self.legendre_order)
+                        tally_key = pretext + \
+                            '{}-P{}'.format(self.rxn_type, self.legendre_order)
                         self._rxn_rate_tally = self.tallies[tally_key]
-                elif self.scatter_format == 'histogram':
-                    # Extract scattering rate distribution tally
-                    self._rxn_rate_tally = self.tallies[self.rxn_type]
-
-                self._rxn_rate_tally.sparse = self.sparse
-
             else:
                 msg = 'The reaction rate tally is poorly defined' \
                       ' for the consistent formulation'
@@ -3955,7 +3983,7 @@ class ScatterMatrixXS(MatrixMGXS):
                 raise ValueError(msg)
 
             # Use super class method
-            if self.formulation == 'simple':
+            if self.formulation == 'simple' or self.formulation == 'ndpp':
                 self._xs_tally = MGXS.xs_tally.fget(self)
 
             else:
@@ -4020,7 +4048,7 @@ class ScatterMatrixXS(MatrixMGXS):
                     # Override the nuclides for tally arithmetic
                     correction.nuclides = scatter_p1.nuclides
                     self._xs_tally -= correction
-                
+
                 self._compute_xs()
 
         return self._xs_tally
@@ -4030,7 +4058,7 @@ class ScatterMatrixXS(MatrixMGXS):
         cv.check_type('nu', nu, bool)
         self._nu = nu
 
-        if self.formulation == 'simple':
+        if self.formulation == 'simple' or self.formulation == 'ndpp':
             if not nu:
                 self._rxn_type = 'scatter'
                 self._hdf5_key = 'scatter matrix'
@@ -4047,11 +4075,18 @@ class ScatterMatrixXS(MatrixMGXS):
 
     @formulation.setter
     def formulation(self, formulation):
-        cv.check_value('formulation', formulation, ('simple', 'consistent'))
+        cv.check_value('formulation', formulation, ('simple', 'ndpp',
+                                                    'consistent'))
         self._formulation = formulation
 
         if self.formulation == 'simple':
             self._valid_estimators = ['analog']
+            if not self.nu:
+                self._hdf5_key = 'scatter matrix'
+            else:
+                self._hdf5_key = 'nu-scatter matrix'
+        elif self.formulation == 'ndpp':
+            self._valid_estimators = ['tracklength']
             if not self.nu:
                 self._hdf5_key = 'scatter matrix'
             else:

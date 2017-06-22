@@ -119,7 +119,7 @@ def interpolate_corr(this, Ein):
                                      'unit-base')
         adists.append(adist)
 
-    return edist, np.array(adists)
+    return edist, adists
 
 
 def interpolate_distribution(this, Ein):

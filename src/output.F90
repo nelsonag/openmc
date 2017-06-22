@@ -724,9 +724,15 @@ contains
     score_names(abs(SCORE_SCATTER_N))          = "Scattering Rate Moment"
     score_names(abs(SCORE_SCATTER_PN))         = "Scattering Rate Moment"
     score_names(abs(SCORE_SCATTER_YN))         = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_SCATTER_N))     = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_SCATTER_PN))    = "Scattering Rate Moment"
+    score_names(abs(SCORE_NDPP_SCATTER_YN))    = "Scattering Rate Moment"
     score_names(abs(SCORE_NU_SCATTER_N))       = "Scattering Prod. Rate Moment"
     score_names(abs(SCORE_NU_SCATTER_PN))      = "Scattering Prod. Rate Moment"
     score_names(abs(SCORE_NU_SCATTER_YN))      = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATTER_N))  = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATTER_PN)) = "Scattering Prod. Rate Moment"
+    score_names(abs(SCORE_NDPP_NU_SCATTER_YN)) = "Scattering Prod. Rate Moment"
     score_names(abs(SCORE_DECAY_RATE))         = "Decay Rate"
     score_names(abs(SCORE_DELAYED_NU_FISSION)) = "Delayed-Nu-Fission Rate"
     score_names(abs(SCORE_PROMPT_NU_FISSION))  = "Prompt-Nu-Fission Rate"
@@ -890,14 +896,16 @@ contains
             k = k + 1
             score_index = score_index + 1
             select case(t % score_bins(k))
-            case (SCORE_SCATTER_N, SCORE_NU_SCATTER_N)
+            case (SCORE_SCATTER_N, SCORE_NU_SCATTER_N, SCORE_NDPP_SCATTER_N, &
+                  SCORE_NDPP_NU_SCATTER_N)
               score_name = 'P' // trim(to_str(t % moment_order(k))) // " " // &
                    score_names(abs(t % score_bins(k)))
               write(UNIT=unit_tally, FMT='(1X,2A,1X,A,"+/- ",A)') &
                    repeat(" ", indent), score_name, &
                    to_str(t % results(RESULT_SUM,score_index,filter_index)), &
                    trim(to_str(t % results(RESULT_SUM_SQ,score_index,filter_index)))
-            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN)
+            case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATTER_PN, &
+                  SCORE_NDPP_NU_SCATTER_PN)
               score_index = score_index - 1
               do n_order = 0, t % moment_order(k)
                 score_index = score_index + 1
@@ -910,7 +918,7 @@ contains
               end do
               k = k + t % moment_order(k)
             case (SCORE_SCATTER_YN, SCORE_NU_SCATTER_YN, SCORE_FLUX_YN, &
-                  SCORE_TOTAL_YN)
+                  SCORE_TOTAL_YN, SCORE_NDPP_SCATTER_YN, SCORE_NDPP_NU_SCATTER_YN)
               score_index = score_index - 1
               do n_order = 0, t % moment_order(k)
                 do nm_order = -n_order, n_order

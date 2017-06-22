@@ -36,6 +36,14 @@ module input_xml
   implicit none
   save
 
+!===============================================================================
+! Module constants for storing the nuclide and S(a,b) temperatures since these
+! are needed for reading CE XS and NDPP data
+!===============================================================================
+
+  type(VectorReal), allocatable :: nuc_temps(:)
+  type(VectorReal), allocatable :: sab_temps(:)
+
 contains
 
 !===============================================================================
@@ -2070,8 +2078,6 @@ contains
     integer :: i, j
     type(DictCharInt) :: library_dict
     type(Library), allocatable :: libraries(:)
-    type(VectorReal), allocatable :: nuc_temps(:) ! List of T to read for each nuclide
-    type(VectorReal), allocatable :: sab_temps(:) ! List of T to read for each S(a,b)
     real(8), allocatable    :: material_temps(:)
     logical                 :: file_exists
     character(MAX_FILE_LEN) :: env_variable
@@ -2684,6 +2690,13 @@ contains
     type(XMLNode), allocatable :: node_deriv_list(:)
     type(ElemKeyValueCI), pointer :: scores
     type(ElemKeyValueCI), pointer :: next
+    real(8), allocatable :: ndpp_group_edges(:)
+    character(len=20) :: ndpp_scatter_format
+    real(8), allocatable :: ndpp_histogram_bins(:)
+
+    ! Set default value of ndpp_scatter_format which indicates that no NDPP
+    ! score has yet been reached
+    ndpp_scatter_format = '0'
 
     ! Check if tallies.xml exists
     filename = trim(path_input) // "tallies.xml"
@@ -3334,7 +3347,7 @@ contains
       ! Set tally type to volume by default
       t % type = TALLY_VOLUME
 
-      ! It's desirable to use a track-length esimator for tallies since
+      ! It's desirable to use a track-length estimator for tallies since
       ! generally more events will score to the tally, reducing the
       ! variance. However, for tallies that require information on
       ! post-collision parameters (e.g. tally with an energyout filter) the
@@ -3406,8 +3419,6 @@ contains
           t % find_filter(FILTER_ENERGYIN) = j
         type is (EnergyoutFilter)
           t % find_filter(FILTER_ENERGYOUT) = j
-          ! Set to analog estimator
-          t % estimator = ESTIMATOR_ANALOG
         type is (DelayedGroupFilter)
           t % find_filter(FILTER_DELAYEDGROUP) = j
         type is (MuFilter)
@@ -3523,7 +3534,7 @@ contains
 
         ! Before we can allocate storage for scores, we must determine the
         ! number of additional scores required due to the moment scores
-        ! (i.e., scatter-p#, flux-y#)
+        ! (e.g., scatter-p#, flux-y#)
         n_new = 0
         do j = 1, n_words
           sarray(j) = to_lower(sarray(j))
@@ -3649,6 +3660,117 @@ contains
             end if
           end if
 
+          ! Do check on NDPP scores to make sure filters are aligned correctly
+          if (starts_with(score_name, 'ndpp-')) then
+            if (t % find_filter(FILTER_ENERGYIN) == 0) then
+              call fatal_error("Cannot tally NDPP Scatter without an " // &
+                   "incoming energy filter.")
+            end if
+            if (t % find_filter(FILTER_ENERGYOUT) == 0) then
+              call fatal_error("Cannot tally NDPP Scatter without an " // &
+                   "outgoing energy filter.")
+            end if
+
+            n_filter = size(t % filter)
+            if (t % find_filter(FILTER_MU) == 0) then
+              ! Check to ensure that the ENERGYIN and ENERGYOUT filters are the
+              ! last two declared by the user, and in that order too. This
+              ! guarantees that the stride is the lowest, and therefore most
+              ! efficient.
+              if ((t % find_filter(FILTER_ENERGYOUT) /= n_filter) .or. &
+                (t % find_filter(FILTER_ENERGYIN) /= (n_filter - 1))) then
+                call fatal_error("Energy and Energyout filter types must " // &
+                     "be the last declared (and in that order) in any " // &
+                     "tally with an ndpp score!")
+              end if
+            else
+              ! Check to ensure that the ENERGYIN, ENERGYOUT, and MU filters
+              ! are the last two declared by the user, and in that order too.
+              ! This guarantees that the stride is the lowest, and therefore
+              ! most efficient.
+              if ((t % find_filter(FILTER_MU) /= n_filter) .or. &
+                  (t % find_filter(FILTER_ENERGYOUT) /= (n_filter - 1)) .or. &
+                (t % find_filter(FILTER_ENERGYIN) /= (n_filter - 2))) then
+                call fatal_error("Energy and Energyout filter types must " // &
+                     "be the last declared (and in that order) in any " // &
+                     "tally with an ndpp score!")
+              end if
+            end if
+
+            ! Set the flag that identifies that we need to load the NDPP data
+            use_ndpp_data = .true.
+
+            ! Get the group structure if this is the first time through
+            f => filters(t % find_filter(FILTER_ENERGYOUT))
+            select type(filter => f % obj)
+            type is (EnergyoutFilter)
+              if (.not. allocated(ndpp_group_edges)) then
+                allocate(ndpp_group_edges(size(filter % bins)))
+                ndpp_group_edges = filter % bins
+              else  ! Check the structure
+                if (size(ndpp_group_edges) /= size(filter % bins)) then
+                  call fatal_error("All NDPP scores must use the same " // &
+                       "outgoing energy filter structure")
+                end if
+                if (any(filter % bins /= ndpp_group_edges)) then
+                  call fatal_error("All NDPP scores must use the same " // &
+                       "outgoing energy filter structure")
+                end if
+              end if
+            end select
+
+            if (trim(ndpp_scatter_format) == "0") then
+              ! We have yet to find a scattering score, so grab this one
+              if (starts_with(score_name, 'ndpp-scatter') .or. &
+                  starts_with(score_name, 'ndpp-nu-scatter')) then
+                if (t % find_filter(FILTER_MU) == 0) then
+                  ndpp_scatter_format = "legendre"
+                else
+                  ndpp_scatter_format = "histogram"
+                  f => filters(t % find_filter(FILTER_MU))
+                  select type(filter => f % obj)
+                  type is (MuFilter)
+                    allocate(ndpp_histogram_bins(size(filter % bins)))
+                    ndpp_histogram_bins = filter % bins
+                  end select
+                end if
+              end if
+            else
+              ! Compare to what we already have
+              ! We have yet to find a scattering score, so grab this one
+              if (starts_with(score_name, 'ndpp-scatter') .or. &
+                  starts_with(score_name, 'ndpp-nu-scatter')) then
+                ! We previously had Legendre, make sure this isn't histogram
+                if (ndpp_scatter_format == "legendre") then
+                  if (t % find_filter(FILTER_MU) /= 0) then
+                    call fatal_error("All NDPP scattering scores must " // &
+                       "use the same scattering format type")
+                  end if
+                else
+                  ! We previously had histogram, make sure this isn't Legendre
+                  if (t % find_filter(FILTER_MU) == 0) then
+                    call fatal_error("All NDPP scattering scores must " // &
+                       "use the same scattering format type")
+                  end if
+
+                  ! Ok, its also histogram, so make sure the bins are the same
+                  f => filters(t % find_filter(FILTER_MU))
+                  select type(filter => f % obj)
+                  type is (MuFilter)
+                    if (size(ndpp_histogram_bins) /= size(filter % bins)) then
+                      call fatal_error("All NDPP scattering scores must " // &
+                         "use the same mu-histogram bin structure")
+                    end if
+                    if (any(filter % bins /= ndpp_histogram_bins)) then
+                      call fatal_error("All NDPP scattering scores must " // &
+                         "use the same mu-histogram bin structure")
+                    end if
+                  end select
+                end if
+              end if
+            end if
+          end if
+
           select case (trim(score_name))
           case ('flux')
             ! Prohibit user from tallying flux for an individual nuclide
@@ -3744,6 +3866,44 @@ contains
             t % estimator = ESTIMATOR_ANALOG
             ! Setup P0:Pn
             t % score_bins(j : j + n_bins - 1) = SCORE_NU_SCATTER_YN
+            t % moment_order(j : j + n_bins - 1) = n_order
+            j = j + n_bins - 1
+
+          case ('ndpp-scatter')
+            t % score_bins(j) = SCORE_NDPP_SCATTER
+
+          case ('ndpp-nu-scatter')
+            t % score_bins(j) = SCORE_NDPP_NU_SCATTER
+
+          case ('ndpp-scatter-n')
+            t % score_bins(j) = SCORE_NDPP_SCATTER_N
+            t % moment_order(j) = n_order
+
+          case ('ndpp-nu-scatter-n')
+            t % score_bins(j) = SCORE_NDPP_NU_SCATTER_N
+            t % moment_order(j) = n_order
+
+          case ('ndpp-scatter-pn')
+            ! Setup P0:Pn
+            t % score_bins(j : j + n_bins - 1) = SCORE_NDPP_SCATTER_PN
+            t % moment_order(j : j + n_bins - 1) = n_order
+            j = j + n_bins - 1
+
+          case ('ndpp-nu-scatter-pn')
+            ! Setup P0:Pn
+            t % score_bins(j : j + n_bins - 1) = SCORE_NDPP_NU_SCATTER_PN
+            t % moment_order(j : j + n_bins - 1) = n_order
+            j = j + n_bins - 1
+
+          case ('ndpp-scatter-yn')
+            ! Setup P0:Pn
+            t % score_bins(j : j + n_bins - 1) = SCORE_NDPP_SCATTER_YN
+            t % moment_order(j : j + n_bins - 1) = n_order
+            j = j + n_bins - 1
+
+          case ('ndpp-nu-scatter-yn')
+            ! Setup P0:Pn
+            t % score_bins(j : j + n_bins - 1) = SCORE_NDPP_NU_SCATTER_YN
             t % moment_order(j : j + n_bins - 1) = n_order
             j = j + n_bins - 1
 
@@ -4011,10 +4171,12 @@ contains
           ! Determine number of bins for scores with expansions
           n_order = t % moment_order(j)
           select case (t % score_bins(j))
-          case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN)
+          case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, SCORE_NDPP_SCATTER_PN, &
+                SCORE_NDPP_NU_SCATTER_PN)
             n_bins = n_order + 1
           case (SCORE_FLUX_YN, SCORE_TOTAL_YN, SCORE_SCATTER_YN, &
-               SCORE_NU_SCATTER_YN)
+               SCORE_NU_SCATTER_YN, SCORE_NDPP_SCATTER_YN, &
+               SCORE_NDPP_NU_SCATTER_YN)
             n_bins = (n_order + 1)**2
           case default
             n_bins = 1
@@ -4298,6 +4460,28 @@ contains
       call tally_dict % add_key(t % id, i)
 
     end do READ_TALLIES
+
+    ! If NDPP scores are requested, get the library location and then read in
+    ! the data
+    if (use_ndpp_data) then
+      if (check_for_node(root, "ndpp_library")) then
+        call get_node_value(root, "ndpp_library", ndpp_lib)
+      else
+        ndpp_lib = 'ndpp_lib.h5'
+      end if
+
+      ! Check if NDPP Library exists
+      inquire(FILE=ndpp_lib, EXIST=file_exists)
+      if (.not. file_exists) then
+        ! Could not find NDPP Library file
+        call fatal_error("NDPP HDF5 library '" // trim(ndpp_lib) // &
+                         "' does not exist!")
+      end if
+
+      ! Load the NDPP data
+      call read_ndpp(nuc_temps, sab_temps, ndpp_group_edges, &
+                     ndpp_scatter_format)
+    end if
 
     ! Close XML document
     call doc % clear()
@@ -5508,6 +5692,128 @@ contains
     end associate
 
   end subroutine read_multipole_data
+
+!===============================================================================
+! READ_NDPP loads all the needed nuclidic and S(a,b) data from the NDPP library
+!===============================================================================
+
+  subroutine read_ndpp(nuc_temps, sab_temps, group_edges, scatter_format)
+    type(VectorReal), allocatable, intent(in) :: nuc_temps(:)
+    type(VectorReal), allocatable, intent(in) :: sab_temps(:)
+    real(8), allocatable, intent(in) :: group_edges(:) ! Group structure
+    character(len=*),     intent(in) :: scatter_format ! Legendre or histogram
+
+    integer                 :: i
+    integer(HID_T)          :: file_id
+    integer(HID_T)          :: data_group
+    character(MAX_WORD_LEN) :: word
+    integer, allocatable    :: array(:)
+    integer(HID_T) :: energy_dset
+    integer(HSIZE_T) :: dims(1)
+    integer :: order, num_groups, order_dim
+    real(8), allocatable :: lib_group_edges(:)
+    character(10) :: lib_scatter_format
+
+    call write_message("Reading NDPP HDF5 Library...", 5)
+
+    ! Open file for reading
+    file_id = file_open(ndpp_lib, 'r', parallel=.true.)
+
+    ! Read filetype
+    call read_attribute(word, file_id, "filetype")
+    if (word /= 'ndpp') then
+      call fatal_error("Provided NDPP Library is not a NDPP Library file.")
+    end if
+
+    ! Read revision number for the MGXS Library file and make sure it matches
+    ! with the current version
+    call read_attribute(array, file_id, "version")
+    if (any(array /= VERSION_NDPP_LIBRARY)) then
+      call fatal_error("NDPP Library file version does not match current &
+                       &version supported by OpenMC.")
+    end if
+
+    ! Get meta-data and check as soon as we get it
+    energy_dset = open_dataset(file_id, 'group structure')
+    call get_shape(energy_dset, dims)
+    allocate(lib_group_edges(dims(1)))
+    call read_dataset(lib_group_edges, energy_dset)
+    call close_dataset(energy_dset)
+    if (size(lib_group_edges) /= size(group_edges)) then
+      call fatal_error("NDPP Library does not contain tallying group structure")
+    end if
+    do i = 1, size(lib_group_edges)
+      if (group_edges(i) > ZERO) then
+        if (abs(lib_group_edges(i) - group_edges(i)) / group_edges(i) > 1.e-5) then
+          call fatal_error("NDPP Library does not contain tallying group structure")
+        end if
+      end if
+    end do
+    num_groups = size(group_edges) - 1
+
+    call read_attribute(lib_scatter_format, file_id, 'scatter_format')
+    if (trim(lib_scatter_format) /= trim(scatter_format)) then
+      call fatal_error("NDPP Library does not include the correct &
+                       &scatter_format type")
+    end if
+    call read_attribute(order, file_id, 'order')
+    if (scatter_format == "legendre") then
+      order_dim = order + 1
+    else
+      order_dim = order
+    end if
+
+    ! Read the nuclide data
+    do i = 1, size(nuclides)
+      associate(nuc => nuclides(i))
+        ! Check to make sure data exists in the library
+        if (object_exists(file_id, trim(nuc % name))) then
+          data_group = open_group(file_id, trim(nuc % name))
+        else
+          call fatal_error("Data for '" // trim(nuc % name) // &
+               "' does not exist in " // trim(ndpp_lib))
+        end if
+        call nuc % ndpp_data % from_hdf5(data_group, nuc_temps(i), &
+             temperature_method, temperature_tolerance, master, num_groups, &
+             scatter_format, order)
+        call close_group(data_group)
+      end associate ! nuc
+    end do
+
+    ! Read the S(a,b) data
+    do i = 1, size(sab_tables)
+      associate(sab => sab_tables(i))
+        ! Check to make sure data exists in the library
+        if (object_exists(file_id, trim(sab % name))) then
+          data_group = open_group(file_id, trim(sab % name))
+        else
+          call fatal_error("Data for '" // trim(sab % name) // &
+               "' does not exist in " // trim(ndpp_lib))
+        end if
+        call sab % ndpp_data % from_hdf5(data_group, sab_temps(i), &
+             temperature_method, temperature_tolerance, master, num_groups, &
+             scatter_format, order)
+        call close_group(data_group)
+      end associate ! sab
+    end do
+
+    ! Close NDPP HDF5 file
+    call file_close(file_id)
+
+    ! Create the NdppMaterials objects that we are going to need
+    allocate(ndpp_materials(n_materials))
+    do i = 1, n_materials
+      call ndpp_materials(i) % init(materials(i), nuclides, sab_tables)
+    end do
+
+    ! Finally, allocate ndpp_outgoing, our `scratch` variable to store the
+    ! combined and interpolated data. This is program global and has
+    ! been declared threadprivate.
+!$omp parallel
+    allocate(ndpp_outgoing(order_dim, num_groups))
+!$omp end parallel
+
+  end subroutine read_ndpp
 
 !===============================================================================
 ! CHECK_DATA_VERSION checks for the right version of nuclear data within HDF5

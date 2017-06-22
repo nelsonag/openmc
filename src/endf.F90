@@ -66,6 +66,22 @@ contains
       string = "fission-q-prompt"
     case (SCORE_FISS_Q_RECOV)
       string = "fission-q-recoverable"
+    case (SCORE_NDPP_SCATTER)
+      string = "ndpp-scatter"
+    case (SCORE_NDPP_NU_SCATTER)
+      string = "ndpp-nu-scatter"
+    case (SCORE_NDPP_SCATTER_N)
+      string = "ndpp-scatter-n"
+    case (SCORE_NDPP_SCATTER_PN)
+      string = "ndpp-scatter-pn"
+    case (SCORE_NDPP_NU_SCATTER_N)
+      string = "ndpp-nu-scatter-n"
+    case (SCORE_NDPP_NU_SCATTER_PN)
+      string = "ndpp-nu-scatter-pn"
+    case (SCORE_NDPP_SCATTER_YN)
+      string = "ndpp-scatter-yn"
+    case (SCORE_NDPP_NU_SCATTER_YN)
+      string = "ndpp-nu-scatter-yn"
 
     ! Normal ENDF-based reactions
     case (TOTAL_XS)

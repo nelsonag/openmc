@@ -183,7 +183,8 @@ contains
 
                 select case(t % score_bins(trigger % score_index))
 
-                case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN)
+                case (SCORE_SCATTER_PN, SCORE_NU_SCATTER_PN, &
+                      SCORE_NDPP_SCATTER_PN, SCORE_NDPP_NU_SCATTER_PN)
 
                   score_index = score_index - 1
 
@@ -206,7 +207,8 @@ contains
                   end do
 
                 case (SCORE_SCATTER_YN, SCORE_NU_SCATTER_YN, SCORE_FLUX_YN, &
-                     SCORE_TOTAL_YN)
+                      SCORE_TOTAL_YN, SCORE_NDPP_SCATTER_YN, &
+                      SCORE_NDPP_NU_SCATTER_YN)
 
                   score_index = score_index - 1
 

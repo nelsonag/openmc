@@ -1022,7 +1022,10 @@ class Tally(object):
         # Define regex for scatter, nu-scatter and flux moment scores
         regex = [(r'^((?!nu-)scatter-\d)', r'^((?!nu-)scatter-(P|p)\d)'),
                  (r'nu-scatter-\d', r'nu-scatter-(P|p)\d'),
-                 (r'flux-\d', r'flux-(P|p)\d')]
+                 (r'ndpp-^((?!nu-)scatter-\d)',
+                  r'ndpp-^((?!nu-)scatter-(P|p)\d)'),
+                 (r'ndpp-nu-scatter-\d', r'ndpp-nu-scatter-(P|p)\d'),
+                 (r'flux-\d', r'flux-(Y|y)\d')]
 
         # Find all non-scattering and non-flux moment scores
         scores = [x for x in self.scores if
@@ -1045,7 +1048,7 @@ class Tally(object):
 
                 # Only keep the score-N scores with N > PN
                 score_n = sorted([x.lower() for x in score_n])
-                score_n = [x for x in score_n if (int(x.split('-')[1]) > pn)]
+                score_n = [x for x in score_n if (int(x.split('-')[-1]) > pn)]
 
                 # Append highest score-PN and any higher score-N scores
                 scores.extend([high_pn] + score_n)
@@ -1054,7 +1057,6 @@ class Tally(object):
 
         # Override Tally's scores with consolidated list of scores
         self.scores = scores
-
 
     def to_xml_element(self):
         """Return XML representation of the tally
@@ -3351,6 +3353,8 @@ class Tallies(cv.CheckedList):
     ----------
     tallies : Iterable of openmc.Tally
         Tallies to add to the collection
+    ndpp_library : str, optional
+        Path to the NDPP Library
 
     """
 
@@ -3358,6 +3362,19 @@ class Tallies(cv.CheckedList):
         super(Tallies, self).__init__(Tally, 'tallies collection')
         if tallies is not None:
             self += tallies
+        self.ndpp_library = None
+
+    @property
+    def ndpp_library(self):
+        return self._ndpp_library
+
+    @ndpp_library.setter
+    def ndpp_library(self, ndpp_library):
+        if ndpp_library is not None:
+            cv.check_type('ndpp_library', ndpp_library, string_types)
+            self._ndpp_library = ndpp_library
+        else:
+            self._ndpp_library = ndpp_library
 
     def add_tally(self, tally, merge=False):
         """Append tally to collection
@@ -3547,6 +3564,11 @@ class Tallies(cv.CheckedList):
         for d in derivs:
             root_element.append(d.to_xml_element())
 
+    def _create_ndpp_library_subelement(self, root_element):
+        if self.ndpp_library is not None:
+            elem = ET.SubElement(root_element, "ndpp_library")
+            elem.text = self._ndpp_library
+
     def export_to_xml(self, path='tallies.xml'):
         """Create a tallies.xml file that can be used for a simulation.
 
@@ -3562,6 +3584,7 @@ class Tallies(cv.CheckedList):
         self._create_filter_subelements(root_element)
         self._create_tally_subelements(root_element)
         self._create_derivative_subelements(root_element)
+        self._create_ndpp_library_subelement(root_element)
 
         # Clean the indentation in the file to be user-readable
         clean_xml_indentation(root_element)
