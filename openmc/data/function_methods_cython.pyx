@@ -22,12 +22,11 @@ def tabulated1d_call(this, x):
 
 cdef double tabulated1d_eval(object this, double x):
     cdef double y, xk, xi, xi1, yi, yi1
-    cdef size_t idx, end_x
-    cdef int k
+    cdef size_t idx, end_x, k
     cdef double[:] this_x = this._x
     cdef double[:] this_y = this._y
-    cdef int[:] breakpoints = this._breakpoints
-    cdef int[:] interpolation = this._interpolation
+    cdef long[:] breakpoints = this._breakpoints
+    cdef long[:] interpolation = this._interpolation
 
     end_x = len(this_x) - 1
 
@@ -83,12 +82,11 @@ cdef tabulated1d_vector_eval(object this,
     cdef double[:] y = cvarray(shape=(vec_size,), itemsize=sizeof(double),
                                format="d")
     cdef double xi, xi1, yi, yi1
-    cdef size_t idx, end_x
-    cdef int k, j
+    cdef size_t idx, end_x, k, j
     cdef double[:] this_x = this._x
     cdef double[:] this_y = this._y
-    cdef int[:] breakpoints = this._breakpoints
-    cdef int[:] interpolation = this._interpolation
+    cdef long[:] breakpoints = this._breakpoints
+    cdef long[:] interpolation = this._interpolation
 
     end_x = len(this_x) - 1
 
@@ -146,8 +144,8 @@ cpdef double tabulated1d_integrate(object this, double lo, double hi):
     cdef double result, xi, xi1, xlo, xhi, plo, phi, pi, pi1, m
     cdef double[:] this_x = this._x
     cdef double[:] this_p = this._p
-    cdef int[:] breakpoints = this._breakpoints
-    cdef int[:] interpolation = this._interpolation
+    cdef long[:] breakpoints = this._breakpoints
+    cdef long[:] interpolation = this._interpolation
 
     end_x = len(this_x) - 1
     result = 0.
