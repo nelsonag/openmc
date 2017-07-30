@@ -46,17 +46,16 @@ kwargs = {'name': 'openmc',
 if have_setuptools:
     kwargs.update({
         # Required dependencies
-        'install_requires': ['six', 'numpy>=1.9', 'h5py'],
+        'install_requires': ['six', 'numpy>=1.9', 'h5py', 'scipy', 'pandas>=0.17.0'],
 
         # Optional dependencies
         'extras_require': {
             'decay': ['uncertainties'],
-            'pandas': ['pandas>=0.17.0'],
             'plot': ['matplotlib', 'ipython'],
-            'sparse': ['scipy'],
             'vtk': ['vtk', 'silomesh'],
             'validate': ['lxml'],
             'reconstruct': ['cython'],
+            'fast_call': ['cython'],
             'ndpp': ['cython']
         },
 
@@ -90,3 +89,4 @@ if have_cython:
     })
 
 setup(**kwargs)
+
