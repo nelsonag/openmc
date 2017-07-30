@@ -359,9 +359,9 @@ cdef inline double integrand_cm(double mu_l, double Eo_l, double c, double Ein,
 
 
 cpdef integrate_cm(double Ein, double[::1] Eouts, double Eout_cm_max,
-                   double awr, double[::1] grid, double[:, ::1] integral,
-                   object edist, object adist, tuple adist_args,
-                   bint legendre, double[::1] mus):
+                   double awr, double[:, ::1] integral, object edist,
+                   object adist, tuple adist_args, bint legendre,
+                   double[::1] mus):
     cdef int g, eo, l, orders
     cdef double inv_awrp1, Eout_l_max, Eout_l_min, a, b
     cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev

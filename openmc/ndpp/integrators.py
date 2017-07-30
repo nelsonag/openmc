@@ -341,7 +341,6 @@ def _integrate_generic_cm(this, Ein, Eouts, awr, order, mus, mus_grid, wgts):
         integral = np.zeros((len(Eouts) - 1, order + 1))
     else:
         integral = np.zeros((len(Eouts) - 1, len(mus) - 1))
-    grid = np.empty(integral.shape[1], np.float)
 
     # Pre-process to obtain our energy and angle distributions
     if isinstance(this, UncorrelatedAngleEnergy):
@@ -357,8 +356,8 @@ def _integrate_generic_cm(this, Ein, Eouts, awr, order, mus, mus_grid, wgts):
         edist, adist, adist_args = _preprocess_nbody(this, Ein)
 
     # Call our integration routine
-    integrate_cm(Ein, Eouts, edist.get_domain(Ein)[1], awr, grid,
-                 integral, edist, adist, adist_args, order is not None,
+    integrate_cm(Ein, Eouts, edist.get_domain(Ein)[1], awr, integral, edist,
+                 adist, adist_args, order is not None,
                  mus)
     return integral
 
