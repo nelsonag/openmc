@@ -298,6 +298,8 @@ module ndpp_header
                                  order_dim, this % inelastic)
       call sparse_data_from_hdf5(group_id, 'nu_inelastic', int(dims(1)), &
                                  order_dim, this % nu_inelastic)
+    else
+      this % has_inelastic = .false.
     end if
 
   end subroutine ndpp_from_hdf5
@@ -355,6 +357,7 @@ module ndpp_header
     case (SCORE_NDPP_SCATTER_PN, SCORE_NDPP_NU_SCATTER_PN)
       s_lo = i_score
       s_hi = i_score + order
+
 !$omp critical(case_nu_scatt_pn)
     t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) = &
          t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) + &
@@ -652,13 +655,13 @@ module ndpp_header
     integer :: low_gmin, low_gmax    ! Low data point gmin and gmax
     integer :: high_gmin, high_gmax  ! High data point gmin and gmax
 
-    if (.not. allocated(grid % energy)) then
-      return
-    end if
-
     if (Ein <= grid % energy(1)) then
-      e = 1
-      f = ZERO
+      ! Then dont continue on, the result would be 0 anyways since we are
+      ! below the threshold; instead, set gmin and gmax to values which
+      ! signify "no useful data" and leave the subroutine
+      gmin = size(data, dim=2) + 1
+      gmax = 0
+      return
     else if (Ein >= grid % energy(size(grid % energy))) then
       e = size(grid % energy) - 1
       f = ONE
@@ -675,8 +678,7 @@ module ndpp_header
                         e_high - e_low + 1, Ein) + e_low - 1
 
       ! calculate interpolation factor
-      f = (Ein - grid % energy(e)) / &
-           (grid % energy(e + 1) - grid % energy(e))
+      f = (Ein - grid % energy(e)) / (grid % energy(e + 1) - grid % energy(e))
     end if
 
     low_gmin = lbound(at_Ein(e) % data, dim=2)
@@ -728,8 +730,7 @@ module ndpp_header
                         e_high - e_low + 1, Ein) + e_low - 1
 
       ! calculate interpolation factor
-      f = (Ein - grid % energy(e)) / &
-           (grid % energy(e + 1) - grid % energy(e))
+      f = (Ein - grid % energy(e)) / (grid % energy(e + 1) - grid % energy(e))
     end if
 
     low_gmin = lbound(at_Ein(e) % data, dim=1)
@@ -777,6 +778,7 @@ module ndpp_header
     call interp_data(Ein, this % elastic_grid(t), &
                      this % elastic_log_spacing(t), &
                      this % elastic(t) % at_Ein, data, el_gmin, el_gmax)
+
     data(:, el_gmin: el_gmax) = elastic_xs * data(:, el_gmin: el_gmax)
 
     if (this % has_inelastic) then
@@ -791,7 +793,7 @@ module ndpp_header
                          this % inelastic % at_Ein, data, inel_gmin, inel_gmax)
       end if
       gmin = min(el_gmin, inel_gmin)
-      gmax = min(el_gmax, inel_gmax)
+      gmax = max(el_gmax, inel_gmax)
     else
       gmin = el_gmin
       gmax = el_gmax

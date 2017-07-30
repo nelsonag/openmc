@@ -236,9 +236,10 @@ class NdppLibrary(object):
 
     @freegas_cutoff.setter
     def freegas_cutoff(self, freegas_cutoff):
-        cv.check_type('freegas_cutoff', freegas_cutoff, Real)
-        cv.check_greater_than('freegas_cutoff', freegas_cutoff, 0.,
-                              equality=True)
+        if freegas_cutoff is not None:
+            cv.check_type('freegas_cutoff', freegas_cutoff, Real)
+            cv.check_greater_than('freegas_cutoff', freegas_cutoff, 0.,
+                                  equality=True)
         self._freegas_cutoff = freegas_cutoff
 
     @freegas_method.setter
@@ -271,6 +272,43 @@ class NdppLibrary(object):
             if name == ndpp.name:
                 result = ndpp
         return result
+
+    def process_and_write(self, path='ndpp_lib.h5', mode='a'):
+        """Create an hdf5 file that can be used for a simulation by first
+        computing and then writing the isotopic data.
+
+        Parameters
+        ----------
+        path : str
+            Path to write HDF5 file to; defaults to 'ndpp_lib.h5'
+        mode : {'r', r+', 'w', 'x', 'a'}
+            Mode that is used to open the HDF5 file.
+            This is the second argument to the :class:`h5py.File` constructor.
+
+        """
+
+        cv.check_type('path', path, str)
+
+        # Create and write to the HDF5 file
+        # Open file and write version
+        f = h5py.File(path, mode, libver='latest')
+        f.attrs['filetype'] = np.string_('ndpp')
+        f.attrs['version'] = np.array(NDPP_VERSION)
+        f.create_dataset('group structure', data=self.group_edges)
+        f.attrs['scatter_format'] = np.string_(self.scatter_format)
+        f.attrs['order'] = self.order
+        if self.freegas_cutoff is None:
+            f.attrs['freegas_cutoff'] = -1
+        else:
+            f.attrs['freegas_cutoff'] = self.freegas_cutoff
+        f.attrs['freegas_method'] = np.string_(self.freegas_method)
+
+        for ndpp in self.ndpps:
+            print("Evaluating " + ndpp.name)
+            ndpp.process()
+            ndpp.to_hdf5(f)
+
+        f.close()
 
     def process(self):
         for ndpp in self.ndpps:

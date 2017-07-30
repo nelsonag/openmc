@@ -108,8 +108,7 @@ module ndpp_material_header
       i_sab = micro_xs(i_nuclide) % index_sab
 
       ! Set the weighting function
-      score = wgt * this % atom_density(mat_nuc) / &
-           (micro_xs(i_nuclide) % total - micro_xs(i_nuclide) % absorption)
+      score = wgt * this % atom_density(mat_nuc)
 
       ! See if we have already determined if there is S(a,b) scattering or not
       ! for this nuclide

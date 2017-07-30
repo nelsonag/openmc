@@ -3,6 +3,8 @@ import scipy.special as ss
 
 from .integrators import integrate
 
+_DE_REL_THRESH = 1.E-6
+
 
 def linearizer_wrapper(linearizer_args):
     # multiprocessing.Pool requires a single argument to be passed for python2
@@ -33,27 +35,38 @@ def _linearizer(Ein_grid, func, args, tolerance):
 
         while True:
             Ein_high, Ein_low = Ein_stack[-2:]
-            results_high, results_low = results_stack[-2:]
-            Ein_mid = 0.5 * (Ein_low + Ein_high)
-            results_mid = func(Ein_mid, *args)
 
-            results_interp = results_low + (results_high - results_low) / \
-                (Ein_high - Ein_low) * (Ein_mid - Ein_low)
-
-            error = np.subtract(results_interp, results_mid)
-            # Avoid division by 0 errors since they are fully expected
-            # with our sparse results
-            with np.errstate(divide='ignore', invalid='ignore'):
-                error = np.abs(np.nan_to_num(np.divide(error, results_mid)))
-
-            if np.any(error > tolerance):
-                Ein_stack.insert(-1, Ein_mid)
-                results_stack.insert(-1, results_mid)
-            else:
+            # There are some distributions where right near the threshold
+            # the results become unstable and the algorithm searches over a
+            # very small delta_Ein; lets avoid that
+            if (Ein_high - Ein_low) / Ein_low < _DE_REL_THRESH:
                 Ein_output.append(Ein_stack.pop())
                 results_out.append(results_stack.pop())
                 if len(Ein_stack) == 1:
                     break
+            else:
+                results_high, results_low = results_stack[-2:]
+                Ein_mid = 0.5 * (Ein_low + Ein_high)
+                results_mid = func(Ein_mid, *args)
+
+                results_interp = results_low + (results_high - results_low) / \
+                    (Ein_high - Ein_low) * (Ein_mid - Ein_low)
+
+                error = np.subtract(results_interp, results_mid)
+                # Avoid division by 0 errors since they are fully expected
+                # with our sparse results
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    error = np.abs(np.nan_to_num(np.divide(error,
+                                                           results_mid)))
+
+                if np.any(error > tolerance):
+                    Ein_stack.insert(-1, Ein_mid)
+                    results_stack.insert(-1, results_mid)
+                else:
+                    Ein_output.append(Ein_stack.pop())
+                    results_out.append(results_stack.pop())
+                    if len(Ein_stack) == 1:
+                        break
 
     Ein_output.append(Ein_stack.pop())
     results_out.append(results_stack.pop())
@@ -169,92 +182,66 @@ def _do_sab_inelastic(Ein, num_groups, num_angle, scatter_format, group_edges,
     return result
 
 
-def do_neutron_scatter(Ein, awr, rxns, products, this, kT, mu_bins, xs_func,
-                       method, mus_grid=None, wgts=None):
+def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func, method,
+              mus_grid=None, wgts=None):
     # Initialize the storage
     results = np.zeros((this.num_groups, this.num_angle))
 
+    for d, distrib in enumerate(product.distribution):
+        if len(product.applicability) > 1:
+            applicability = product.applicability[d](Ein)
+        else:
+            applicability = 1.
+
+        unnorm_result = integrate(Ein, distrib, this.group_edges,
+                                  this.scatter_format, rxn.center_of_mass,
+                                  awr, this.freegas_cutoff * kT, kT,
+                                  rxn.q_value, mu_bins, this.order, xs_func,
+                                  method, mus_grid, wgts)
+
+        # Now normalize and multiply by applicability
+        if this.scatter_format == 'legendre':
+            norm_factor = np.sum(unnorm_result[:, 0])
+        else:
+            norm_factor = np.sum(unnorm_result)
+        if norm_factor > 0.:
+            results[:, :] += applicability * unnorm_result / norm_factor
+
+    return results * product.yield_(Ein) * xs_func(Ein)
+
+
+def do_chi(Ein, awr, rxn, this, kT, xs_func, n_delayed):
+    # Initialize the storage; the first dimension is for prompt || delayed
+    # and the second is for the outgoing groups
+    results = np.zeros((1 + n_delayed, this.num_groups))
+
     # Get results for each reaction
-    for r, rxn in enumerate(rxns):
-        xs = xs_func[r]
-        product = products[r]
+    delay_index = 0
 
-        # Dont waste time if not above the threshold energy
-        if Ein <= xs._x[0]:
+    for product in rxn.products:
+        if product.particle != 'neutron':
             continue
+        if product.emission_mode == 'prompt':
+            index = 0
+        else:
+            index = 1 + delay_index
+            delay_index += 1
 
-        yield_xs = product.yield_(Ein) * xs(Ein)
-
-        rxn_results = np.zeros((this.num_groups, this.num_angle))
         for d, distrib in enumerate(product.distribution):
             if len(product.applicability) > 1:
                 applicability = product.applicability[d](Ein)
             else:
                 applicability = 1.
 
-            unnorm_result = integrate(Ein, distrib, this.group_edges,
-                                      this.scatter_format, rxn.center_of_mass,
-                                      awr, this.freegas_cutoff * kT, kT,
-                                      rxn.q_value, mu_bins, this.order, xs,
-                                      method, mus_grid, wgts)
+            unnorm_result = \
+                integrate(Ein, distrib, this.group_edges, 'histogram',
+                          rxn.center_of_mass, awr, this.freegas_cutoff,
+                          kT, rxn.q_value)[:, 0]
+            norm_factor = np.sum(unnorm_result)
 
-            # Now normalize and multiply by applicability
-            if this.scatter_format == 'legendre':
-                norm_factor = np.sum(unnorm_result[:, 0])
-            else:
-                norm_factor = np.sum(unnorm_result)
             if norm_factor > 0.:
-                rxn_results[:, :] += \
-                    applicability * unnorm_result / norm_factor
+                results[index, :] = applicability * unnorm_result / norm_factor
 
-        # Factor in the yield
-        results += yield_xs * rxn_results
+            results[index, :] *= product.yield_(Ein)
 
-    return results
-
-
-def do_chi(Ein, awr, rxns, this, kT, xs_func, n_delayed):
-    # Initialize the storage; the first dimension is for prompt/delayed
-    # and the second is for total
-    results = np.zeros((2 + n_delayed, this.num_groups))
-
-    # Get results for each reaction
-    delay_index = 0
-    for r, rxn in enumerate(rxns):
-        if Ein < xs_func[r]._x[0]:
-            continue
-
-        xs = xs_func[r](Ein)
-
-        for product in rxn.products:
-            if product.particle != 'neutron':
-                continue
-            if product.emission_mode == 'prompt':
-                index = 1
-            else:
-                index = 2 + delay_index
-                delay_index += 1
-
-            yield_xs = product.yield_(Ein) * xs
-
-            rxn_results = np.zeros(this.num_groups)
-
-            for d, distrib in enumerate(product.distribution):
-                if len(product.applicability) > 1:
-                    applicability = product.applicability[d](Ein)
-                else:
-                    applicability = 1.
-
-                unnorm_result = \
-                    integrate(Ein, distrib, this.group_edges, 'histogram',
-                              rxn.center_of_mass, awr, this.freegas_cutoff,
-                              kT, rxn.q_value)[:, 0]
-                norm_factor = np.sum(unnorm_result)
-                if norm_factor > 0.:
-                    rxn_results += \
-                        applicability * unnorm_result / norm_factor
-
-            results[0, :] += yield_xs * rxn_results
-
-            results[index, :] += rxn_results
     return results

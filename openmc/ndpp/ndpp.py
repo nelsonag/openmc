@@ -3,6 +3,7 @@ from collections import MutableMapping
 from multiprocessing import Pool
 import sys
 from numbers import Integral, Real
+from functools import reduce
 
 import numpy as np
 import h5py
@@ -36,7 +37,7 @@ _INELASTIC_MTS = set([mt for mt in SUM_RULES[3] if mt != 27] +
 _ELASTIC_MT = 2
 
 # Number of incoming energy domain subdivisions for parallelizations
-_NUM_ENERGY_SUBDIV = 16
+_NUM_ENERGY_SUBDIV = 32
 
 # Low energy point to use to avoid division by zero (if 0 energy was used)
 _LOW_ENERGY = 1.e-5
@@ -480,6 +481,7 @@ class Ndpp(object):
         # Calculate the scattering data
         print('\tEvaluating Elastic Data')
         self._compute_elastic(kT, strT)
+
         # Only do the inelastic data if it is our 1st time through since
         # it is temperature independent
         if ikT == 0:
@@ -651,15 +653,18 @@ class Ndpp(object):
 
         # Get our reaction data
         awr = self.library.atomic_weight_ratio
-        rxns = [self.library.reactions[2]]
-        products = [rxns[0].products[0]]
-        xs_funcs = [rxns[0].xs[strT]]
 
         # Pre-calculate our free-gas kernel weights if needed
         if self.scatter_format == 'legendre':
             mus_grid, wgts = initialize_quadrature(self.order)
         else:
             mus_grid, wgts = None, None
+
+        # Create our mu_bins (which we do not need if doing Legendre)
+        if self.scatter_format == 'legendre':
+            mu_bins = None
+        else:
+            mu_bins = np.linspace(-1, 1, self.num_angle + 1, endpoint=True)
 
         # This method will generate the incoming energy grid according so that
         # the requested tolerance will be met. To use this we only need to
@@ -677,6 +682,7 @@ class Ndpp(object):
         Ein_grid = np.logspace(np.log10(Ein_low), np.log10(Ein_high),
                                num=(_NUM_ENERGY_SUBDIV),
                                endpoint=False)
+
         # If Ein_high was set by the freegas cutoff, then we need to
         # also add in the bins for the non-freegas part
         if Ein_high == self.freegas_cutoff * kT:
@@ -691,24 +697,37 @@ class Ndpp(object):
             # want that endpoint, lets add it in
             upper_grid = [self.group_edges[-1]]
         Ein_grid = np.concatenate((Ein_grid, upper_grid))
+
+        # Now add in the critical points (Ein where Eout reaches a group
+        # threshold); this will be done not considering the free-gas treatment
+        crit_pts = []
+        for Eout in self.group_edges[:-1]:
+            crit_pts.append(Eout * (1. + awr)**2 / (awr * awr + 2. * awr + 1.))
+            crit_pts.append(Eout * (1. + awr)**2 / (awr * awr - 2. * awr + 1.))
+        crit_pts = np.sort(crit_pts)
+        crit_pts = np.clip(crit_pts, self.group_edges[0], self.group_edges[-1])
+        Ein_grid = np.union1d(Ein_grid, crit_pts)
+
         Ein_grid = np.unique(Ein_grid)
 
-        # Create our mu_bins (which we do not need if doing Legendre)
-        if self.scatter_format == 'legendre':
-            mu_bins = None
-        else:
-            mu_bins = np.linspace(-1, 1, self.num_angle + 1, endpoint=True)
+        # We want our lower Eout bound to be 0 for these integrations, so
+        # lets momentarily switch the group structure to have a 0 value
+        # at the bottom
+        if self.group_edges[0] == _LOW_ENERGY:
+            self.group_structure.group_edges[0] = 0.
 
         # Set up the arguments for our do_neutron_scatter routine
         # These have to be aggregated into a tuple to support our usage of
         # the multiprocessing pool
-        func_args = (awr, rxns, products, self, kT, mu_bins, xs_funcs,
+        func_args = (awr, self.library.reactions[2],
+                     self.library.reactions[2].products[0], self, kT, mu_bins,
+                     self.library.reactions[2].xs[strT],
                      self.freegas_method, mus_grid, wgts)
 
         # Set the arguments for our linearize function, except dont yet include
         # the Ein grid points (the first argument), since that will be
         # dependent upon the thread's work
-        linearize_args = (do_neutron_scatter, func_args, self.tolerance)
+        linearize_args = (do_by_rxn, func_args, self.tolerance)
 
         inputs = [(Ein_grid[e: e + 2],) + linearize_args
                   for e in range(len(Ein_grid) - 1)]
@@ -729,6 +748,10 @@ class Ndpp(object):
             for e in range(len(inputs)):
                 grid[e] = output[e][0]
                 results[e] = output[e][1]
+
+        # Reverse what we did to the group structure
+        if self.group_edges[0] == 0.:
+            self.group_structure.group_edges[0] = _LOW_ENERGY
 
         # Now lets combine our grids together
         Ein_grid = np.concatenate(grid)
@@ -776,7 +799,9 @@ class Ndpp(object):
             rxn = self.library.reactions[r]
             include = False
             for p in rxn.products:
-                if p.particle == 'neutron' and p.emission_mode == 'prompt':
+                if (p.particle == 'neutron' and p.emission_mode == 'prompt') \
+                    and rxn.xs[strT].x[0] < self.group_edges[-1]:
+
                     products.append(p)
                     include = True
                     continue
@@ -790,40 +815,11 @@ class Ndpp(object):
         if not rxns:
             return
 
-        # Pre-calculate our free-gas kernel weights if needed
+        # Pre-calculate our quadrature integration weights if needed
         if self.scatter_format == 'legendre':
             mus_grid, wgts = initialize_quadrature(self.order)
         else:
             mus_grid, wgts = None, None
-
-        # This method will generate the incoming energy grid according so that
-        # the requested tolerance will be met. To use this we only need to
-        # divide the solution space in to enough pieces that we can adequately
-        # parallelize over it while also keeping in mind the desire to evenly
-        # distribute the work.
-        # For inelastic reactions we will do this by subdividing between all
-        # the inelastic thresholds and allowing the threads to work on those
-        # chunks at the same time.
-
-        # Begin by setting the intervals to evaluate
-        thresholds.append(self.group_edges[-1])
-        Ein_intervals = np.clip(thresholds, self.group_edges[0],
-                                self.group_edges[-1])
-        Ein_intervals = np.unique(Ein_intervals)
-
-        # Now parse through every threshold interval and, if the interval
-        # has any width, add the grid points
-        for e, (Ein_low, Ein_high) in enumerate(zip(Ein_intervals[:-1],
-                                                    Ein_intervals[1:])):
-            grid = np.logspace(np.log10(Ein_low), np.log10(Ein_high),
-                               num=(_NUM_ENERGY_SUBDIV + 1), endpoint=False)
-            # Add the grid to our running Ein_grid
-            if e == 0:
-                Ein_grid = grid
-            else:
-                Ein_grid = np.concatenate((Ein_grid, grid))
-        # Finally add the very last interval point (since endpoint=False above)
-        Ein_grid = np.concatenate((Ein_grid, [Ein_intervals[-1]]))
 
         # Create our mu_bins (which we do not need if doing Legendre)
         if self.scatter_format == 'legendre':
@@ -831,45 +827,83 @@ class Ndpp(object):
         else:
             mu_bins = np.linspace(-1, 1, self.num_angle + 1, endpoint=True)
 
-        # Set up the arguments for our do_neutron_scatter routine
-        # These have to be aggregated into a tuple to support our usage of
-        # the multiprocessing pool
-        func_args = (awr, rxns, products, self, kT, mu_bins, xs_funcs,
-                     self.freegas_method, mus_grid, wgts)
+        # We will parse through each reaction one at a time. Doing so allows
+        # us to get the variation in the reaction-wise distributions
+        # themselves without having to individually evaluate the variation in
+        # yields and xs
+        # Once we have the distribution variations we will combine on to a
+        # unionized inelastic energy grid
+        rxn_results = [None] * len(rxns)
+        rxn_grids = [None] * len(rxns)
+        for r, rxn in enumerate(rxns):
+            print('\t\t', rxn)
+            # Create the energy grid we will be evaluating for this case
+            Ein_grid = np.logspace(np.log10(max(thresholds[r],
+                                                self.group_edges[0])),
+                                   np.log10(self.group_edges[-1]),
+                                   num=_NUM_ENERGY_SUBDIV + 1)
 
-        # Set the arguments for our linearize function, except dont yet include
-        # the Ein grid points (the first argument), since that will be
-        # dependent upon the thread's work
-        linearize_args = (do_neutron_scatter, func_args, self.tolerance)
+            # Set up the arguments for our processing routine
+            # These have to be aggregated into a tuple to support the usage of
+            # the multiprocessing pool
+            func_args = (awr, rxn, products[r], self, kT, mu_bins, xs_funcs[r],
+                         self.freegas_method, mus_grid, wgts)
 
-        inputs = [(Ein_grid[e: e + 2],) + linearize_args
-                  for e in range(len(Ein_grid) - 1)]
+            # Set the arguments for our linearize function, except dont yet
+            # include the Ein grid points (the first argument), since that will
+            # be dependent upon the thread's given work
+            linearize_args = (do_by_rxn, func_args, self.tolerance)
 
-        # Run in serial or parallel mode
-        grid = [None] * len(inputs)
-        results = [None] * len(inputs)
-        if self.num_threads < 1:
-            for e, in_data in enumerate(inputs):
-                grid[e], results[e] = linearizer_wrapper(in_data)
-        else:
-            p = Pool(self.num_threads)
-            output = p.map(linearizer_wrapper, inputs)
-            p.close()
-            # output contains a 2-tuple for every parallelized bin;
-            # the first entry in the tuple is the energy grid, and the second
-            # is the results array. We need to separate and combine these
-            for e in range(len(inputs)):
-                grid[e] = output[e][0]
-                results[e] = output[e][1]
+            inputs = [(Ein_grid[e: e + 2],) + linearize_args
+                      for e in range(len(Ein_grid) - 1)]
 
-        # Now lets combine our grids together
-        Ein_grid = np.concatenate(grid)
-        results = np.concatenate(results)
+            # Run in serial or parallel mode
+            grid = [None] * len(inputs)
+            results = [None] * len(inputs)
+            if self.num_threads < 1:
+                for e, in_data in enumerate(inputs):
+                    grid[e], results[e] = linearizer_wrapper(in_data)
+            else:
+                p = Pool(self.num_threads)
+                output = p.map(linearizer_wrapper, inputs)
+                p.close()
+                # output contains a 2-tuple for every parallelized bin;
+                # the first entry in the tuple is the energy grid, and the 2nd
+                # is the results array. We need to separate and combine these
+                for e in range(len(inputs)):
+                    grid[e] = output[e][0]
+                    results[e] = output[e][1]
 
-        # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints of each bracketed region
-        Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
-        self.nu_inelastic = results[unique_indices, ...]
+            # Now lets combine our grids together
+            rxn_grids[r] = np.concatenate(grid)
+            rxn_results[r] = np.concatenate(results)
+
+            # Retain only the unique end-points
+            rxn_grids[r], unique_indices = np.unique(rxn_grids[r],
+                                                     return_index=True)
+            rxn_results[r] = rxn_results[r][unique_indices, ...]
+
+        # Now combine the data on to a unionized energy grid
+        Ein_grid = reduce(np.union1d, rxn_grids)
+        self.nu_inelastic = np.zeros((len(Ein_grid),) +
+                                     rxn_results[0].shape[1:])
+
+        for e, Ein in enumerate(Ein_grid):
+            for r in range(len(rxn_grids)):
+                if Ein > thresholds[r]:
+                    # Find the corresponding point
+                    if Ein < rxn_grids[r][-2]:
+                        i = np.searchsorted(rxn_grids[r], Ein) - 1
+                    else:
+                        i = len(rxn_grids[r]) - 2
+
+                    # Get the interpolant
+                    f = (Ein - rxn_grids[r][i]) / \
+                        (rxn_grids[r][i + 1] - rxn_grids[r][i])
+
+                    self.nu_inelastic[e, ...] += \
+                        (1. - f) * rxn_results[r][i, ...] + \
+                        f * rxn_results[r][i + 1, ...]
 
         # Finally add a top point to use as interpolation
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
@@ -923,89 +957,136 @@ class Ndpp(object):
         if not rxns:
             return
 
-        # This method will generate the incoming energy grid according so that
-        # the requested tolerance will be met. To use this we only need to
-        # divide the solution space in to enough pieces that we can adequately
-        # parallelize over it while also keeping in mind the desire to evenly
-        # distribute the work.
-        # For inelastic reactions we will do this by subdividing between all
-        # the inelastic thresholds and allowing the threads to work on those
-        # chunks at the same time.
+        # We will parse through each relevant reaction one at a time.
+        # Doing so allows us to get the variation in the reaction-wise
+        # distributions themselves without having to individually evaluate
+        # their variation in yields and xs
+        # Since we know the fission x/s are likely strongly varying (since
+        # these reactions have been measured and evaluated heavily, unlike
+        # inelastic scatter channels), we will put the data on to the x/s
+        # grid, normalize the CDF to 1.0, and then make sure the grid
+        # is thinned so we arent giving the downstream code way to much data.
 
-        # Begin by setting the intervals to evaluate
-        thresholds.append(self.group_edges[-1])
-        Ein_intervals = np.clip(thresholds, self.group_edges[0],
-                                self.group_edges[-1])
-        Ein_intervals = np.unique(Ein_intervals)
+        rxn_results = [None] * len(rxns)
+        rxn_grids = [None] * len(rxns)
+        for r, rxn in enumerate(rxns):
+            print('\t\t', rxn)
 
-        # Now parse through every threshold interval and, if the interval
-        # has any width, add the grid points
-        for e, (Ein_low, Ein_high) in enumerate(zip(Ein_intervals[:-1],
-                                                    Ein_intervals[1:])):
-            grid = np.logspace(np.log10(Ein_low), np.log10(Ein_high),
-                               num=(_NUM_ENERGY_SUBDIV + 1), endpoint=False)
-            # Add the grid to our running Ein_grid
-            if e == 0:
-                Ein_grid = grid
+            # Create the energy grid we will be evaluating for this case
+            Ein_grid = np.logspace(np.log10(max(thresholds[r],
+                                                self.group_edges[0])),
+                                   np.log10(self.group_edges[-1]),
+                                   num=_NUM_ENERGY_SUBDIV + 1)
+
+            # Set up the arguments for our do_chi routine
+            # These have to be aggregated into a tuple to support our usage of
+            # the multiprocessing pool
+            func_args = (self.library.atomic_weight_ratio, rxn, self, kT,
+                         xs_funcs[r], n_delayed)
+
+            # Set the arguments for our linearize function, except dont yet
+            # include the Ein grid points (the first argument), since that will
+            # be dependent upon the thread's work
+            linearize_args = (do_chi, func_args, self.tolerance)
+
+            inputs = [(Ein_grid[e: e + 2],) + linearize_args
+                      for e in range(len(Ein_grid) - 1)]
+
+            # Run in serial or parallel mode
+            grid = [None] * len(inputs)
+            results = [None] * len(inputs)
+            if self.num_threads < 1:
+                for e, in_data in enumerate(inputs):
+                    grid[e], results[e] = linearizer_wrapper(in_data)
             else:
-                Ein_grid = np.concatenate((Ein_grid, grid))
-        # Finally add the very last interval point (since endpoint=False above)
-        Ein_grid = np.concatenate((Ein_grid, [Ein_intervals[-1]]))
+                p = Pool(self.num_threads)
+                output = p.map(linearizer_wrapper, inputs)
+                p.close()
+                # output contains a 2-tuple for every parallelized bin;
+                # the 1st entry in the tuple is the energy grid, and the 2nd
+                # is the results array. We need to separate and combine these
+                for e in range(len(inputs)):
+                    grid[e] = output[e][0]
+                    results[e] = output[e][1]
 
-        # Set up the arguments for our do_chi routine
-        # These have to be aggregated into a tuple to support our usage of
-        # the multiprocessing pool
-        func_args = (self.library.atomic_weight_ratio, rxns, self, kT,
-                     xs_funcs, n_delayed)
+            # Now lets combine our grids together
+            rxn_grids[r] = np.concatenate(grid)
+            rxn_results[r] = np.concatenate(results)
 
-        # Set the arguments for our linearize function, except dont yet include
-        # the Ein grid points (the first argument), since that will be
-        # dependent upon the thread's work
-        linearize_args = (do_chi, func_args, self.tolerance)
+            # Retain only the unique end-points
+            rxn_grids[r], unique_indices = np.unique(rxn_grids[r],
+                                                     return_index=True)
+            rxn_results[r] = rxn_results[r][unique_indices, ...]
 
-        inputs = [(Ein_grid[e: e + 2],) + linearize_args
-                  for e in range(len(Ein_grid) - 1)]
+        if len(rxns) > 1:
+            # Then we have to combine the results on to a unionized grid
+            # This unionized grid will be the union of the rxn_grids above
+            # and the actual x/s grid in the range of interest
 
-        # Run in serial or parallel mode
-        grid = [None] * len(inputs)
-        results = [None] * len(inputs)
-        if self.num_threads < 1:
-            for e, in_data in enumerate(inputs):
-                grid[e], results[e] = linearizer_wrapper(in_data)
+            # First lets get the x/s grid in the range of interest
+            # We dont need to combine all x/s grids, since they are all the
+            # same. We will also use the xs data from the first entry in rxns
+            # and xs_funcs, since that will be the MT=18 channel
+            xs_grid = np.unique(np.clip(xs_funcs[0]._x, self.group_edges[0],
+                                        self.group_edges[-1]))
+
+            # Combine the reaction grids
+            Ein_grid = reduce(np.union1d, rxn_grids)
+
+            # Finally combine the reaction grid and xs grid
+            Ein_grid = np.union1d(Ein_grid, xs_grid)
+
+            pd_results = np.zeros((len(Ein_grid),) + rxn_results[0].shape[1:])
+
+            # Now interpolate the reaction distributions at each Ein on xs_grid
+            # and combine in to a unionized grid
+            for e, Ein in enumerate(Ein_grid):
+                for r in range(len(rxn_grids)):
+                    if Ein > thresholds[r]:
+                        # Find the corresponding point
+                        if Ein < rxn_grids[r][-2]:
+                            i = np.searchsorted(rxn_grids[r], Ein) - 1
+                        else:
+                            i = len(rxn_grids[r]) - 2
+
+                        # Get the interpolant
+                        f = (Ein - rxn_grids[r][i]) / \
+                            (rxn_grids[r][i + 1] - rxn_grids[r][i])
+
+                        pd_results[e, ...] += \
+                            ((1. - f) * rxn_results[r][i, ...] +
+                             f * rxn_results[r][i + 1, ...]) * xs_funcs[r](Ein)
+
         else:
-            p = Pool(self.num_threads)
-            output = p.map(linearizer_wrapper, inputs)
-            p.close()
-            # output contains a 2-tuple for every parallelized bin;
-            # the first entry in the tuple is the energy grid, and the second
-            # is the results array. We need to separate and combine these
-            for e in range(len(inputs)):
-                grid[e] = output[e][0]
-                results[e] = output[e][1]
+            # If we only have the total fission channel, then we dont have to
+            # worry about x/s interference and we can instead skip right to the
+            # normalization step
+            # Lets just put the data in to the same variables as the other
+            # side of the if-branch
+            Ein_grid = rxn_grids[0]
+            pd_results = rxn_results[0]
 
-        # Now lets combine our grids together
-        Ein_grid = np.concatenate(grid)
-        results = np.concatenate(results)
+        # Create the total secondary energy data (i.e. prompt + delayed)
+        tot_results = np.sum(pd_results, axis=1)
 
-        # Remove the non-unique entries obtained since the linearizer
-        # includes the endpoints of each bracketed region
-        Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
-        results = results[unique_indices, ...]
-
-        # Normalize the total chi info
-        results[:, 0, :] = np.nan_to_num(
-            np.divide(results[:, 0, :],
-                      np.sum(results[:, 0, :], axis=1)[:, None]))
+        # With chi data, we only care about the normalized secondary energy
+        # data, so lets normalize before we thin
+        tot_results[:, :] = np.nan_to_num(
+            np.divide(tot_results[:, :],
+                      np.sum(tot_results[:, :], axis=1)[:, None]))
+        pd_results[:, :, :] = np.nan_to_num(
+            np.divide(pd_results, np.sum(pd_results, axis=-1)[:, :, None]))
 
         # Add a top point to use as interpolation
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
-        results = np.concatenate((results, [results[-1, :, :]]))
+        pd_results = np.concatenate((pd_results, [pd_results[-1, :, :]]))
+        tot_results = np.concatenate((tot_results, [tot_results[-1, :]]))
 
         # Finally store the incoming energy grid and chi values
         self.chi_energy[strT] = Ein_grid[:]
-        self.total_chi[strT] = results[:, 0, :]
-        self.prompt_chi[strT] = results[:, 1, :]
-        self.delayed_chi[strT] = results[:, 2:, :]
+        self.prompt_chi[strT] = pd_results[:, 0, :]
+        self.delayed_chi[strT] = pd_results[:, 1:, :]
+        self.total_chi[strT] = tot_results[:, :]
         self.num_delayed_groups = n_delayed
 
     def to_hdf5(self, file):

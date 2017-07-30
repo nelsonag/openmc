@@ -397,12 +397,10 @@ contains
                    micro_xs(i_nuclide) % elastic)
             end if
           else
-            score = flux * (material_xs % total - material_xs % absorption)
-
             call ndpp_materials(p % material) % tally_scatter( &
                  E, kT, ndpp_outgoing, t, &
                  score_index, ndpp_filter_index, score_bin, &
-                 t % moment_order(i), score, uvw, micro_xs)
+                 t % moment_order(i), flux, uvw, micro_xs)
           end if
         end if
 

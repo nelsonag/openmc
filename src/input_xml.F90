@@ -67,9 +67,6 @@ contains
       call time_read_xs % stop()
     end if
 
-    ! Normalize atom/weight percents
-    if (run_mode /= MODE_PLOTTING) call normalize_ao()
-
   end subroutine read_input_xml
 
 !===============================================================================
@@ -2206,6 +2203,9 @@ contains
 
     ! Clear dictionary
     call library_dict % clear()
+
+    ! Normalize atom/weight percents
+    if (run_mode /= MODE_PLOTTING) call normalize_ao()
   end subroutine read_materials
 
   subroutine read_materials_xml(libraries, library_dict, material_temps)
@@ -3701,7 +3701,7 @@ contains
             use_ndpp_data = .true.
 
             ! Get the group structure if this is the first time through
-            f => filters(t % find_filter(FILTER_ENERGYOUT))
+            f => filters(t % filter(t % find_filter(FILTER_ENERGYOUT)))
             select type(filter => f % obj)
             type is (EnergyoutFilter)
               if (.not. allocated(ndpp_group_edges)) then
@@ -3727,7 +3727,7 @@ contains
                   ndpp_scatter_format = "legendre"
                 else
                   ndpp_scatter_format = "histogram"
-                  f => filters(t % find_filter(FILTER_MU))
+                  f => filters(t % filter(t % find_filter(FILTER_MU)))
                   select type(filter => f % obj)
                   type is (MuFilter)
                     allocate(ndpp_histogram_bins(size(filter % bins)))
@@ -3754,7 +3754,7 @@ contains
                   end if
 
                   ! Ok, its also histogram, so make sure the bins are the same
-                  f => filters(t % find_filter(FILTER_MU))
+                  f => filters(t % filter(t % find_filter(FILTER_MU)))
                   select type(filter => f % obj)
                   type is (MuFilter)
                     if (size(ndpp_histogram_bins) /= size(filter % bins)) then

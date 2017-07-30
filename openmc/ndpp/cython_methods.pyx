@@ -3,6 +3,7 @@
 #cython: nonecheck=False
 #cython: wraparound=False
 #cython: initializedcheck=False
+#cython: fast_gil=True
 
 from libc.math cimport sqrt, sinh, cosh
 
@@ -26,7 +27,7 @@ cdef double[::1] _FMU = np.empty(_N_QUAD)
 # The number of outgoing energy points to use when integrating the free-gas
 # kernel; we are using simpson's 3/8 rule so this needs to be a multiple of 3
 cdef int _N_EOUT = 201
-cdef double _N_EOUT_DOUBLE = 201.
+cdef double _N_EOUT_DOUBLE = <double> _N_EOUT
 
 # Set our simpson 3/8 rule coefficients
 cdef double[::1] _SIMPSON_WEIGHTS = np.empty(_N_EOUT)
@@ -39,6 +40,10 @@ for index in range(_N_EOUT):
     else:
         _SIMPSON_WEIGHTS[index] = 0.375 * 3.
 
+# Minimum value of c, the constant used when converting inelastic CM
+# distributions to the lab-frame
+cdef double _MIN_C = 25.
+cdef double _MIN_C2 = _MIN_C * _MIN_C
 
 ###############################################################################
 # GENERIC QUADRATURE INTEGRATION
@@ -357,63 +362,83 @@ cpdef integrate_cm(double Ein, double[::1] Eouts, double Eout_cm_max,
                    double awr, double[::1] grid, double[:, ::1] integral,
                    object edist, object adist, tuple adist_args,
                    bint legendre, double[::1] mus):
-    cdef int g, eo, l
-    cdef double root_awrp12, Eout_l_max, Eout_l_min, Eout_hi, Eout_lo
-    cdef double c, mu_l_min, dE, Eout, dmu, u
+    cdef int g, eo, l, orders
+    cdef double inv_awrp1, Eout_l_max, Eout_l_min, a, b
+    cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev
+    cdef double[::1] y
+    cdef double[::1] y_prev
 
-    root_awrp12 = sqrt(1. / ((awr + 1.) * (awr + 1.)))
-    Eout_l_max = Ein * (sqrt(Eout_cm_max / Ein) + root_awrp12)**2
-    Eout_l_min = Ein * (sqrt(Eout_cm_max / Ein) - root_awrp12)**2
+    orders = integral.shape[1]
 
-    for g in range(len(Eouts) - 1):
-        Eout_lo = Eouts[g]
-        Eout_hi = Eouts[g + 1]
+    inv_awrp1 = 1. / (awr + 1.)
+    Eout_l_min = max(Ein * inv_awrp1 * inv_awrp1 / _MIN_C2, Eouts[0])
+    Eout_l_max = min(Ein * (sqrt(Eout_cm_max / Ein) + inv_awrp1)**2,
+                     Eouts[Eouts.shape[0] - 1])
 
-        # If our group is below the possible outgoing energies, just skip it
-        if Eout_hi < Eout_l_min:
-            continue
-        # If our group is above the max energy then we are all done
-        if Eout_lo > Eout_l_max:
+    dE = (Eout_l_max - Eout_l_min) / (_N_EOUT_DOUBLE - 1.)
+
+    # Find the group of Eout_l_min
+    g = np.searchsorted(Eouts, Eout_l_min) - 1
+    Eout = Eout_l_min - dE
+    y = np.zeros(integral.shape[1])
+    y_prev = np.zeros_like(y)
+    for eo in range(_N_EOUT):
+        Eout_prev = Eout
+        Eout += dE
+        y_prev = y
+        c = inv_awrp1 * sqrt(Ein / Eout)
+        mu_l_min = (1. + c * c - Eout_cm_max / Eout) / (2. * c)
+
+        # Make sure we stay in the allowed bounds
+        if mu_l_min < -1.:
+            mu_l_min = -1.
+        elif mu_l_min > 1.:
             break
 
-        Eout_lo = max(Eout_l_min, Eout_lo)
-        Eout_hi = min(Eout_l_max, Eout_hi)
+        if legendre:
+            dmu = 1. - mu_l_min
+            for p in range(_N_QUAD):
+                u = _POINTS[p] * dmu + mu_l_min
+                _FMU[p] = _WEIGHTS[p] * \
+                    integrand_cm(u, Eout, c, Ein, edist, adist, adist_args)
 
-        dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
-
-        for eo in range(_N_EOUT):
-            Eout = Eout_lo + ((<double>eo) * dE)
-            c = root_awrp12 * sqrt(Ein / Eout)
-            mu_l_min = (1. + c * c - Eout_cm_max / Eout) / (2. * c)
-
-            # Make sure we stay in the allowed bounds
-            if mu_l_min < -1.:
-                mu_l_min = -1.
-            elif mu_l_min > 1.:
-                break
-
-            if legendre:
-                dmu = 1. - mu_l_min
+            for l in range(orders):
+                y[l] = 0.
                 for p in range(_N_QUAD):
                     u = _POINTS[p] * dmu + mu_l_min
-                    _FMU[p] = _WEIGHTS[p] * \
-                        integrand_cm(u, Eout, c, Ein, edist, adist, adist_args)
+                    y[l] += _FMU[p] * eval_legendre(l, u)
+                y[l] *= dmu
+        else:
+            fixed_quad_histogram(integrand_cm, mus,
+                                 (Eout, c, Ein, edist, adist, adist_args),
+                                 y[:], mu_l_min, 1.)
 
-                for l in range(integral.shape[1]):
-                    grid[l] = 0.
-                    for p in range(_N_QUAD):
-                        u = _POINTS[p] * dmu + mu_l_min
-                        grid[l] += _FMU[p] * eval_legendre(l, u)
-                    grid[l] *= dmu
+        if eo > 0:
+            # Perform the running integration of our point according to the
+            # outgoing group of Eout
+
+            # First, if the Eout point is above the next group boundary, then
+            # we are straddling the line and we only include the portion for the
+            # current group
+            if Eout > Eouts[g + 1]:
+                # Include the integral up to the group boundary only
+                f = (Eouts[g + 1] - Eout_prev) / (Eout - Eout_prev)
+                a = 0.5 * (Eouts[g + 1] - Eout_prev)
+                b = 0.5 * (Eout - Eouts[g + 1])
+                for l in range(orders):
+                    yg = (1. - f) * y[l]  + f * y_prev[l]
+                    integral[g, l] += a * (y_prev[l] + yg)
+                    # And add the top portion to the next group
+                    integral[g + 1, l] += b * (yg + y[l])
+                # Move our group counter to the next group
+                g += 1
             else:
-                fixed_quad_histogram(integrand_cm, mus,
-                                     (Eout, c, Ein, edist, adist, adist_args),
-                                     grid, mu_l_min, 1.)
+                # Then there is no group straddling, so just do a standard
+                # trapezoidal integration
+                a = 0.5 * (Eout - Eout_prev)
+                for l in range(orders):
+                    integral[g, l] += a * (y_prev[l] + y[l])
 
-            for l in range(integral.shape[1]):
-                integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
-        for l in range(integral.shape[1]):
-            integral[g, l] *= dE
 
 
 ###############################################################################

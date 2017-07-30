@@ -1021,7 +1021,7 @@ class Tally(object):
 
         # Define regex for scatter, nu-scatter and flux moment scores
         regex = [(r'^((?!nu-)scatter-\d)', r'^((?!nu-)scatter-(P|p)\d)'),
-                 (r'nu-scatter-\d', r'nu-scatter-(P|p)\d'),
+                 (r'^nu-scatter-\d', r'^nu-scatter-(P|p)\d'),
                  (r'ndpp-^((?!nu-)scatter-\d)',
                   r'ndpp-^((?!nu-)scatter-(P|p)\d)'),
                  (r'ndpp-nu-scatter-\d', r'ndpp-nu-scatter-(P|p)\d'),
@@ -1041,7 +1041,6 @@ class Tally(object):
 
             # Consolidate moment scores
             if len(score_pn) > 0:
-
                 # Only keep the highest score-PN score
                 high_pn = sorted([x.lower() for x in score_pn])[-1]
                 pn = int(high_pn.split('-')[-1].replace('p', ''))
