@@ -1,7 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from collections import Iterable
 from numbers import Real
-import sys
 from xml.etree import ElementTree as ET
 
 from six import add_metaclass

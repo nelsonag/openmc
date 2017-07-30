@@ -3,8 +3,6 @@ from numbers import Real, Integral
 from warnings import warn
 
 import numpy as np
-import scipy.integrate as sint
-import scipy.special as ss
 
 import openmc.checkvalue as cv
 from openmc.stats import Tabular, Univariate, Discrete, Mixture
@@ -121,118 +119,6 @@ class KalbachMann(AngleEnergy):
     def slope(self, slope):
         cv.check_type('Kalbach-Mann slope', slope, Iterable, Tabulated1D)
         self._slope = slope
-
-    def sample(self, Ein, cm, awr):
-        # Generate the incoming distribution via interpolation if needed
-        if Ein <= self._energy[0]:
-            i = 0
-            r = 0.
-        elif Ein > self._energy[-1]:
-            i = len(self._energy) - 2
-            r = 1.
-        else:
-            i = np.searchsorted(self._energy, Ein) - 1
-            r = (Ein - self._energy[i]) / \
-                (self._energy[i + 1] - self._energy[i])
-
-        if r > np.random.random():
-            l = i + 1
-        else:
-            l = i
-
-        E_i_1 = self._energy_out[i].x[0]
-        E_i_K = self._energy_out[i].x[-1]
-        E_i1_1 = self._energy_out[i + 1].x[0]
-        E_i1_K = self._energy_out[i + 1].x[-1]
-
-        E_1 = E_i_1 + r * (E_i1_1 - E_i_1)
-        E_K = E_i_K + r * (E_i1_K - E_i_K)
-
-        # Determine outgoing energy bin
-        r1 = np.random.random()
-        c_k = self._energy_out[l].c[0]
-        for k in range(len(self._energy_out[l]) - 1):
-            c_k1 = self._energy_out[l].c[k + 1]
-            if r1 < c_k1:
-                break
-            c_k = c_k1
-
-        # Check to make sure k is <= NP - 1
-        k = min(k, len(self._energy_out[l].x) - 2)
-
-        E_l_k = self._energy_out[l].x[k]
-        p_l_k = self._energy_out[l].p[k]
-
-        # import pdb; pdb.set_trace()
-        interp_index = 0
-        interp = self._interpolation[interp_index]
-
-        if interp == 1:
-            # Histogram
-            if p_l_k > 0.:
-                E_out = E_l_k + (r1 - c_k) / p_l_k
-            else:
-                E_out = E_l_k
-            km_r = self._precompound[l].y[k]
-            km_a = self._slope[l].y[k]
-        elif interp == 2:
-            # linear-linear
-            E_l_k1 = self._energy_out[l].x[k + 1]
-            p_l_k1 = self._energy_out[l].p[k + 1]
-
-            frac = (p_l_k1 - p_l_k) / (E_l_k1 - E_l_k)
-            if frac == 0.:
-                E_out = E_l_k + (r1 - c_k) / p_l_k
-            else:
-                E_out = E_l_k + (np.sqrt(max(0., p_l_k * p_l_k +
-                                             2. * frac * (r1 - c_k))) -
-                                 p_l_k) / frac
-
-            km_r = self._precompound[l].y[k] + (E_out - E_l_k) / \
-                (E_l_k1 - E_l_k) * \
-                (self._precompound[l].y[k + 1] - self._precompound[l].y[k])
-            km_a = self._slope[l].y[k] + (E_out - E_l_k) / \
-                (E_l_k1 - E_l_k) * \
-                (self._slope[l].y[k + 1] - self._slope[l].y[k])
-
-        if l == i:
-            E_out = E_1 + (E_out - E_i_1) * (E_K - E_1) / (E_i_K - E_i_1)
-        else:
-            E_out = E_1 + (E_out - E_i1_1) * \
-                (E_K - E_1) / (E_i1_K - E_i1_1)
-
-        # Sampled correlation angle from KM parameters
-        if np.random.random() > km_r:
-            T = (2. * np.random.random() - 1.) * np.sinh(km_a)
-            mu = np.log(T + np.sqrt(T * T + 1.)) / km_a
-        else:
-            r1 = np.random.random()
-            mu = np.log(r1 * np.exp(km_a) + (1. - r1) * np.exp(-km_a)) / km_a
-
-
-        # if scattering system is in center-of-mass, transfer cosine of
-        # scattering angle and outgoing energy from CM to LAB
-        if cm:
-            E_cm = E_out
-
-            # determine outgoing energy in lab
-            if Ein * E_cm < 0.:
-                import pdb; pdb.set_trace()
-            E_out = E_cm + (Ein + 2. * mu * (awr + 1.) *
-                            np.sqrt(Ein * E_cm)) / ((awr + 1.) * (awr + 1.))
-            # determine outgoing angle in lab
-            mu = mu * np.sqrt(E_cm / E_out) + \
-                1. / (awr + 1.) * np.sqrt(Ein / E_out)
-
-        # Because of floating-point roundoff, it may be possible for mu to be
-        # outside of the range [-1,1). In these cases, we just set mu to
-        # exactly -1 or 1
-        if mu > 1.:
-            mu = 1.
-        elif mu < -1.:
-            mu = -1.
-
-        return E_out, mu
 
     def to_hdf5(self, group):
         """Write distribution to an HDF5 group
@@ -514,49 +400,3 @@ class KalbachMann(AngleEnergy):
 
         return cls(tab2.breakpoints, tab2.interpolation, energy,
                    energy_out, precompound, slope)
-
-    @classmethod
-    def example(cls):
-        """ Builds an example Kalbach-Mann object for testing
-
-        """
-
-        from openmc.stats.univariate import Tabular
-        xlo = np.array([0., 14110.19])
-        xhi = np.array([0., 14110.19, 28220.38, 47033.96, 65847.55, 84661.13,
-                        103474.7, 122288.3, 141101.9, 159915.5, 178729.1,
-                        206949.4, 244576.6, 282203.8, 319830.9, 357458.1,
-                        470339.6])
-        breakpoints = [2]
-        interpolation = [2]
-        energy = np.array([1.66516E7, 1.7E7])
-        energy_out = [Tabular(xlo, [7.087077E-5, 0.]),
-                      Tabular(xhi,
-            np.array([8.34974100e-07, 1.51966200e-06, 2.03220800e-06,
-                      2.49257100e-06, 2.87962900e-06, 3.22027400e-06,
-                      3.52808000e-06, 3.81105200e-06, 4.07438700e-06,
-                      4.32168700e-06, 4.38502700e-06, 3.64483100e-06,
-                      2.73362300e-06, 1.82241500e-06, 9.11207600e-07,
-                      3.75873100e-08, 0.00000000e+00]))]
-        energy_out[0].c = np.array([0., 1.])
-        energy_out[1].c = \
-            np.array([0., 0.01178164, 0.03322436, 0.07145747, 0.11835168,
-                      0.17252782, 0.23311267, 0.29948856, 0.37118817,
-                      0.44784206, 0.52914855, 0.65289533, 0.79004012,
-                      0.8928987, 0.9614709, 0.99575709, 1.])
-        precompound = [Tabulated1D(xlo, np.array([0., 0.])), Tabulated1D(xhi,
-                np.array([0.4217524, 0.4006648, 0.3795772, 0.3514603,
-                          0.3233435, 0.2952267, 0.2671099, 0.238993, 0.2108762,
-                          0.1827594, 0.1546425, 0.1124673, 0.05623365, 0., 0.,
-                          0., 0.]))]
-
-        slope = []
-        slope.append(Tabulated1D(xlo, np.array([0.4054679, 0.4060959])))
-        slope.append(Tabulated1D(xhi,
-            np.array([0.4054679, 0.4060959, 0.406724, 0.4075616, 0.4083995,
-                      0.4092375, 0.4100758, 0.4109142, 0.4117529, 0.4125918,
-                      0.4134309, 0.41469, 0.4163694, 0.4180498, 0.419731,
-                      0.421413, 0.4264644])))
-
-        return cls(breakpoints, interpolation, energy, energy_out, precompound,
-                   slope)
