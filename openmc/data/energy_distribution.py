@@ -17,6 +17,7 @@ from .endf import get_tab1_record, get_tab2_record
 @add_metaclass(ABCMeta)
 class EnergyDistribution(EqualityMixin):
     """Abstract superclass for all energy distributions."""
+
     def __init__(self):
         pass
 
@@ -180,6 +181,8 @@ class GeneralEvaporation(EnergyDistribution):
     u : float
         Constant introduced to define the proper upper limit for the final
         particle energy such that :math:`0 \le E' \le E - U`
+    domain : 2-tuple of float
+        Domain of the function
 
     """
 
@@ -188,6 +191,17 @@ class GeneralEvaporation(EnergyDistribution):
         self.theta = theta
         self.g = g
         self.u = u
+
+    def __call__(self, Eout, Ein):
+        domain = self.domain(Ein)
+        if domain[0] < Eout <= domain[1]:
+            x = Eout / self._theta(Ein)
+            return self._g(x)
+        else:
+            return 0.
+
+    def get_domain(self, Ein):
+        return 0., Ein - self.u
 
     def to_hdf5(self, group):
         raise NotImplementedError
@@ -251,6 +265,18 @@ class MaxwellEnergy(EnergyDistribution):
         self.theta = theta
         self.u = u
 
+    def __call__(self, Eout, Ein):
+        domain = self.domain(Ein)
+        if domain[0] < Eout <= domain[1]:
+            theta = self._theta(Ein)
+            EmU_th = (Ein - self._u) / theta
+            norm = theta ** 1.5 * (0.5 * np.sqrt(np.pi) *
+                                   np.erf(np.sqrt(EmU_th)) - np.sqrt(EmU_th) *
+                                   np.exp(-EmU_th))
+            return np.sqrt(Eout) / norm * np.exp(-Eout / theta)
+        else:
+            return 0.
+
     @property
     def theta(self):
         return self._theta
@@ -268,6 +294,9 @@ class MaxwellEnergy(EnergyDistribution):
     def u(self, u):
         cv.check_type('Maxwell restriction energy', u, Real)
         self._u = u
+
+    def get_domain(self, Ein):
+        return 0., Ein - self._u
 
     def to_hdf5(self, group):
         """Write distribution to an HDF5 group
@@ -384,6 +413,16 @@ class Evaporation(EnergyDistribution):
         self.theta = theta
         self.u = u
 
+    def __call__(self, Eout, Ein):
+        domain = self.domain(Ein)
+        if domain[0] < Eout <= domain[1]:
+            theta = self._theta(Ein)
+            EmU_th = (Ein - self._u) / theta
+            norm = theta * theta * (1. - np.exp(-EmU_th) * (1. + EmU_th))
+            return Eout / norm * np.exp(-Eout / theta)
+        else:
+            return 0.
+
     @property
     def theta(self):
         return self._theta
@@ -401,6 +440,9 @@ class Evaporation(EnergyDistribution):
     def u(self, u):
         cv.check_type('Evaporation restriction energy', u, Real)
         self._u = u
+
+    def get_domain(self, Ein):
+        return 0., Ein - self._u
 
     def to_hdf5(self, group):
         """Write distribution to an HDF5 group
@@ -521,6 +563,23 @@ class WattEnergy(EnergyDistribution):
         self.b = b
         self.u = u
 
+    def __call__(self, Eout, Ein):
+        domain = self.domain(Ein)
+        if domain[0] < Eout <= domain[1]:
+            a = self._a(Ein)
+            b = self._b(Ein)
+            EmU_a = (Ein - self._u) / a
+            root_EmU_a = np.sqrt(EmU_a)
+            ab_4 = 0.25 * a * b
+            root_ab_4 = np.sqrt(ab_4)
+            norm = 0.5 * np.sqrt(np.pi * ab_4) * np.exp(ab_4) * \
+                (np.erf(root_EmU_a - root_ab_4) +
+                 np.erf(root_EmU_a + root_ab_4)) - a * np.exp(-EmU_a) * \
+                np.sinh(np.sqrt(b * (Ein - self._u)))
+            return np.exp(-Eout / a) / norm * np.sinh(np.sqrt(b * Eout))
+        else:
+            return 0.
+
     @property
     def a(self):
         return self._a
@@ -547,6 +606,9 @@ class WattEnergy(EnergyDistribution):
     def u(self, u):
         cv.check_type('Watt restriction energy', u, Real)
         self._u = u
+
+    def get_domain(self, Ein):
+        return 0., Ein - self._u
 
     def to_hdf5(self, group):
         """Write distribution to an HDF5 group
@@ -689,6 +751,9 @@ class MadlandNix(EnergyDistribution):
         self.efh = efh
         self.tm = tm
 
+    def __call__(self, Eout, Ein):
+        raise NotImplementedError
+
     @property
     def efl(self):
         return self._efl
@@ -778,7 +843,6 @@ class MadlandNix(EnergyDistribution):
         params, tm = get_tab1_record(file_obj)
         efl, efh = params[0:2]
         return cls(efl, efh, tm)
-
 
 
 class DiscretePhoton(EnergyDistribution):
@@ -892,7 +956,7 @@ class DiscretePhoton(EnergyDistribution):
 
         """
         primary_flag = int(ace.xss[idx])
-        energy = ace.xss[idx + 1]*EV_PER_MEV
+        energy = ace.xss[idx + 1] * EV_PER_MEV
         return cls(primary_flag, energy, ace.atomic_weight_ratio)
 
 
@@ -988,7 +1052,7 @@ class LevelInelastic(EnergyDistribution):
             Level inelastic scattering distribution
 
         """
-        threshold = ace.xss[idx]*EV_PER_MEV
+        threshold = ace.xss[idx] * EV_PER_MEV
         mass_ratio = ace.xss[idx + 1]
         return cls(threshold, mass_ratio)
 

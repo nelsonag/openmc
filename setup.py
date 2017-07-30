@@ -10,6 +10,7 @@ except ImportError:
     have_setuptools = False
 
 try:
+    from distutils.extension import Extension
     from Cython.Build import cythonize
     have_cython = True
 except ImportError:
@@ -52,7 +53,9 @@ if have_setuptools:
             'decay': ['uncertainties'],
             'plot': ['matplotlib', 'ipython'],
             'vtk': ['vtk', 'silomesh'],
-            'validate': ['lxml']
+            'validate': ['lxml'],
+            'reconstruct': ['cython'],
+            'fast_call': ['cython']
         },
 
         # Data files
@@ -63,9 +66,26 @@ if have_setuptools:
 
 # If Cython is present, add resonance reconstruction capability
 if have_cython:
+    extensions = [
+        Extension("openmc.data.function_methods_cython",
+                  ['openmc/data/function_methods_cython.pyx'],
+                  include_dirs=[np.get_include()],
+                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
+        Extension("openmc.data.reconstruct",
+                  ['openmc/data/reconstruct.pyx'],
+                  include_dirs=[np.get_include()],
+                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
+        Extension("openmc.stats.univariate_methods_cython",
+                  ['openmc/stats/univariate_methods_cython.pyx'],
+                  include_dirs=[np.get_include()],
+                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
+        Extension("openmc.ndpp",
+                  ['openmc/ndpp/*.pyx'],
+                  include_dirs=[np.get_include()],
+                  extra_compile_args=['-O3'], extra_link_args=['-O3'])]
     kwargs.update({
-        'ext_modules': cythonize('openmc/data/reconstruct.pyx'),
-        'include_dirs': [np.get_include()]
+        'ext_modules': cythonize(extensions)
     })
 
 setup(**kwargs)
+

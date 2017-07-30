@@ -340,7 +340,7 @@ class ThermalScattering(EqualityMixin):
         if strT in data.inelastic_dist:
             self.inelastic_dist[strT] = data.inelastic_dist[strT]
 
-        # Add elastic cross sectoin and angular distribution
+        # Add elastic cross section and angular distribution
         if strT in data.elastic_xs:
             self.elastic_xs[strT] = data.elastic_xs[strT]
         if strT in data.elastic_mu_out:
