@@ -12,8 +12,6 @@ from scipy.special import roots_sh_legendre
 cimport numpy as np
 import numpy as np
 
-from openmc.stats.bisect cimport bisect
-# from cython_classes cimport NBody_CM_Cython
 from angle_distributions cimport *
 
 # The quadrature points can be gathered now, we will get them between 0 and 1

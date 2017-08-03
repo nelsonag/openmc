@@ -11,7 +11,7 @@ from scipy.special import roots_sh_legendre
 cimport numpy as np
 import numpy as np
 
-from openmc.stats.bisect cimport bisect
+from openmc.stats.bisect cimport bisect, bisect_int
 from openmc.data.function_methods_cython cimport tabulated1d_eval
 
 """
@@ -179,7 +179,7 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
             if xs._breakpoints.shape[0] == 1:
                 k = 0
             else:
-                k = bisect(xs._breakpoints, i, lo=k) - 1
+                k = bisect_int(xs._breakpoints, i, lo=k) - 1
             interp_type = xs._interpolation[k]
 
             # Evaluate each of the subdivisions
