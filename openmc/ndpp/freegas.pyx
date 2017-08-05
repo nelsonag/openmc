@@ -15,7 +15,7 @@ from openmc.stats.bisect cimport bisect, bisect_int
 from openmc.data.function_methods_cython cimport tabulated1d_eval
 
 """
-# The Free-Gas Kernel method used in this code is from
+The Free-Gas Kernel method used in this code is from
 Sanchez, Richard, Alberto Previti, and Domiziano Mostacci.
 "New derivation of Blackshow–Murrays formula for the Doppler-broadened
 scattering kernel and calculation of the angular moments via Lagrange
@@ -127,8 +127,8 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
                                object xs, double[::1] results):
     cdef double root_in_out, E0, Estar, most_of_eta, b, xc, minE, maxE, value
     cdef double inv_kappa, G, most_of_mu_cm, Epoint, mu_l
-    cdef int i, start, end, s, p, k, u
-    cdef int interp_type
+    cdef long i, start, end, s, p, k, u
+    cdef long interp_type
     cdef double Elo, Ehi, xslo, xshi, dE, Esub_lo, Esub_hi, temp_value, xs_Ein
 
     root_in_out = sqrt(Ein * Eout)

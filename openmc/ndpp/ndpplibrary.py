@@ -3,8 +3,6 @@ from numbers import Integral, Real
 import numpy as np
 import h5py
 
-# import openmc
-# from openmc.data.data import K_BOLTZMANN
 from openmc.data import K_BOLTZMANN, IncidentNeutron, ThermalScattering, \
     DataLibrary
 # from openmc.data.neutron import IncidentNeutron
@@ -363,19 +361,22 @@ class NdppLibrary(object):
         """
 
         cv.check_type('filename', filename, str)
-        file = h5py.File(filename, 'r')
+        f = h5py.File(filename, 'r')
 
         # Check filetype and version
-        cv.check_filetype_version(file, NDPP_FILETYPE, NDPP_VERSION)
+        cv.check_filetype_version(f, NDPP_FILETYPE, NDPP_VERSION)
 
-        # group_structure = file.attrs['group structure']
-        # num_delayed_groups = file.attrs['delayed_groups']
-        # energy_groups = openmc.mgxs.EnergyGroups(group_structure)
-        # data = cls(energy_groups, num_delayed_groups)
+        group_edges = f.attrs['group structure']
+        scatter_format = f.attrs['scatter_format']
+        order = f.attrs['order']
+        freegas_cutoff = f.attrs['freegas_cutoff']
+        freegas_method = f.attrs['freegas_method']
 
-        # for group_name, group in file.items():
-        #     data.add_xsdata(openmc.XSdata.from_hdf5(group, group_name,
-        #                                             energy_groups,
-        #                                             num_delayed_groups))
+        data = cls(energy_groups, num_delayed_groups)
 
-        # return data
+        for group_name, group in f.items():
+            data.add_xsdata(openmc.XSdata.from_hdf5(group, group_name,
+                                                    energy_groups,
+                                                    num_delayed_groups))
+
+        return data

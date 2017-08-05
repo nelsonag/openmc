@@ -18,8 +18,7 @@ cdef size_t bisect(double[:] a, double x, size_t lo=0, size_t hi=0):
     return lo
 
 
-cdef size_t bisect_int(cython.integral[:] a, cython.integral x, size_t lo=0,
-                       size_t hi=0):
+cdef size_t bisect_int(long[:] a, long x, size_t lo=0, size_t hi=0):
     cdef size_t mid
     if hi == 0:
         hi = len(a)
