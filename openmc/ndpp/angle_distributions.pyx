@@ -10,20 +10,12 @@ from libc.math cimport sqrt, sinh, cosh
 from openmc.stats.bisect cimport bisect
 
 
-"""This module contains all the angular distribution functions which are used
-to wrap the energy and angle distributions as needed.
+"""This module contains the angular distribution functions used to wrap the
+energy and angle distributions. Due to the speed benefits and lack of a need
+for support of arbitrary distribution types, the Kalbach-Mann and NBody
+distributions do not use this strategy and instead a class is created for each
+which captures this functionality
 """
-
-cpdef double adist_kalbach(double mu, double Eout, object slope,
-                           object precompound):
-    cdef double a, r
-    a = slope(Eout)
-    r = precompound(Eout)
-    if a == 0.:
-        return 0.
-    else:
-        return 0.5 * a / sinh(a) * (cosh(a * mu) + r * sinh(a * mu))
-
 
 cpdef double adist_correlated(double mu, double Eout, double[::1] Eout_points,
                               list adists):
@@ -62,3 +54,7 @@ cpdef double adist_isotropic(double mu, double Eout):
         return 0.5
     else:
         return 0.
+
+
+cpdef double unity(double x):
+    return 1.

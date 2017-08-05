@@ -5,7 +5,9 @@ import openmc.stats
 from openmc.data import KalbachMann, UncorrelatedAngleEnergy, \
     CorrelatedAngleEnergy, LevelInelastic, NBodyPhaseSpace, Uniform
 from .interpolators import *
-from .cython_methods import *
+from .cython_integrators import *
+from .kalbach import KM
+from .nbody import NBody
 from .angle_distributions import *
 from .freegas import *
 
@@ -146,7 +148,7 @@ def _preprocess_kalbach(this, Ein):
     # Generate the distribution via interpolation
     edist, precompound, slope = interpolate_kalbach(this, Ein)
 
-    return edist, adist_kalbach, (slope, precompound)
+    return unity, KM(slope, precompound, edist), ()
 
 
 def _preprocess_uncorr(this, Ein):
@@ -245,7 +247,8 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     beta = (awr + 1.) / awr
     half_beta_2 = 0.25 * beta * beta
     alpha = awr / kT
-    args = (Ein, beta, alpha, awr, kT, half_beta_2, adist, xs)
+    args = (Ein, beta, alpha, awr, kT, half_beta_2, adist, xs._x, xs._y,
+            xs._breakpoints, xs._interpolation)
 
     # Find the Eout bounds
     # We will search both backward and forward scatterign conditions to see
@@ -345,18 +348,27 @@ def _integrate_generic_cm(this, Ein, Eouts, awr, order, mus, mus_grid, wgts):
     # Pre-process to obtain our energy and angle distributions
     if isinstance(this, UncorrelatedAngleEnergy):
         edist, adist, adist_args = _preprocess_uncorr(this, Ein)
+        Eout_cm_max = edist.get_domain(Ein)[1]
 
     elif isinstance(this, KalbachMann):
+        # Since a Kalbach-Mann specific c-class exists to provide the
+        # data needed for evaluating a KM distribution, this one will look
+        # different than Uncorrelated and Correlated cases.  Here, the adist
+        # is actually the KM class, and edist is simply a function that
+        # returns 1.0 regardless of the value requested.
         edist, adist, adist_args = _preprocess_kalbach(this, Ein)
+        Eout_cm_max = adist.get_domain(Ein)[1]
 
     elif isinstance(this, CorrelatedAngleEnergy):
         edist, adist, adist_args = _preprocess_corr(this, Ein)
+        Eout_cm_max = edist.get_domain(Ein)[1]
 
     elif isinstance(this, NBodyPhaseSpace):
         edist, adist, adist_args = _preprocess_nbody(this, Ein)
+        Eout_cm_max = edist.get_domain(Ein)[1]
 
     # Call our integration routine
-    integrate_cm(Ein, Eouts, edist.get_domain(Ein)[1], awr, integral, edist,
+    integrate_cm(Ein, Eouts, Eout_cm_max, awr, integral, edist,
                  adist, adist_args, order is not None,
                  mus)
     return integral

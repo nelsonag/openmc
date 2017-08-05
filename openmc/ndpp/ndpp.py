@@ -884,6 +884,7 @@ class Ndpp(object):
             rxn_results[r] = rxn_results[r][unique_indices, ...]
 
         # Now combine the data on to a unionized energy grid
+        print("\t\t Combining Reactions")
         Ein_grid = reduce(np.union1d, rxn_grids)
         self.nu_inelastic = np.zeros((len(Ein_grid),) +
                                      rxn_results[0].shape[1:])
@@ -1019,6 +1020,7 @@ class Ndpp(object):
             rxn_results[r] = rxn_results[r][unique_indices, ...]
 
         if len(rxns) > 1:
+            print("\t\t Combining Reactions")
             # Then we have to combine the results on to a unionized grid
             # This unionized grid will be the union of the rxn_grids above
             # and the actual x/s grid in the range of interest

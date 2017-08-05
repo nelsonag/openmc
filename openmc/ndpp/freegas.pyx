@@ -4,15 +4,15 @@
 #cython: wraparound=False
 #cython: initializedcheck=False
 
-from libc.math cimport sqrt, exp, log, abs
+from libc.math cimport sqrt, exp
 
-from scipy.special.cython_special cimport i0e, eval_legendre
+from scipy.special.cython_special cimport i0e
 from scipy.special import roots_sh_legendre
 cimport numpy as np
 import numpy as np
 
-from openmc.stats.bisect cimport bisect, bisect_int
-from openmc.data.function_methods_cython cimport tabulated1d_eval
+from openmc.stats.bisect cimport bisect
+from .cevals cimport *
 
 """
 The Free-Gas Kernel method used in this code is from
@@ -37,30 +37,6 @@ cdef double[::1] _WEIGHTS
 _POINTS, _WEIGHTS = roots_sh_legendre(_N_QUAD_ORDER)
 
 
-cdef inline double _fast_tabulated1d(double x, double xi, double xi1, double yi,
-                                     double yi1, int interp_type):
-    """Evaluate a Tabulated1D function when you already know the location in
-    the grid and the interpolation type
-    """
-    cdef double y
-    if interp_type == 1:
-        # Histogram
-        y = yi
-    elif interp_type == 2:
-        # Linear-linear
-        y = yi + (x - xi) / (xi1 - xi) * (yi1 - yi)
-    elif interp_type == 3:
-        # Linear-log
-        y = yi + log(x / xi) / log(xi1 / xi) * (yi1 - yi)
-    elif interp_type == 4:
-        # Log-linear
-        y = yi * exp((x - xi) / (xi1 - xi) * log(yi1 / yi))
-    elif interp_type == 5:
-        # Log-log
-        y = (yi * exp(log(x / xi) / log(xi1 / xi) * log(yi1 / yi)))
-    return y
-
-
 cdef inline double _integrand(double Er, double Eout, double Estar, double E0,
                              double alpha, double most_of_eta,
                              double most_of_mu_cm, object adist):
@@ -75,8 +51,10 @@ cdef inline double _integrand(double Er, double Eout, double Estar, double E0,
 
 cpdef calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
                            double beta, double alpha, double awr, double kT,
-                           double half_beta_2, object adist, object xs,
-                           double[::1] results):
+                           double half_beta_2, object adist, double[::1] xs_x,
+                           double[::1] xs_y, long[::1] xs_bpts,
+                           long[::1] xs_interp, double[::1] results):
+
     cdef double root_in_out, E0, Estar, most_of_eta, b, xc, minE, maxE, value
     cdef double inv_kappa, G, most_of_mu_cm, dE, flo, fhi, mu_l
     cdef int i, u
@@ -124,7 +102,9 @@ cpdef calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
 cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
                                double beta, double alpha, double awr,
                                double kT, double half_beta_2, object adist,
-                               object xs, double[::1] results):
+                               double[::1] xs_x, double[::1] xs_y,
+                               long[::1] xs_bpts, long[::1] xs_interp,
+                               double[::1] results):
     cdef double root_in_out, E0, Estar, most_of_eta, b, xc, minE, maxE, value
     cdef double inv_kappa, G, most_of_mu_cm, Epoint, mu_l
     cdef long i, start, end, s, p, k, u
@@ -144,43 +124,41 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
         if xc < 0.:
             results[u] = 0.
             continue
+
         xc = sqrt(xc)
         minE = Estar + max(0., b - xc)**2 / alpha
         maxE = Estar + (b + xc)**2 / alpha
 
         # Find the locations of minE and maxE in the cross section grid
-        if minE > xs._x[0]:
-            start = bisect(xs._x, minE) - 1
+        if minE > xs_x[0]:
+            start = bisect(xs_x, minE) - 1
         else:
             start = 0
-        if maxE > xs._x[0]:
-            end = bisect(xs._x, maxE, lo=start) - 1
+        if maxE > xs_x[0]:
+            end = bisect(xs_x, maxE, lo=start) - 1
         else:
             end = 0
 
-        xs_Ein = tabulated1d_eval(xs, Ein)
+        xs_Ein = tabulated1d_eval(xs_x, xs_y, xs_bpts, xs_interp, Ein)
+        interp_type = LINLIN
 
         value = 0.
         k = 0
         for i in range(start, end + 1):
             if i == start:
                 Elo = minE
-                xslo = tabulated1d_eval(xs, Elo)
+                xslo = fast_tabulated1d_eval(Elo, xs_x[i], xs_x[i + 1],
+                                             xs_y[i], xs_y[i + 1], interp_type)
             else:
-                Elo = xs._x[i]
-                xslo = xs._y[i]
+                Elo = xs_x[i]
+                xslo = xs_y[i]
             if i == end:
                 Ehi = maxE
-                xshi = tabulated1d_eval(xs, Ehi)
+                xshi = fast_tabulated1d_eval(Ehi, xs_x[i], xs_x[i + 1],
+                                             xs_y[i], xs_y[i + 1], interp_type)
             else:
-                Ehi = xs._x[i + 1]
-                xshi = xs._y[i + 1]
-            # get the interpolation type
-            if xs._breakpoints.shape[0] == 1:
-                k = 0
-            else:
-                k = bisect_int(xs._breakpoints, i, lo=k) - 1
-            interp_type = xs._interpolation[k]
+                Ehi = xs_x[i + 1]
+                xshi = xs_y[i + 1]
 
             # Evaluate each of the subdivisions
             dE = (Ehi - Elo) / float(_N_SUBDIVISIONS)
@@ -192,8 +170,8 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
                     temp_value += _WEIGHTS[p] * \
                         _integrand(Epoint, Eout, Estar, E0, alpha, most_of_eta,
                                    most_of_mu_cm, adist) * \
-                        _fast_tabulated1d(Epoint, Elo, Ehi, xslo, xshi,
-                                          interp_type)
+                        fast_tabulated1d_eval(Epoint, Elo, Ehi, xslo, xshi,
+                                              interp_type)
 
                 value += temp_value * (Ehi - Elo)
 
