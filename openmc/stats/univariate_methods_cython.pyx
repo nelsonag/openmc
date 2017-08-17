@@ -71,6 +71,7 @@ cpdef double tabular_call(object this, double x):
         return this_p[end_x]
     else:
         i = bisect(this_x, x) - 1
+
     xi = this_x[i]
     xi1 = this_x[i + 1]
     pi = this_p[i]

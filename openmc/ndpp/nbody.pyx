@@ -3,13 +3,10 @@
 #cython: nonecheck=False
 #cython: wraparound=False
 #cython: initializedcheck=False
-#cython: fast_gil=True
 
 
-cdef class NBody:
-    """ Class to contain the data and methods for a Nbody reaction; this is
-    the only distribution type with a class because it does not have a
-    pre-initialized edist and adist function available.
+cdef class NBody(EnergyAngle_Cython):
+    """ Class to contain the data and methods for a Nbody reaction.
     """
 
     def __init__(self, this, Ein):
@@ -20,18 +17,26 @@ cdef class NBody:
              Ein + this.q_value)
         # Estar is also ECM in some of the ENDF/NJOY references
         self.Estar = Ein * (1. / (this.atomic_weight_ratio + 1.))
+
         if this.n_particles == 3:
             self.C = 4. / (_PI * (self.Emax * self.Emax))
             self.exponent = 0.5
         elif this.n_particles == 4:
-            self.C = 105. / (32. * np.sqrt(self.Emax**7))
+            self.C = 105. / (32. * sqrt(self.Emax**7))
             self.exponent = 2
         elif this.n_particles == 5:
             self.C = 256. / (14. * _PI * (self.Emax**5))
             self.exponent = 3.5
 
-    cpdef get_domain(self, double Ein=0.):
-        return 0., self.Emax
+    cdef double eval(self, double mu, double Eout):
+        # Compute f(mu, Eout) for the nbody distribution
+        return self.C * sqrt(Eout) * (self.Emax - Eout) ** self.exponent
+
+    cpdef double Eout_min(self):
+        return 0.
+
+    cpdef double Eout_max(self):
+        return self.Emax
 
     cdef double mu_min(self, double Eout):
         cdef double value

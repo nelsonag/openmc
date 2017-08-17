@@ -48,7 +48,7 @@ def interpolate_uncorr(this, Ein):
     if this.angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = adist = Uniform(-1., 1.)
+        adist = Uniform(-1., 1.)
 
     return edist, adist
 
@@ -86,7 +86,7 @@ def interpolate_corr(this, Ein):
         # Now find the angular distribution at this Eout on the low grid
         if Eout_low >= domain_low[1]:
             j = len(this._energy_out[i]._x) - 2
-        elif Ein <= domain_low[0]:
+        elif Eout_low <= domain_low[0]:
             j = 0
         else:
             j = np.searchsorted(this._energy_out[i]._x, Eout_low) - 1
@@ -100,7 +100,7 @@ def interpolate_corr(this, Ein):
         Eout_high = x * dE_high + domain_high[0]
         if Eout_high >= domain_high[1]:
             j = len(this._energy_out[i + 1]._x) - 2
-        elif Ein <= domain_high[0]:
+        elif Eout_high <= domain_high[0]:
             j = 0
         else:
             j = np.searchsorted(this._energy_out[i + 1]._x, Eout_high) - 1
@@ -216,9 +216,7 @@ def interpolate_function(this, that, my_in, this_in, that_in, interp_type):
         return _interpolate_Mixture(this, that, my_in, this_in, that_in,
                                     interp_type)
     elif this is None:
-        # Then we have a uniform distribution which is the same as that
-        # so thus the interpolated distribution is also uniform, just return
-        # a uniform
+        # Then we have an isotropic distribution
         return Tabular(np.array([-1., 1.]), np.array([.5, .5]),
                        'histogram', True)
     else:

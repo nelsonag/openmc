@@ -3,6 +3,8 @@ import scipy.special as ss
 
 from .integrators import integrate
 
+import gc
+
 _DE_REL_THRESH = 1.E-6
 
 
@@ -23,7 +25,6 @@ def _linearizer(Ein_grid, func, args, tolerance):
     # Initialize output arrays
     Ein_output = []
     results_out = []
-
     # Initialize stack
     Ein_stack = [Ein_grid[0]]
     results_stack = [func(Ein_grid[0], *args)]
@@ -182,7 +183,7 @@ def _do_sab_inelastic(Ein, num_groups, num_angle, scatter_format, group_edges,
     return result
 
 
-def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func, method,
+def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func,
               mus_grid=None, wgts=None):
     # Initialize the storage
     results = np.zeros((this.num_groups, this.num_angle))
@@ -197,7 +198,7 @@ def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func, method,
                                   this.scatter_format, rxn.center_of_mass,
                                   awr, this.freegas_cutoff * kT, kT,
                                   rxn.q_value, mu_bins, this.order, xs_func,
-                                  method, mus_grid, wgts)
+                                  mus_grid, wgts)
 
         # Now normalize and multiply by applicability
         if this.scatter_format == 'legendre':

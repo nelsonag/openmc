@@ -9,8 +9,6 @@ import numpy as np
 import openmc.checkvalue as cv
 from openmc.mixin import EqualityMixin
 try:
-    import pyximport
-    pyximport.install(setup_args={'include_dirs': [np.get_include()]})
     from .univariate_methods_cython import *
 except ImportError:
     from .univariate_methods import *

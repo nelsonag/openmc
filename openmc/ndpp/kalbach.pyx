@@ -3,25 +3,11 @@
 #cython: nonecheck=False
 #cython: wraparound=False
 #cython: initializedcheck=False
-#cython: fast_gil=True
-
-from libc.math cimport sqrt, sinh, cosh
-
-from openmc.stats.bisect cimport bisect, bisect_int
-from .cevals cimport *
 
 
-cdef class KM:
+cdef class KM(EnergyAngle_Cython):
     """ Class to contain the data and methods for a Kalbach-Mann distribution;
     """
-    cdef double[:] slope_x
-    cdef double[:] slope_y
-    cdef long[:] slope_breakpoints
-    cdef long[:] slope_interpolation
-    cdef double[:] precompound_y
-    cdef double[:] edist_x
-    cdef double[:] edist_p
-    cdef int edist_interpolation
 
     def __init__(self, slope, precompound, edist):
         # Set our slope, precompound, and edist data
@@ -49,6 +35,9 @@ cdef class KM:
             self.edist_interpolation = LOGLOG
 
     def __call__(self, double mu, double Eout):
+        return self.eval(mu, Eout)
+
+    cdef double eval(self, double mu, double Eout):
         # Compute f(Eout) * g(mu, Eout) for the KM distribution
 
         cdef double a, r, f_Eout
@@ -57,7 +46,7 @@ cdef class KM:
         a = tabulated1d_eval_w_search_params(self.slope_x, self.slope_y,
                                              self.slope_breakpoints,
                                              self.slope_interpolation, Eout,
-                                             idx, interp_type)
+                                             &idx, &interp_type)
 
         if a == 0.:
             return 0.
@@ -71,6 +60,3 @@ cdef class KM:
                                   self.edist_interpolation, Eout)
             return f_Eout * 0.5 * a / sinh(a) * (cosh(a * mu) +
                                                  r * sinh(a * mu))
-
-    cpdef get_domain(self, double Ein=0.):
-        return self.edist_x[0], self.edist_x[self.edist_x.shape[0] - 1]

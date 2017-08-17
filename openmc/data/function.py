@@ -11,9 +11,6 @@ import openmc.checkvalue as cv
 from openmc.mixin import EqualityMixin
 from .data import EV_PER_MEV
 try:
-    import pyximport
-    pyximport.install(setup_args={'include_dirs': [np.get_include(),
-                                                   '../stats/']})
     from .function_methods_cython import *
 except ImportError:
     from .function_methods import *

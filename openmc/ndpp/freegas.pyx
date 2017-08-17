@@ -37,30 +37,35 @@ cdef double[::1] _WEIGHTS
 _POINTS, _WEIGHTS = roots_sh_legendre(_N_QUAD_ORDER)
 
 
-cdef inline double _integrand(double Er, double Eout, double Estar, double E0,
-                             double alpha, double most_of_eta,
-                             double most_of_mu_cm, object adist):
+cdef double _integrand(double Er, double Eout, double Estar, double E0,
+                       double alpha, double most_of_eta, double most_of_mu_cm,
+                       double[::1] adist_x, double[::1] adist_p,
+                       int adist_interp):
     cdef double mu_cm, eta, value
+
     mu_cm = 1. - most_of_mu_cm / Er
     eta = most_of_eta * sqrt(Er / Estar - 1.)
 
-    value = exp(-alpha * (Er - E0) + eta) * adist._eval(mu_cm) * i0e(eta)
+    value = exp(-alpha * (Er - E0) + eta) * i0e(eta) * \
+        tabular_eval(adist_x, adist_p, adist_interp, mu_cm)
 
     return value
 
 
-cpdef calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
-                           double beta, double alpha, double awr, double kT,
-                           double half_beta_2, object adist, double[::1] xs_x,
-                           double[::1] xs_y, long[::1] xs_bpts,
-                           long[::1] xs_interp, double[::1] results):
+cdef void calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
+                               double beta, double alpha, double awr, double kT,
+                               double half_beta_2, double[::1] adist_x,
+                               double[::1] adist_p, int adist_interp,
+                               double[::1] xs_x, double[::1] xs_y,
+                               long[::1] xs_bpts, long[::1] xs_interp,
+                               double[::1] results):
 
     cdef double root_in_out, E0, Estar, most_of_eta, b, xc, minE, maxE, value
     cdef double inv_kappa, G, most_of_mu_cm, dE, flo, fhi, mu_l
     cdef int i, u
 
     root_in_out = sqrt(Ein * Eout)
-    for u in range(len(mus)):
+    for u in range(mus.shape[0]):
         mu_l = mus[u]
         E0 = Ein / awr - beta * root_in_out * mu_l
         Estar = half_beta_2 * (Ein + Eout - 2. * root_in_out * mu_l)
@@ -80,11 +85,12 @@ cpdef calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
         # Perform trapezoidal integration over all the Eout points
         value = 0.
         fhi = _integrand(minE, Eout, Estar, E0, alpha, most_of_eta,
-                         most_of_mu_cm, adist)
+                         most_of_mu_cm, adist_x, adist_p, adist_interp)
         for i in range(_N_EOUTS_CXS - 1):
             flo = fhi
             fhi = _integrand(minE + float(i + 1) * dE, Eout, Estar, E0, alpha,
-                             most_of_eta, most_of_mu_cm, adist)
+                             most_of_eta, most_of_mu_cm, adist_x, adist_p,
+                             adist_interp)
             value += flo + fhi
         value *= (maxE - minE) * 0.5
 
@@ -99,12 +105,14 @@ cpdef calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
         results[u] = G * value
 
 
-cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
-                               double beta, double alpha, double awr,
-                               double kT, double half_beta_2, object adist,
-                               double[::1] xs_x, double[::1] xs_y,
-                               long[::1] xs_bpts, long[::1] xs_interp,
-                               double[::1] results):
+cdef void calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
+                                   double beta, double alpha, double awr,
+                                   double kT, double half_beta_2,
+                                   double[::1] adist_x, double[::1] adist_p,
+                                   int adist_interp, double[::1] xs_x,
+                                   double[::1] xs_y, long[::1] xs_bpts,
+                                   long[::1] xs_interp, double[::1] results):
+
     cdef double root_in_out, E0, Estar, most_of_eta, b, xc, minE, maxE, value
     cdef double inv_kappa, G, most_of_mu_cm, Epoint, mu_l
     cdef long i, start, end, s, p, k, u
@@ -112,7 +120,7 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
     cdef double Elo, Ehi, xslo, xshi, dE, Esub_lo, Esub_hi, temp_value, xs_Ein
 
     root_in_out = sqrt(Ein * Eout)
-    for u in range(len(mus)):
+    for u in range(mus.shape[0]):
         mu_l = mus[u]
         E0 = Ein / awr - beta * root_in_out * mu_l
         Estar = half_beta_2 * (Ein + Eout - 2. * root_in_out * mu_l)
@@ -169,7 +177,8 @@ cpdef calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
                     Epoint = _POINTS[p] * dE + Esub_lo
                     temp_value += _WEIGHTS[p] * \
                         _integrand(Epoint, Eout, Estar, E0, alpha, most_of_eta,
-                                   most_of_mu_cm, adist) * \
+                                   most_of_mu_cm, adist_x, adist_p,
+                                   adist_interp) * \
                         fast_tabulated1d_eval(Epoint, Elo, Ehi, xslo, xshi,
                                               interp_type)
 

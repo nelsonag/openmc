@@ -6,9 +6,10 @@ from openmc.data import KalbachMann, UncorrelatedAngleEnergy, \
     CorrelatedAngleEnergy, LevelInelastic, NBodyPhaseSpace, Uniform
 from .interpolators import *
 from .cython_integrators import *
+from .uncorrelated import Uncorrelated
+from .correlated import Correlated
 from .kalbach import KM
 from .nbody import NBody
-from .angle_distributions import *
 from .freegas import *
 
 
@@ -36,8 +37,8 @@ _FGK_RESULT = np.empty_like(_MU_BACK)
 
 
 def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
-              q_value, mus=None, order=None, xs=None, freegas_method='cxs',
-              mus_grid=None, wgts=None):
+              q_value, mus=None, order=None, xs=None, mus_grid=None,
+              wgts=None):
     """Integrates this distribution at a given incoming energy,
     over a given lab-frame mu range and given outgoing energy bounds.
 
@@ -77,12 +78,6 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
         result. Required if scatter_format is 'histogram.'
     xs : openmc.data.Tabulated1D, optional
         Cross sections. Only used if performing free-gas kernel integration.
-    freegas_method : {'cxs' or 'doppler'}, optional
-        The method to be used for the cross section of the target. If `cxs` is
-        provided, the constant cross-section free-gas kernel will be used. If
-        `doppler` is provided, then the cross section variation is included in
-        the free-gas kernel. The `doppler` method can only be used if `0K`
-        elastic scattering data is present in the `library`. Defaults to `cxs`.
     mus_grid : numpy.ndarray of float
         Array of lab-frame mu values to use when quadrature integrating the
         freegas kernel; passed in here to avoid re-calculating at every Ein;
@@ -104,9 +99,8 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
         order = None
         if mus is None:
             mus = np.array([-1., 1.])
-
-    # Then make sure the order is similarly consistent
-    if scatter_format == 'legendre' and order is None:
+    elif scatter_format == 'legendre' and order is None:
+        # Then make sure the order is similarly consistent
         raise ValueError("order cannot be 'None' if scatter_format is "
                          "'legendre'")
 
@@ -114,13 +108,8 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
     if isinstance(this, UncorrelatedAngleEnergy):
         if this.energy is None or isinstance(this.energy, LevelInelastic):
             if Ein <= freegas_cutoff and q_value == 0.:
-                # Set the freegas method flag now
-                if freegas_method == 'cxs':
-                    use_cxs = True
-                else:
-                    use_cxs = False
                 return _integrate_twobody_cm_freegas(this, Ein, Eouts, order,
-                                                     mus, awr, kT, xs, use_cxs,
+                                                     mus, awr, kT, xs,
                                                      mus_grid, wgts)
             else:
                 return _integrate_twobody_cm_TAR(this, Ein, Eouts, awr,
@@ -148,7 +137,7 @@ def _preprocess_kalbach(this, Ein):
     # Generate the distribution via interpolation
     edist, precompound, slope = interpolate_kalbach(this, Ein)
 
-    return unity, KM(slope, precompound, edist), ()
+    return KM(slope, precompound, edist)
 
 
 def _preprocess_uncorr(this, Ein):
@@ -170,7 +159,7 @@ def _preprocess_uncorr(this, Ein):
     # Generate the distribution via interpolation
     edist, adist = interpolate_uncorr(this, Ein)
 
-    return edist, adist, ()
+    return Uncorrelated(adist, edist)
 
 
 def _preprocess_corr(this, Ein):
@@ -190,14 +179,15 @@ def _preprocess_corr(this, Ein):
     # Generate the distribution via interpolation
     edist, adists = interpolate_corr(this, Ein)
 
-    return edist, adist_correlated, (edist._x, adists)
+    return Correlated(adists, edist)
 
 
 def _preprocess_nbody(this, Ein):
     """Performs the interpolation and builds the energy and angular
     distributions for use in the integration routines
     """
-    return NBody(this, Ein), (), ()
+
+    return NBody(this, Ein)
 
 
 ###############################################################################
@@ -205,20 +195,8 @@ def _preprocess_nbody(this, Ein):
 ###############################################################################
 
 
-def max_func(Eout, func, mu, args):
-    # Function used to find the maximum value of the FGK(Eout) at a given mu
-    func(mu, Eout, *args, _FGK_RESULT)
-    return -_FGK_RESULT[0]
-
-
-def root_func(Eout, func, mu, args, value):
-    # Function used to find the root of the FGK(Eout) at a given mu
-    func(mu, Eout, *args, _FGK_RESULT)
-    return _FGK_RESULT[0] - value
-
-
 def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
-                                  use_cxs, mus_grid, wgts):
+                                  mus_grid, wgts):
     """Integrates this distribution at a given incoming energy,
     over a given lab-frame mu range and given outgoing energy bounds
     for a target-in-motion.
@@ -228,13 +206,30 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     if this._angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = Uniform(-1., 1.)
+        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                        'histogram')
 
-    # Set our function to use (whether constant xs or doppler)
-    if use_cxs:
-        func = calc_Er_integral_cxs
-    else:
-        func = calc_Er_integral_doppler
+    # If the angular distribution is ONLY tabular, then the freegas integrands
+    # can be written more explicitly, giving much needed speed (4x) in free-gas
+    # integration (note the same could be done for target-at-rest two-body, but
+    # those integration routines are nearly instantaneous anyways and so the
+    # extra lines provide no value)
+    if isinstance(adist, Uniform):
+        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                        'histogram')
+
+    # For the same reasons as the above block, convert the string interpolation
+    # keys to integers
+    if adist._interpolation == 'histogram':
+        adist_interp = 1
+    elif adist._interpolation == 'linear-linear':
+        adist_interp = 2
+    elif adist._interpolation == 'linear-log':
+        adist_interp = 3
+    elif adist._interpolation == 'log-linear':
+        adist_interp = 4
+    elif adist._interpolation == 'log-log':
+        adist_interp = 5
 
     # Set up results vector
     if order is not None:
@@ -247,28 +242,32 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     beta = (awr + 1.) / awr
     half_beta_2 = 0.25 * beta * beta
     alpha = awr / kT
-    args = (Ein, beta, alpha, awr, kT, half_beta_2, adist, xs._x, xs._y,
-            xs._breakpoints, xs._interpolation)
+    srch_args = (Ein, beta, alpha, awr, kT, half_beta_2, adist._x, adist._p,
+                 adist_interp, xs._x, xs._y, xs._breakpoints,
+                 xs._interpolation)
 
     # Find the Eout bounds
-    # We will search both backward and forward scatterign conditions to see
+    # We will search both backward and forward scattering conditions to see
     # what the most extreme outgoing energies we need to consider are
 
     # Do the following for backward scattering
     # Now find the maximum value so we can bracket our range and also use it
     # to find our roots (when function passes tolerance * max)
-    maximum = sopt.minimize_scalar(
-        max_func, bracket=[0., Ein + 12. / alpha], args=(func, _MU_BACK, args))
+    maximum = sopt.minimize_scalar(find_freegas_integral_max,
+                                   bracket=[0., Ein + 12. / alpha],
+                                   args=(_MU_BACK, *srch_args, _FGK_RESULT))
     Eout_peak = maximum.x
     func_peak = -maximum.fun
 
     # Now find the upper and lower roots around this peak
     Eout_min_back = \
-        sopt.brentq(root_func, Eouts[0], Eout_peak,
-                    args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
+        sopt.brentq(find_freegas_integral_root, Eouts[0], Eout_peak,
+                    args=(_MU_BACK, *srch_args, _FGK_RESULT,
+                          _FGK_ROOT_TOL * func_peak))
     Eout_max_back = \
-        sopt.brentq(root_func, Eout_peak, Eouts[-1],
-                    args=(func, _MU_BACK, args, _FGK_ROOT_TOL * func_peak))
+        sopt.brentq(find_freegas_integral_root, Eout_peak, Eouts[-1],
+                    args=(_MU_BACK, *srch_args, _FGK_RESULT,
+                          _FGK_ROOT_TOL * func_peak))
 
     # Now we have to repeat for the top end;
     # Here we dont do mu=1, since the problem is unstable at mu=1, Ein=Eout,
@@ -277,15 +276,18 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     # root check even with pretty low tolerances).
     # Instead we search at mu=0.9 and linearly interpolate to mu=1.
     maximum = \
-        sopt.minimize_scalar(max_func, bracket=[0., Ein + 12. / alpha],
-                             args=(func, _MU_FWD, args))
+        sopt.minimize_scalar(find_freegas_integral_max,
+                             bracket=[0., Ein + 12. / alpha],
+                             args=(_MU_FWD, *srch_args, _FGK_RESULT))
     Eout_peak = maximum.x
     func_peak = -maximum.fun
-    Eout_min_fwd = sopt.brentq(root_func, Eouts[0], Eout_peak,
-                               args=(func, _MU_FWD, args,
+    Eout_min_fwd = sopt.brentq(find_freegas_integral_root,
+                               Eouts[0], Eout_peak,
+                               args=(_MU_FWD, *srch_args, _FGK_RESULT,
                                      _FGK_ROOT_TOL * func_peak))
-    Eout_max_fwd = sopt.brentq(root_func, Eout_peak, Eouts[-1],
-                               args=(func, _MU_FWD, args,
+    Eout_max_fwd = sopt.brentq(find_freegas_integral_root,
+                               Eout_peak, Eouts[-1],
+                               args=(_MU_FWD, *srch_args, _FGK_RESULT,
                                      _FGK_ROOT_TOL * func_peak))
 
     Eout_min_fwd = (1. - _INTERP_MU) * Eout_min_back + \
@@ -297,11 +299,15 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
 
     # Finally, perform the integration
     if order is not None:
-        integrate_legendres_freegas(func, Ein, Eouts, args, grid, integral,
-                                    mus_grid, wgts, Eout_min, Eout_max)
+        integrate_legendres_freegas(Ein, Eouts, beta, alpha, awr, kT,
+                                    half_beta_2, adist._x, adist._p,
+                                    adist_interp, xs._x, xs._y,
+                                    xs._breakpoints, xs._interpolation,
+                                    grid, integral, mus_grid, wgts, Eout_min,
+                                    Eout_max)
     else:
-        integrate_histogram_freegas(func, Ein, Eouts, mus, args, grid,
-                                    integral, Eout_min, Eout_max)
+        integrate_histogram_freegas(Ein, Eouts, mus, *args, grid, integral,
+                                    Eout_min, Eout_max)
     return integral
 
 
@@ -347,31 +353,112 @@ def _integrate_generic_cm(this, Ein, Eouts, awr, order, mus, mus_grid, wgts):
 
     # Pre-process to obtain our energy and angle distributions
     if isinstance(this, UncorrelatedAngleEnergy):
-        edist, adist, adist_args = _preprocess_uncorr(this, Ein)
-        Eout_cm_max = edist.get_domain(Ein)[1]
-
+        eadist = _preprocess_uncorr(this, Ein)
     elif isinstance(this, KalbachMann):
-        # Since a Kalbach-Mann specific c-class exists to provide the
-        # data needed for evaluating a KM distribution, this one will look
-        # different than Uncorrelated and Correlated cases.  Here, the adist
-        # is actually the KM class, and edist is simply a function that
-        # returns 1.0 regardless of the value requested.
-        edist, adist, adist_args = _preprocess_kalbach(this, Ein)
-        Eout_cm_max = adist.get_domain(Ein)[1]
-
+        eadist = _preprocess_kalbach(this, Ein)
     elif isinstance(this, CorrelatedAngleEnergy):
-        edist, adist, adist_args = _preprocess_corr(this, Ein)
-        Eout_cm_max = edist.get_domain(Ein)[1]
-
+        eadist = _preprocess_corr(this, Ein)
     elif isinstance(this, NBodyPhaseSpace):
-        edist, adist, adist_args = _preprocess_nbody(this, Ein)
-        Eout_cm_max = edist.get_domain(Ein)[1]
+        eadist = _preprocess_nbody(this, Ein)
 
     # Call our integration routine
-    integrate_cm(Ein, Eouts, Eout_cm_max, awr, integral, edist,
-                 adist, adist_args, order is not None,
-                 mus)
+    Eout_max = eadist.Eout_max()
+    integrate_cm(Ein, Eouts, Eout_max, awr, integral, eadist,
+                 order is not None, mus)
+
     return integral
+
+
+def _integrand_cm(mu_l, Eo_l, c, Ein, eadist):
+    J = 1. / np.sqrt(1. + c * c - 2. * c * mu_l)
+    Eo_cm = Eo_l / (J * J)
+    mu_cm = J * (mu_l - c)
+    return eadist(mu_cm, Eo_cm)
+
+
+def _integrate_cm(Ein, Eouts, Eout_cm_max, awr, integral, eadist, legendre,
+                  mus):
+
+    orders = integral.shape[1]
+    import scipy.special as ss
+    from numpy import sqrt
+    _POINTS, _WEIGHTS = ss.roots_sh_legendre(20)
+    _FMU = np.empty(20)
+    _N_EOUT = 201
+    _N_EOUT_DOUBLE = 201.
+    _MIN_C2 = 25. * 25.
+
+    inv_awrp1 = 1. / (awr + 1.)
+    Eout_l_min = max(Ein * inv_awrp1 * inv_awrp1 / _MIN_C2, Eouts[0])
+    Eout_l_max = min(Ein * (sqrt(Eout_cm_max / Ein) + inv_awrp1)**2,
+                     Eouts[Eouts.shape[0] - 1])
+
+    dE = (Eout_l_max - Eout_l_min) / (_N_EOUT_DOUBLE - 1.)
+
+    # Find the group of Eout_l_min
+    g = np.searchsorted(Eouts, Eout_l_min) - 1
+
+    Eout = Eout_l_min - dE
+    y = np.zeros(integral.shape[1])
+    y_prev = np.zeros_like(y)
+    for eo in range(_N_EOUT):
+        Eout_prev = Eout
+        if eo == _N_EOUT - 1:
+            Eout = Eouts[integral.shape[0]]
+        else:
+            Eout += dE
+        y_prev = y
+        c = inv_awrp1 * sqrt(Ein / Eout)
+        mu_l_min = (1. + c * c - Eout_cm_max / Eout) / (2. * c)
+
+        # Make sure we stay in the allowed bounds
+        if mu_l_min < -1.:
+            mu_l_min = -1.
+        elif mu_l_min > 1.:
+            break
+
+        if legendre:
+            dmu = 1. - mu_l_min
+            for p in range(20):
+                u = _POINTS[p] * dmu + mu_l_min
+                _FMU[p] = _WEIGHTS[p] * _integrand_cm(u, Eout, c, Ein, eadist)
+
+            for l in range(orders):
+                y[l] = 0.
+                for p in range(20):
+                    u = _POINTS[p] * dmu + mu_l_min
+                    y[l] += _FMU[p] * ss.eval_legendre(l, u)
+                y[l] *= dmu
+        else:
+            fixed_quad_histogram(_integrand_cm, mus, (Eout, c, Ein, eadist),
+                                 y[:], mu_l_min, 1.)
+
+        if eo > 0:
+            # Perform the running integration of our point according to the
+            # outgoing group of Eout
+
+            # First, if the Eout point is above the next group boundary, then
+            # we are straddling the line and we only include the portion for the
+            # current group
+            if Eout > Eouts[g + 1]:
+                # Include the integral up to the group boundary only
+                f = (Eouts[g + 1] - Eout_prev) / (Eout - Eout_prev)
+                a = 0.5 * (Eouts[g + 1] - Eout_prev)
+                b = 0.5 * (Eout - Eouts[g + 1])
+                for l in range(orders):
+                    yg = (1. - f) * y[l]  + f * y_prev[l]
+                    integral[g, l] += a * (y_prev[l] + yg)
+                    # And add the top portion to the next group
+                    integral[g + 1, l] += b * (yg + y[l])
+                # Move our group counter to the next group
+                g += 1
+            else:
+                # Then there is no group straddling, so just do a standard
+                # trapezoidal integration
+                a = 0.5 * (Eout - Eout_prev)
+                for l in range(orders):
+                    integral[g, l] += a * (y_prev[l] + y[l])
+
 
 
 ###############################################################################
@@ -394,25 +481,19 @@ def _integrate_generic_lab(this, Ein, Eouts, order, mus, mus_grid, wgts):
 
     legendre = order is not None
 
-    # Pre-process and call the correct method
+    # Pre-process and call the distribution-type specific method
     if isinstance(this, UncorrelatedAngleEnergy):
-        edist, adist, adist_args = _preprocess_uncorr(this, Ein)
-        integrate_uncorr_lab(Ein, Eouts, integral, grid, mus_grid, wgts, edist,
-                             adist, adist_args, legendre, mus)
-
-    elif isinstance(this, KalbachMann):
-        # Raise an error to allow for notification of non-ENDF-102
-        # compliant behavior.
-        raise NotImplementedError("Lab-Frame Kalbach-Mann Distribution "
-                                  "Not Supported")
+        eadist = _preprocess_uncorr(this, Ein)
+        integrate_uncorr_lab(Ein, Eouts, integral, grid, mus_grid, wgts,
+                             eadist, legendre, mus)
 
     elif isinstance(this, CorrelatedAngleEnergy):
-        edist, adist, adist_args = _preprocess_corr(this, Ein)
-        integrate_corr_lab(Ein, Eouts, integral, grid, mus_grid, wgts, edist,
-                           adist, adist_args, legendre, mus)
+        eadist = _preprocess_corr(this, Ein)
+        integrate_corr_lab(Ein, Eouts, integral, grid, mus_grid, wgts, eadist,
+                           legendre, mus)
 
     elif isinstance(this, NBodyPhaseSpace):
-        edist, adist, adist_args = _preprocess_nbody(this, Ein)
-        integrate_nbody_lab(Ein, Eouts, integral, grid, edist, legendre, mus)
+        eadist = _preprocess_nbody(this, Ein)
+        integrate_nbody_lab(Ein, Eouts, integral, grid, eadist, legendre, mus)
 
     return integral

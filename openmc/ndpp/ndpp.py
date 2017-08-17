@@ -16,6 +16,7 @@ from openmc.mgxs import EnergyGroups
 import openmc.checkvalue as cv
 from . import NDPP_VERSION_MAJOR
 from .evaluators import *
+from .cython_integrators import set_freegas_method
 
 if sys.version_info[0] >= 3:
     basestring = str
@@ -721,8 +722,10 @@ class Ndpp(object):
         # the multiprocessing pool
         func_args = (awr, self.library.reactions[2],
                      self.library.reactions[2].products[0], self, kT, mu_bins,
-                     self.library.reactions[2].xs[strT],
-                     self.freegas_method, mus_grid, wgts)
+                     self.library.reactions[2].xs[strT], mus_grid, wgts)
+
+        # Set the free-gas method to use
+        set_freegas_method(self.freegas_method == 'cxs')
 
         # Set the arguments for our linearize function, except dont yet include
         # the Ein grid points (the first argument), since that will be
@@ -847,7 +850,7 @@ class Ndpp(object):
             # These have to be aggregated into a tuple to support the usage of
             # the multiprocessing pool
             func_args = (awr, rxn, products[r], self, kT, mu_bins, xs_funcs[r],
-                         self.freegas_method, mus_grid, wgts)
+                         mus_grid, wgts)
 
             # Set the arguments for our linearize function, except dont yet
             # include the Ein grid points (the first argument), since that will

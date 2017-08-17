@@ -25,7 +25,7 @@ with open('openmc/__init__.py', 'r') as f:
 kwargs = {'name': 'openmc',
           'version': version,
           'packages': ['openmc', 'openmc.data', 'openmc.mgxs', 'openmc.model',
-                       'openmc.stats'],
+                       'openmc.stats', 'openmc.ndpp'],
           'scripts': glob.glob('scripts/openmc-*'),
 
           # Metadata
@@ -70,23 +70,35 @@ if have_cython:
     extensions = [
         Extension("openmc.data.function_methods_cython",
                   ['openmc/data/function_methods_cython.pyx'],
-                  include_dirs=[np.get_include()],
-                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
+                  include_dirs=[np.get_include()]),
         Extension("openmc.data.reconstruct",
                   ['openmc/data/reconstruct.pyx'],
-                  include_dirs=[np.get_include()],
-                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
+                  include_dirs=[np.get_include()]),
         Extension("openmc.stats.univariate_methods_cython",
                   ['openmc/stats/univariate_methods_cython.pyx'],
-                  include_dirs=[np.get_include()],
-                  extra_compile_args=['-O3'], extra_link_args=['-O3']),
-        Extension("openmc.ndpp",
-                  ['openmc/ndpp/*.pyx'],
-                  include_dirs=[np.get_include()],
-                  extra_compile_args=['-O3'], extra_link_args=['-O3'])]
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.stats.bisect", ['openmc/stats/bisect.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.cevals", ['openmc/ndpp/cevals.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.correlated", ['openmc/ndpp/correlated.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.cython_integrators",
+                  ['openmc/ndpp/cython_integrators.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.energyangledist",
+                  ['openmc/ndpp/energyangledist.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.freegas", ['openmc/ndpp/freegas.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.kalbach", ['openmc/ndpp/kalbach.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.nbody", ['openmc/ndpp/nbody.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.uncorrelated", ['openmc/ndpp/uncorrelated.pyx'],
+                  include_dirs=[np.get_include()])]
     kwargs.update({
         'ext_modules': cythonize(extensions)
     })
 
 setup(**kwargs)
-
