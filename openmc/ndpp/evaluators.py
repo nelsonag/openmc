@@ -3,7 +3,6 @@ import scipy.special as ss
 
 from .integrators import integrate
 
-import gc
 
 _DE_REL_THRESH = 1.E-6
 

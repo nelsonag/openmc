@@ -17,20 +17,25 @@ cdef int LOGLIN = 4
 cdef int LOGLOG = 5
 
 
-cdef double tabular_eval(double[:] this_x, double[:] this_p, int interpolation,
-                         double x)
+cdef double discrete_eval(double[:] this_x, double[:] this_p, size_t end_x,
+                          double x)
+
+
+cdef double tabular_eval(double[:] this_x, double[:] this_p, size_t end_x,
+                         int interpolation, double x)
 
 
 cdef double tabular_eval_w_search_params(double[:] this_x, double[:] this_p,
-                                         int interpolation, double x, size_t* i)
+                                         size_t end_x, int interpolation,
+                                         double x, size_t* i)
 
 
-cdef double tabulated1d_eval(double[:] this_x, double[:] this_y,
+cdef double tabulated1d_eval(double[:] this_x, double[:] this_y, size_t end_x,
                                     long[:] breakpoints, long[:] interpolation,
                                     double x)
 
 cdef double tabulated1d_eval_w_search_params(double[:] this_x, double[:] this_y,
-                                             long[:] breakpoints,
+                                             size_t end_x, long[:] breakpoints,
                                              long[:] interpolation, double x,
                                              size_t* idx, int* interp_type)
 

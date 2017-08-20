@@ -271,7 +271,8 @@ class NdppLibrary(object):
                 result = ndpp
         return result
 
-    def process_and_write(self, path='ndpp_lib.h5', mode='a'):
+    def process_and_write(self, path='ndpp_lib.h5', mode='a',
+                          keep_in_memory=False):
         """Create an hdf5 file that can be used for a simulation by first
         computing and then writing the isotopic data.
 
@@ -282,6 +283,9 @@ class NdppLibrary(object):
         mode : {'r', r+', 'w', 'x', 'a'}
             Mode that is used to open the HDF5 file.
             This is the second argument to the :class:`h5py.File` constructor.
+        keep_in_memory : logical
+            Whether or not to keep each Ndpp object in RAM after it has been
+            written to disk. Defaults to False to reduce RAM consumption
 
         """
 
@@ -301,10 +305,12 @@ class NdppLibrary(object):
             f.attrs['freegas_cutoff'] = self.freegas_cutoff
         f.attrs['freegas_method'] = np.string_(self.freegas_method)
 
-        for ndpp in self.ndpps:
+        for n, ndpp in enumerate(self.ndpps):
             print("Evaluating " + ndpp.name)
             ndpp.process()
             ndpp.to_hdf5(f)
+            if not keep_in_memory:
+                self.ndpps[n] = None
 
         f.close()
 

@@ -10,8 +10,8 @@ cdef class EnergyAngle_Cython:
     Correlated, Uncorrelated, and NBody distribution;
     """
 
-    cdef double[:] edist_x
-    cdef double[:] edist_p
+    cdef double[::1] edist_x
+    cdef double[::1] edist_p
     cdef int edist_interpolation
 
     cpdef double Eout_min(self)

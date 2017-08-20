@@ -49,7 +49,7 @@ cdef double _MIN_C = 25.
 cdef double _MIN_C2 = _MIN_C * _MIN_C
 
 # Function pointer to use for free-gas integration
-cdef CALC_ER_INTEGRAL _FREEGAS_FUNCTION# = calc_Er_integral_cxs
+cdef CALC_ER_INTEGRAL _FREEGAS_FUNCTION
 
 
 ###############################################################################

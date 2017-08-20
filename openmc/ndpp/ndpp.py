@@ -782,6 +782,10 @@ class Ndpp(object):
         self.elastic[strT] = np.concatenate((self.elastic[strT],
                                              [self.elastic[strT][-1, :, :]]))
 
+        print(self.elastic_energy[strT].shape[0], self.elastic[strT].shape,
+              sys.getsizeof(self.elastic_energy[strT]),
+              sys.getsizeof(self.elastic[strT]))
+
     def _compute_inelastic(self, kT, strT):
         """Computes the pre-processed energy-angle data from the inelastic
         scattering reactions of an IncidentNeutron dataset.
@@ -886,13 +890,23 @@ class Ndpp(object):
                                                      return_index=True)
             rxn_results[r] = rxn_results[r][unique_indices, ...]
 
+            print(rxn_grids[r].shape[0], rxn_results[r].shape,
+                  sys.getsizeof(rxn_grids[r]), sys.getsizeof(rxn_results[r]))
+
         # Now combine the data on to a unionized energy grid
+        # The inelastic data can have many points and so we have to do this
+        # in a memory conscious way.
+        # So, we will attack the problem by thinning according to the user's
+        # chosen tolerance as we go
         print("\t\t Combining Reactions")
         Ein_grid = reduce(np.union1d, rxn_grids)
-        self.nu_inelastic = np.zeros((len(Ein_grid),) +
-                                     rxn_results[0].shape[1:])
+        new_Ein_grid = []
+        nu_inelastic = []
 
+        # Now step through each point, compare with the neighbors and see if
+        # it is necessary
         for e, Ein in enumerate(Ein_grid):
+            combined = np.zeros(rxn_results[0].shape[1:])
             for r in range(len(rxn_grids)):
                 if Ein > thresholds[r]:
                     # Find the corresponding point
@@ -905,15 +919,51 @@ class Ndpp(object):
                     f = (Ein - rxn_grids[r][i]) / \
                         (rxn_grids[r][i + 1] - rxn_grids[r][i])
 
-                    self.nu_inelastic[e, ...] += \
-                        (1. - f) * rxn_results[r][i, ...] + \
+                    combined += (1. - f) * rxn_results[r][i, ...] + \
                         f * rxn_results[r][i + 1, ...]
 
-        # Finally add a top point to use as interpolation
-        Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
-        self.inelastic_energy = Ein_grid
-        self.nu_inelastic = np.concatenate((self.nu_inelastic,
-                                            [self.nu_inelastic[-1, :, :]]))
+            if len(nu_inelastic) >= 2:
+                # If we have enough points already, use our latest point,
+                # in combined, and the point calculated (and kept) 2 times ago,
+                # and see if the point calculated (and kept) immediately prior
+                # to this is useful
+
+                # Find the interpolable result
+                f = (new_Ein_grid[-1] - new_Ein_grid[-2]) / \
+                    (Ein - new_Ein_grid[-2])
+                results_interp = (1. - f) * nu_inelastic[-2] + f * combined
+
+                # Now see if the interpolable result is within our tolerance
+                # if it is, keep it.
+                error = np.subtract(results_interp, nu_inelastic[-1])
+                # Avoid division by 0 errors since they are fully expected
+                # with our sparse results
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    error = np.abs(np.nan_to_num(np.divide(error,
+                                                           nu_inelastic[-1])))
+
+                if np.all(error < self.tolerance):
+                    # If the error is sufficiently small, the middle point is
+                    # not needed
+                    del new_Ein_grid[-1]
+                    del nu_inelastic[-1]
+
+            # No matter what, add the top point
+            new_Ein_grid.append(Ein)
+            nu_inelastic.append(combined)
+
+        # Duplicate the top point to help with interpolation if Ein is
+        # exactly equal in the Monte Carlo code to the top energy
+        new_Ein_grid.append(Ein)
+        nu_inelastic.append(combined)
+
+        # And convert to a numpy array, and then explicitly our memory
+        # before we go on and make a copy of nu_inelastic again as we remove
+        # the nu below.
+        self.inelastic_energy = np.array(new_Ein_grid)
+        self.nu_inelastic = np.array(nu_inelastic)
+        nu_inelastic = []
+        new_Ein_grid = []
 
         # Convert the nu_inelastic data into inelastic data, we will do this by
         # normalizing nu_inelastic and scale by the inelastic_xs

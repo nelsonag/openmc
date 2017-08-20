@@ -44,6 +44,7 @@ cdef class KM(EnergyAngle_Cython):
         cdef int interp_type
         cdef size_t idx
         a = tabulated1d_eval_w_search_params(self.slope_x, self.slope_y,
+                                             self.slope_x.shape[0] - 1,
                                              self.slope_breakpoints,
                                              self.slope_interpolation, Eout,
                                              &idx, &interp_type)
@@ -57,6 +58,7 @@ cdef class KM(EnergyAngle_Cython):
                                       self.precompound_y[idx + 1], interp_type)
 
             f_Eout = tabular_eval(self.edist_x, self.edist_p,
+                                  self.edist_x.shape[0] - 1,
                                   self.edist_interpolation, Eout)
             return f_Eout * 0.5 * a / sinh(a) * (cosh(a * mu) +
                                                  r * sinh(a * mu))

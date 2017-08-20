@@ -4,13 +4,48 @@
 #cython: wraparound=False
 #cython: initializedcheck=False
 
+from openmc.stats import Tabular, Uniform, Discrete
+import numpy as np
+
 
 cdef class Correlated(EnergyAngle_Cython):
     """ Class to contain the data and methods for a correlated distribution;
     """
 
     def __init__(self, list adists, edist):
-        self.adists = adists
+        cdef size_t num_adists = len(adists)
+        cdef size_t max_x, i, j
+
+        # Find the maximum dimension for the angular distribution data
+        max_x = 0
+        for i in range(num_adists):
+            if len(adists[i]._x) > max_x:
+                max_x = len(adists[i]._x)
+
+        # Now store the data
+        self.adists_x = cvarray(shape=(num_adists, max_x),
+                                itemsize=sizeof(double), format="d")
+        self.adists_p = cvarray(shape=(num_adists, max_x),
+                                itemsize=sizeof(double), format="d")
+        self.adists_type = cvarray(shape=(num_adists,), itemsize=sizeof(int),
+                                   format="i")
+        self.adists_dim = cvarray(shape=(num_adists,), itemsize=sizeof(int),
+                                   format="i")
+
+        for i in range(num_adists):
+            self.adists_dim[i] = len(adists[i]._x)
+            for j in range(self.adists_dim[i]):
+                self.adists_x[i, j] = adists[i]._x[j]
+                self.adists_p[i, j] = adists[i]._p[j]
+            if isinstance(adists[i], Tabular):
+                self.adists_type[i] = _ADIST_TYPE_TABULAR
+            elif isinstance(adists[i], Uniform):
+                self.adists_type[i] = _ADIST_TYPE_UNIFORM
+            elif isinstance(adists[i], Discrete):
+                self.adists_type[i] = _ADIST_TYPE_DISCRETE
+            else:
+                raise ValueError("Invalid Angular Distribution Type")
+
         self.edist_x = edist._x
         self.edist_p = edist._p
         if edist._interpolation == 'histogram':
@@ -29,14 +64,14 @@ cdef class Correlated(EnergyAngle_Cython):
 
     cdef double eval(self, double mu, double Eout):
         # Compute f(Eout) * g(mu, Eout) for the correlated distribution
-
-        cdef double f_Eout
+        cdef double f, g
         cdef size_t i
         cdef double interpolant
+        cdef int max_x
 
-        f_Eout = tabular_eval_w_search_params(self.edist_x, self.edist_p,
-                                              self.edist_interpolation, Eout,
-                                              &i)
+        f = tabular_eval_w_search_params(self.edist_x, self.edist_p,
+                                         self.edist_x.shape[0] - 1,
+                                         self.edist_interpolation, Eout, &i)
 
         # Pick the nearest angular distribution (consistent with OpenMC)
         # Make sure the Eout points are not the same value (this happens in a
@@ -51,5 +86,15 @@ cdef class Correlated(EnergyAngle_Cython):
             if interpolant > 0.5:
                 i += 1
 
-        # Now evaluate and return our resultant angular distribution
-        return f_Eout * self.adists[i]._eval(mu)
+        # Now find the angular distribution value
+        max_x = self.adists_dim[i] - 1
+        if self.adists_type[i] == _ADIST_TYPE_TABULAR:
+            g = tabular_eval(self.adists_x[i, :], self.adists_p[i, :],
+                             max_x, LINLIN, mu)
+        elif self.adists_type[i] == _ADIST_TYPE_UNIFORM:
+            g = 0.5
+        elif self.adists_type[i] == _ADIST_TYPE_DISCRETE:
+            g = discrete_eval(self.adists_x[i, :], self.adists_p[i, :], max_x,
+                              mu)
+
+        return f * g

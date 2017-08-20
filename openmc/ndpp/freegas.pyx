@@ -47,7 +47,8 @@ cdef double _integrand(double Er, double Eout, double Estar, double E0,
     eta = most_of_eta * sqrt(Er / Estar - 1.)
 
     value = exp(-alpha * (Er - E0) + eta) * i0e(eta) * \
-        tabular_eval(adist_x, adist_p, adist_interp, mu_cm)
+        tabular_eval(adist_x, adist_p, adist_x.shape[0] - 1,  adist_interp,
+                     mu_cm)
 
     return value
 
@@ -147,7 +148,8 @@ cdef void calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
         else:
             end = 0
 
-        xs_Ein = tabulated1d_eval(xs_x, xs_y, xs_bpts, xs_interp, Ein)
+        xs_Ein = tabulated1d_eval(xs_x, xs_y, xs_x.shape[0] - 1, xs_bpts,
+                                  xs_interp, Ein)
         interp_type = LINLIN
 
         value = 0.

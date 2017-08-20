@@ -34,6 +34,7 @@ cdef class Uncorrelated(EnergyAngle_Cython):
         cdef double f_Eout
 
         f_Eout = tabular_eval(self.edist_x, self.edist_p,
+                              self.edist_x.shape[0] - 1,
                               self.edist_interpolation, Eout)
 
         return f_Eout * self.adist._eval(mu)

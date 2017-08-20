@@ -5,12 +5,20 @@
 #cython: initializedcheck=False
 
 
-cdef double tabular_eval(double[:] this_x, double[:] this_p,
-                                int interpolation, double x):
-    cdef size_t i, end_x
-    cdef double xi, xi1, pi, pi1, y
+cdef double discrete_eval(double[:] this_x, double[:] this_p, size_t end_x,
+                          double x):
+    cdef size_t i
 
-    end_x = this_x.shape[0] - 1
+    for i in range(end_x + 1):
+        if x == this_x[i]:
+            return this_p[i]
+    return 0.
+
+
+cdef double tabular_eval(double[:] this_x, double[:] this_p, size_t end_x,
+                         int interpolation, double x):
+    cdef size_t i
+    cdef double xi, xi1, pi, pi1, y
 
     if x < this_x[0] or x > this_x[end_x]:
         return 0.
@@ -21,12 +29,13 @@ cdef double tabular_eval(double[:] this_x, double[:] this_p,
         return this_p[end_x]
 
     # Get index for interpolation and interpolant
-    if x == this_x[0]:
-        return this_p[0]
-    elif x == this_x[end_x]:
-        return this_p[end_x]
-    else:
-        i = bisect(this_x, x) - 1
+    # if x == this_x[0]:
+    #     return this_p[0]
+    # elif x == this_x[end_x]:
+    #     return this_p[end_x]
+    # else:
+    #     i = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
+    i = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     xi = this_x[i]
     xi1 = this_x[i + 1]
     pi = this_p[i]
@@ -47,11 +56,9 @@ cdef double tabular_eval(double[:] this_x, double[:] this_p,
 
 
 cdef double tabular_eval_w_search_params(double[:] this_x, double[:] this_p,
-                                         int interpolation, double x, size_t* i):
-    cdef size_t end_x
+                                         size_t end_x, int interpolation,
+                                         double x, size_t* i):
     cdef double xi, xi1, pi, pi1, y
-
-    end_x = this_x.shape[0] - 1
 
     if x < this_x[0] or x > this_x[end_x]:
         i[0] = 0
@@ -65,14 +72,15 @@ cdef double tabular_eval_w_search_params(double[:] this_x, double[:] this_p,
         return this_p[end_x]
 
     # Get index for interpolation and interpolant
-    if x == this_x[0]:
-        i[0] = 0
-        return this_p[0]
-    elif x == this_x[end_x]:
-        i[0] = end_x
-        return this_p[end_x]
-    else:
-        i[0] = bisect(this_x, x) - 1
+    # if x == this_x[0]:
+    #     i[0] = 0
+    #     return this_p[0]
+    # elif x == this_x[end_x]:
+    #     i[0] = end_x
+    #     return this_p[end_x]
+    # else:
+    #     i[0] = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
+    i[0] = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     xi = this_x[i[0]]
     xi1 = this_x[i[0] + 1]
     pi = this_p[i[0]]
@@ -92,13 +100,11 @@ cdef double tabular_eval_w_search_params(double[:] this_x, double[:] this_p,
     return y
 
 
-cdef double tabulated1d_eval(double[:] this_x, double[:] this_y,
-                                    long[:] breakpoints, long[:] interpolation,
-                                    double x):
+cdef double tabulated1d_eval(double[:] this_x, double[:] this_y, size_t end_x,
+                             long[:] breakpoints, long[:] interpolation,
+                             double x):
     cdef double y, xk, xi, xi1, yi, yi1
-    cdef size_t idx, end_x, k
-
-    end_x = this_x.shape[0] - 1
+    cdef size_t idx, k
 
     if this_x[0] - 1e-14 <= x <= this_x[0] + 1e-14:
         return this_y[0]
@@ -111,7 +117,7 @@ cdef double tabulated1d_eval(double[:] this_x, double[:] this_y,
     elif x >= this_x[end_x]:
         idx = end_x - 1
     else:
-        idx = bisect(this_x, x) - 1
+        idx = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
 
     if breakpoints.shape[0] == 1:
         k = 0
@@ -143,13 +149,11 @@ cdef double tabulated1d_eval(double[:] this_x, double[:] this_y,
 
 
 cdef double tabulated1d_eval_w_search_params(double[:] this_x, double[:] this_y,
-                                             long[:] breakpoints,
+                                             size_t end_x, long[:] breakpoints,
                                              long[:] interpolation, double x,
                                              size_t* idx, int* interp_type):
     cdef double y, xk, xi, xi1, yi, yi1
-    cdef size_t end_x, k
-
-    end_x = this_x.shape[0] - 1
+    cdef size_t k
 
     if this_x[0] - 1e-14 <= x <= this_x[0] + 1e-14:
         idx[0] = 0
@@ -166,7 +170,7 @@ cdef double tabulated1d_eval_w_search_params(double[:] this_x, double[:] this_y,
     elif x >= this_x[end_x]:
         idx[0] = end_x - 1
     else:
-        idx[0] = bisect(this_x, x) - 1
+        idx[0] = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
 
     if breakpoints.shape[0] == 1:
         k = 0
