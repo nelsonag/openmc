@@ -782,10 +782,6 @@ class Ndpp(object):
         self.elastic[strT] = np.concatenate((self.elastic[strT],
                                              [self.elastic[strT][-1, :, :]]))
 
-        print(self.elastic_energy[strT].shape[0], self.elastic[strT].shape,
-              sys.getsizeof(self.elastic_energy[strT]),
-              sys.getsizeof(self.elastic[strT]))
-
     def _compute_inelastic(self, kT, strT):
         """Computes the pre-processed energy-angle data from the inelastic
         scattering reactions of an IncidentNeutron dataset.
@@ -834,136 +830,162 @@ class Ndpp(object):
         else:
             mu_bins = np.linspace(-1, 1, self.num_angle + 1, endpoint=True)
 
-        # We will parse through each reaction one at a time. Doing so allows
-        # us to get the variation in the reaction-wise distributions
-        # themselves without having to individually evaluate the variation in
-        # yields and xs
-        # Once we have the distribution variations we will combine on to a
-        # unionized inelastic energy grid
-        rxn_results = [None] * len(rxns)
-        rxn_grids = [None] * len(rxns)
-        for r, rxn in enumerate(rxns):
-            print('\t\t', rxn)
-            # Create the energy grid we will be evaluating for this case
-            Ein_grid = np.logspace(np.log10(max(thresholds[r],
-                                                self.group_edges[0])),
-                                   np.log10(self.group_edges[-1]),
-                                   num=_NUM_ENERGY_SUBDIV + 1)
+        # Loop over incoming groups so we dont have too much memory storage
+        # for each reaction at once before we combine the data
+        for g in range(self.num_groups):
+            print("\t  Analyzing Incoming Energy Group {}".format(
+                  self.num_groups - g))
+            # We will parse through each reaction one at a time. Doing so
+            # allows us to get the variation in the reaction-wise distributions
+            # themselves without having to individually evaluate the variation
+            # in yields and xs
+            # Once we have the distribution variations we will combine on to a
+            # unionized inelastic energy grid
+            rxn_results = [None] * len(rxns)
+            rxn_grids = [None] * len(rxns)
+            above_threshold = False
 
-            # Set up the arguments for our processing routine
-            # These have to be aggregated into a tuple to support the usage of
-            # the multiprocessing pool
-            func_args = (awr, rxn, products[r], self, kT, mu_bins, xs_funcs[r],
-                         mus_grid, wgts)
+            for r, rxn in enumerate(rxns):
+                if thresholds[r] > self.group_edges[g + 1]:
+                    # Then there is no reason to compute anything, move on
+                    continue
 
-            # Set the arguments for our linearize function, except dont yet
-            # include the Ein grid points (the first argument), since that will
-            # be dependent upon the thread's given work
-            linearize_args = (do_by_rxn, func_args, self.tolerance)
+                # Note that we actually were above the threshold
+                above_threshold = True
 
-            inputs = [(Ein_grid[e: e + 2],) + linearize_args
-                      for e in range(len(Ein_grid) - 1)]
+                print('\t\t', rxn)
+                # Create the energy grid we will be evaluating for this case
+                Ein_grid = np.logspace(np.log10(max(thresholds[r],
+                                                    self.group_edges[g])),
+                                       np.log10(self.group_edges[g + 1]),
+                                       num=_NUM_ENERGY_SUBDIV + 1,
+                                       endpoint=True)
 
-            # Run in serial or parallel mode
-            grid = [None] * len(inputs)
-            results = [None] * len(inputs)
-            if self.num_threads < 1:
-                for e, in_data in enumerate(inputs):
-                    grid[e], results[e] = linearizer_wrapper(in_data)
-            else:
-                p = Pool(self.num_threads)
-                output = p.map(linearizer_wrapper, inputs)
-                p.close()
-                # output contains a 2-tuple for every parallelized bin;
-                # the first entry in the tuple is the energy grid, and the 2nd
-                # is the results array. We need to separate and combine these
-                for e in range(len(inputs)):
-                    grid[e] = output[e][0]
-                    results[e] = output[e][1]
+                # Set up the arguments for our processing routine
+                # These have to be aggregated into a tuple to support the usage
+                # of the multiprocessing pool
+                func_args = (awr, rxn, products[r], self, kT, mu_bins,
+                             xs_funcs[r], mus_grid, wgts)
 
-            # Now lets combine our grids together
-            rxn_grids[r] = np.concatenate(grid)
-            rxn_results[r] = np.concatenate(results)
+                # Set the arguments for our linearize function, except dont yet
+                # include the Ein grid points (the first argument), since that
+                # will be dependent upon the thread's given work
+                linearize_args = (do_by_rxn, func_args, self.tolerance)
 
-            # Retain only the unique end-points
-            rxn_grids[r], unique_indices = np.unique(rxn_grids[r],
-                                                     return_index=True)
-            rxn_results[r] = rxn_results[r][unique_indices, ...]
+                inputs = [(Ein_grid[e: e + 2],) + linearize_args
+                          for e in range(len(Ein_grid) - 1)]
 
-            print(rxn_grids[r].shape[0], rxn_results[r].shape,
-                  sys.getsizeof(rxn_grids[r]), sys.getsizeof(rxn_results[r]))
+                # Run in serial or parallel mode
+                grid = [None] * len(inputs)
+                results = [None] * len(inputs)
+                if self.num_threads < 1:
+                    for e, in_data in enumerate(inputs):
+                        grid[e], results[e] = linearizer_wrapper(in_data)
+                else:
+                    p = Pool(self.num_threads)
+                    output = p.map(linearizer_wrapper, inputs)
+                    p.close()
+                    # output contains a 2-tuple for every parallelized bin;
+                    # the first entry in the tuple is the energy grid, and the
+                    # 2nd is the results array. We need to separate and combine
+                    # these
+                    for e in range(len(inputs)):
+                        grid[e] = output[e][0]
+                        results[e] = output[e][1]
 
-        # Now combine the data on to a unionized energy grid
-        # The inelastic data can have many points and so we have to do this
-        # in a memory conscious way.
-        # So, we will attack the problem by thinning according to the user's
-        # chosen tolerance as we go
-        print("\t\t Combining Reactions")
-        Ein_grid = reduce(np.union1d, rxn_grids)
-        new_Ein_grid = []
-        nu_inelastic = []
+                # Now lets combine our grids together
+                rxn_grids[r] = np.concatenate(grid)
+                rxn_results[r] = np.concatenate(results)
 
-        # Now step through each point, compare with the neighbors and see if
-        # it is necessary
-        for e, Ein in enumerate(Ein_grid):
-            combined = np.zeros(rxn_results[0].shape[1:])
-            for r in range(len(rxn_grids)):
-                if Ein > thresholds[r]:
-                    # Find the corresponding point
-                    if Ein < rxn_grids[r][-2]:
-                        i = np.searchsorted(rxn_grids[r], Ein) - 1
-                    else:
-                        i = len(rxn_grids[r]) - 2
+                # Retain only the unique end-points
+                rxn_grids[r], unique_indices = np.unique(rxn_grids[r],
+                                                         return_index=True)
+                rxn_results[r] = rxn_results[r][unique_indices, ...]
 
-                    # Get the interpolant
-                    f = (Ein - rxn_grids[r][i]) / \
-                        (rxn_grids[r][i + 1] - rxn_grids[r][i])
+            # Now combine the data on to a unionized energy grid
+            # The inelastic data can have many points and so we have to do this
+            # in a memory conscious way.
+            # So, we will attack the problem by thinning according to the
+            # user's chosen tolerance as we go
 
-                    combined += (1. - f) * rxn_results[r][i, ...] + \
-                        f * rxn_results[r][i + 1, ...]
+            # Make sure we had any data above the threshold
+            if not above_threshold:
+                continue
 
-            if len(nu_inelastic) >= 2:
-                # If we have enough points already, use our latest point,
-                # in combined, and the point calculated (and kept) 2 times ago,
-                # and see if the point calculated (and kept) immediately prior
-                # to this is useful
+            print("\t\t Combining Reactions")
 
-                # Find the interpolable result
-                f = (new_Ein_grid[-1] - new_Ein_grid[-2]) / \
-                    (Ein - new_Ein_grid[-2])
-                results_interp = (1. - f) * nu_inelastic[-2] + f * combined
+            # Start with the energy grid
+            Ein_grid = []
+            for grid in rxn_grids:
+                if grid is not None:
+                    Ein_grid = np.union1d(Ein_grid, grid)
 
-                # Now see if the interpolable result is within our tolerance
-                # if it is, keep it.
-                error = np.subtract(results_interp, nu_inelastic[-1])
-                # Avoid division by 0 errors since they are fully expected
-                # with our sparse results
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    error = np.abs(np.nan_to_num(np.divide(error,
+            new_Ein_grid = []
+            nu_inelastic = []
+
+            # Now step through each point, compare with the neighbors and see
+            # if it is necessary
+            for e, Ein in enumerate(Ein_grid):
+                combined = np.zeros(rxn_results[0].shape[1:])
+                for r in range(len(rxn_grids)):
+                    if Ein > thresholds[r]:
+                        # Find the corresponding point
+                        if Ein < rxn_grids[r][-2]:
+                            i = np.searchsorted(rxn_grids[r], Ein) - 1
+                        else:
+                            i = len(rxn_grids[r]) - 2
+
+                        # Get the interpolant
+                        f = (Ein - rxn_grids[r][i]) / \
+                            (rxn_grids[r][i + 1] - rxn_grids[r][i])
+
+                        combined += (1. - f) * rxn_results[r][i, ...] + \
+                            f * rxn_results[r][i + 1, ...]
+
+                if len(nu_inelastic) >= 2:
+                    # If we have enough points already, use our latest point,
+                    # in combined, and the point calculated (and kept) 2 times
+                    # ago, and see if the point calculated (and kept)
+                    # immediately prior to this is useful
+
+                    # Find the interpolable result
+                    f = (new_Ein_grid[-1] - new_Ein_grid[-2]) / \
+                        (Ein - new_Ein_grid[-2])
+                    results_interp = (1. - f) * nu_inelastic[-2] + f * combined
+
+                    # Now see if the interpolable result is within our
+                    # tolerance; if it is, keep it.
+                    error = np.subtract(results_interp, nu_inelastic[-1])
+                    # Avoid division by 0 errors since they are fully expected
+                    # with our sparse results
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        error = \
+                            np.abs(np.nan_to_num(np.divide(error,
                                                            nu_inelastic[-1])))
 
-                if np.all(error < self.tolerance):
-                    # If the error is sufficiently small, the middle point is
-                    # not needed
-                    del new_Ein_grid[-1]
-                    del nu_inelastic[-1]
+                    if np.all(error < self.tolerance):
+                        # If the error is sufficiently small, the middle point
+                        # is not needed
+                        del new_Ein_grid[-1]
+                        del nu_inelastic[-1]
 
-            # No matter what, add the top point
-            new_Ein_grid.append(Ein)
-            nu_inelastic.append(combined)
+                # Add the point we just calculated, unless this is the last
+                # point in the set
+                # However, for the highest energy group, I do want that point
+                if (e < len(Ein_grid) - 1) or (g == self.num_groups - 1):
+                    new_Ein_grid.append(Ein)
+                    nu_inelastic.append(combined)
 
-        # Duplicate the top point to help with interpolation if Ein is
-        # exactly equal in the Monte Carlo code to the top energy
-        new_Ein_grid.append(Ein)
-        nu_inelastic.append(combined)
-
-        # And convert to a numpy array, and then explicitly our memory
-        # before we go on and make a copy of nu_inelastic again as we remove
-        # the nu below.
-        self.inelastic_energy = np.array(new_Ein_grid)
-        self.nu_inelastic = np.array(nu_inelastic)
-        nu_inelastic = []
-        new_Ein_grid = []
+            # And add to our growing list of energies and results
+            if self.inelastic_energy is not None:
+                self.inelastic_energy = np.concatenate((self.inelastic_energy,
+                                                        new_Ein_grid))
+                self.nu_inelastic = np.concatenate((self.nu_inelastic,
+                                                    nu_inelastic))
+            else:
+                # First time through, nothing to append to
+                self.inelastic_energy = np.array(new_Ein_grid)
+                self.nu_inelastic = np.array(nu_inelastic)
 
         # Convert the nu_inelastic data into inelastic data, we will do this by
         # normalizing nu_inelastic and scale by the inelastic_xs
@@ -979,6 +1001,15 @@ class Ndpp(object):
                 inelastic[e] = \
                     self.nu_inelastic[e, :, :] / norm[e] * inelastic_xs[e]
         self.inelastic = inelastic
+
+        # Finally, duplicate the top point to help with interpolation if Ein is
+        # exactly equal in the Monte Carlo code to the top energy
+        self.inelastic_energy = np.append(self.inelastic_energy,
+                                          self.inelastic_energy[-1] + 1.e-1)
+        self.nu_inelastic = np.concatenate((self.nu_inelastic,
+                                            [self.nu_inelastic[-1, :, :]]))
+        self.inelastic = np.concatenate((self.inelastic,
+                                         [self.inelastic[-1, :, :]]))
 
     def _compute_chi(self, kT, strT):
         """Computes the pre-processed fission spectral data from an
