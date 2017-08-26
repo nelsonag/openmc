@@ -504,7 +504,9 @@ module ndpp_header
     ! to hold the flattened data
     length = 0
     do i = 1, data_length
-      length = length + order_dim * (gmax(i) - gmin(i) + 1)
+      if (gmax(i) > 0) then
+        length = length + order_dim * (gmax(i) - gmin(i) + 1)
+      end if
     end do
 
     ! Allocate flattened array

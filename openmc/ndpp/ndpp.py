@@ -6,6 +6,7 @@ from numbers import Integral, Real
 from functools import reduce
 
 import numpy as np
+import scipy.sparse as sps
 import h5py
 
 from openmc.data.data import K_BOLTZMANN
@@ -926,7 +927,7 @@ class Ndpp(object):
             # Now step through each point, compare with the neighbors and see
             # if it is necessary
             for e, Ein in enumerate(Ein_grid):
-                combined = np.zeros(rxn_results[0].shape[1:])
+                combined = np.zeros((self.num_groups, self.num_angle))
                 for r in range(len(rxn_grids)):
                     if Ein > thresholds[r]:
                         # Find the corresponding point
@@ -941,6 +942,8 @@ class Ndpp(object):
 
                         combined += (1. - f) * rxn_results[r][i, ...] + \
                             f * rxn_results[r][i + 1, ...]
+
+                combined = sps.csr_matrix(combined)
 
                 if len(nu_inelastic) >= 2:
                     # If we have enough points already, use our latest point,
@@ -970,46 +973,65 @@ class Ndpp(object):
                         del nu_inelastic[-1]
 
                 # Add the point we just calculated, unless this is the last
-                # point in the set
+                # point in the set.
                 # However, for the highest energy group, I do want that point
                 if (e < len(Ein_grid) - 1) or (g == self.num_groups - 1):
                     new_Ein_grid.append(Ein)
-                    nu_inelastic.append(combined)
+
+                    # And add combined, and when we do it, lets save space by
+                    # using a sparse representation
+                    nu_inelastic.append(sps.csr_matrix(combined))
 
             # And add to our growing list of energies and results
             if self.inelastic_energy is not None:
                 self.inelastic_energy = np.concatenate((self.inelastic_energy,
                                                         new_Ein_grid))
-                self.nu_inelastic = np.concatenate((self.nu_inelastic,
-                                                    nu_inelastic))
+                # self.nu_inelastic = np.concatenate((self.nu_inelastic,
+                #                                     nu_inelastic))
+                self.nu_inelastic = np.append(self.nu_inelastic, nu_inelastic)
             else:
                 # First time through, nothing to append to
                 self.inelastic_energy = np.array(new_Ein_grid)
                 self.nu_inelastic = np.array(nu_inelastic)
+            print(len(self.inelastic_energy))
 
         # Convert the nu_inelastic data into inelastic data, we will do this by
         # normalizing nu_inelastic and scale by the inelastic_xs
         inelastic_xs = get_inelastic_xs(self.inelastic_energy, rxns, xs_funcs)
         inelastic = np.zeros_like(self.nu_inelastic)
-        if self.scatter_format == 'legendre':
-            norm = np.sum(self.nu_inelastic[:, :, 0], axis=1)
-        else:
-            norm = np.sum(self.nu_inelastic, axis=(1, 2))
-
         for e in range(len(self.inelastic_energy)):
-            if norm[e] > 0.:
-                inelastic[e] = \
-                    self.nu_inelastic[e, :, :] / norm[e] * inelastic_xs[e]
+            if self.scatter_format == 'legendre':
+                norm = np.sum(self.nu_inelastic[e][:, 0])
+            else:
+                norm = np.sum(self.nu_inelastic[e][:, :])
+
+            if norm > 0.:
+                inelastic[e] = self.nu_inelastic[e] / norm * inelastic_xs[e]
+            else:
+                inelastic[e] = self.nu_inelastic[e]
+        # if self.scatter_format == 'legendre':
+        #     norm = np.sum(self.nu_inelastic[:, :, 0], axis=1)
+        # else:
+        #     norm = np.sum(self.nu_inelastic, axis=(1, 2))
+
+        # for e in range(len(self.inelastic_energy)):
+        #     if norm[e] > 0.:
+        #         inelastic[e] = \
+        #             self.nu_inelastic[e, :, :] / norm[e] * inelastic_xs[e]
         self.inelastic = inelastic
 
         # Finally, duplicate the top point to help with interpolation if Ein is
         # exactly equal in the Monte Carlo code to the top energy
         self.inelastic_energy = np.append(self.inelastic_energy,
                                           self.inelastic_energy[-1] + 1.e-1)
+        # self.nu_inelastic = np.concatenate((self.nu_inelastic,
+        #                                     [self.nu_inelastic[-1, :, :]]))
+        # self.inelastic = np.concatenate((self.inelastic,
+        #                                  [self.inelastic[-1, :, :]]))
         self.nu_inelastic = np.concatenate((self.nu_inelastic,
-                                            [self.nu_inelastic[-1, :, :]]))
+                                            [self.nu_inelastic[-1]]))
         self.inelastic = np.concatenate((self.inelastic,
-                                         [self.inelastic[-1, :, :]]))
+                                         [self.inelastic[-1]]))
 
     def _compute_chi(self, kT, strT):
         """Computes the pre-processed fission spectral data from an
@@ -1206,7 +1228,7 @@ class Ndpp(object):
 
         # Temperature independent data
         if self.inelastic_energy is not None:
-            g_out_bounds, flattened = _sparsify(self.inelastic_energy,
+            g_out_bounds, flattened = _sparsify2(self.inelastic_energy,
                                                 self.inelastic,
                                                 self.scatter_format,
                                                 self.minimum_relative_threshold)
@@ -1214,7 +1236,7 @@ class Ndpp(object):
             g.create_dataset('inelastic', data=flattened)
             g.create_dataset("inelastic_g_min", data=g_out_bounds[:, 0])
             g.create_dataset("inelastic_g_max", data=g_out_bounds[:, 1])
-            g_out_bounds, flattened = _sparsify(self.inelastic_energy,
+            g_out_bounds, flattened = _sparsify2(self.inelastic_energy,
                                                 self.nu_inelastic,
                                                 self.scatter_format,
                                                 self.minimum_relative_threshold)
@@ -1424,9 +1446,9 @@ def _sparsify(energy, data, datatype, min_rel_threshold):
         nz = np.nonzero(matrix)
         # It is possible that there only zeros in matrix
         # and therefore nz will be empty, in that case set
-        # g_out_bounds to 0s
+        # g_out_bounds to -1s
         if len(nz[0]) == 0:
-            g_out_bounds[ei, :] = 0
+            g_out_bounds[ei, :] = -1
         else:
             g_out_bounds[ei, 0] = nz[0][0]
             g_out_bounds[ei, 1] = nz[0][-1]
@@ -1441,6 +1463,49 @@ def _sparsify(energy, data, datatype, min_rel_threshold):
         else:
             for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
                 flattened.append(data[ei, g_out])
+
+    # And finally, adjust g_out_bounds for 1-based group counting
+    g_out_bounds[:, :] += 1
+
+    return g_out_bounds, np.array(flattened)
+
+
+def _sparsify2(energy, data, datatype, min_rel_threshold):
+    g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
+    for ei in range(len(energy)):
+        if datatype == 'legendre':
+            matrix = data[ei].toarray()[:, 0]
+        elif datatype == 'histogram':
+            matrix = \
+                np.sum(data[ei].toarray()[:, :],
+                       axis=1)
+        elif datatype == 'chi':
+            matrix = data[ei].toarray()[:]
+
+        # Apply the relative threshold
+        thresh = np.sum(matrix) * min_rel_threshold
+        matrix[matrix < thresh] = 0.
+
+        nz = np.nonzero(matrix)
+        # It is possible that there only zeros in matrix
+        # and therefore nz will be empty, in that case set
+        # g_out_bounds to -1s
+        if len(nz[0]) == 0:
+            g_out_bounds[ei, :] = -1
+        else:
+            g_out_bounds[ei, 0] = nz[0][0]
+            g_out_bounds[ei, 1] = nz[0][-1]
+
+    # Now create the flattened array
+    flattened = []
+    for ei in range(len(energy)):
+        if datatype is not 'chi':
+            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
+                for l in range(len(data[ei].toarray()[g_out, :])):
+                    flattened.append(data[ei].toarray()[g_out, l])
+        else:
+            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
+                flattened.append(data[ei].toarray()[g_out])
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1
