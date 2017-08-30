@@ -6,7 +6,6 @@ from numbers import Integral, Real
 from functools import reduce
 
 import numpy as np
-import scipy.sparse as sps
 import h5py
 
 from openmc.data.data import K_BOLTZMANN
@@ -18,6 +17,7 @@ import openmc.checkvalue as cv
 from . import NDPP_VERSION_MAJOR
 from .evaluators import *
 from .cython_integrators import set_freegas_method
+from .sparsescatter import *
 
 if sys.version_info[0] >= 3:
     basestring = str
@@ -603,7 +603,8 @@ class Ndpp(object):
         # dependent upon the thread's work
         linearize_args = (do_sab, (elastic_args, inelastic_args,
                                    inelastic_distribution),
-                          self.tolerance)
+                          self.tolerance, self.minimum_relative_threshold,
+                          self.scatter_format)
 
         inputs = [(Ein_grid[e: e + 2],) + linearize_args
                   for e in range(len(Ein_grid) - 1)]
@@ -636,17 +637,17 @@ class Ndpp(object):
 
         # Normalize results to remove the cross section dependence and
         # any numerical errors
-        if self.scatter_format == 'legendre':
-            divisor = np.sum(results[:, :, 0], axis=1)
-        else:
-            divisor = np.sum(results[:, :, :], axis=(1, 2))
-        for i in range(len(Ein_grid)):
-            if divisor[i] > 0.:
-                results[i, :, :] = \
-                    np.divide(results[i, :, :], divisor[i])
+        for e in range(len(Ein_grid)):
+            if self.scatter_format == 'legendre':
+                divisor = np.sum(results[e][:, 0], axis=0)
+            else:
+                divisor = np.sum(results[e][:, :], axis=(0, 1))
+            if divisor > 0.:
+                results[e] = results[e] / divisor
 
         self.elastic_energy[strT] = Ein_grid
         self.elastic[strT] = results
+        self.elastic[strT] = SparseScatters(self.elastic[strT])
 
     def _compute_elastic(self, kT, strT):
         """Computes the pre-processed energy-angle data from the elastic
@@ -731,7 +732,8 @@ class Ndpp(object):
         # Set the arguments for our linearize function, except dont yet include
         # the Ein grid points (the first argument), since that will be
         # dependent upon the thread's work
-        linearize_args = (do_by_rxn, func_args, self.tolerance)
+        linearize_args = (do_by_rxn, func_args, self.tolerance,
+                          self.minimum_relative_threshold, self.scatter_format)
 
         inputs = [(Ein_grid[e: e + 2],) + linearize_args
                   for e in range(len(Ein_grid) - 1)]
@@ -764,24 +766,24 @@ class Ndpp(object):
         # Remove the non-unique entries obtained since the linearizer
         # includes the endpoints of each bracketed region
         Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
-        self.elastic[strT] = results[unique_indices, ...]
+        self.elastic[strT] = results[unique_indices]
 
         # Normalize results to remove the cross section dependence and
         # any numerical errors
-        if self.scatter_format == 'legendre':
-            divisor = np.sum(self.elastic[strT][:, :, 0], axis=1)
-        else:
-            divisor = np.sum(self.elastic[strT][:, :, :], axis=(1, 2))
         for e in range(len(Ein_grid)):
-            if divisor[e] > 0.:
-                self.elastic[strT][e, :, :] = \
-                    np.divide(self.elastic[strT][e, :, :], divisor[e])
+            if self.scatter_format == 'legendre':
+                divisor = np.sum(self.elastic[strT][e][:, 0])
+            else:
+                divisor = np.sum(self.elastic[strT][e][:, :])
+            if divisor > 0.:
+                self.elastic[strT][e] = self.elastic[strT][e] / divisor
 
         # Finally add a top point to use as interpolation
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
         self.elastic_energy[strT] = Ein_grid
-        self.elastic[strT] = np.concatenate((self.elastic[strT],
-                                             [self.elastic[strT][-1, :, :]]))
+        self.elastic[strT] = np.append(self.elastic[strT],
+                                       [self.elastic[strT][-1]])
+        self.elastic[strT] = SparseScatters(self.elastic[strT])
 
     def _compute_inelastic(self, kT, strT):
         """Computes the pre-processed energy-angle data from the inelastic
@@ -871,7 +873,9 @@ class Ndpp(object):
                 # Set the arguments for our linearize function, except dont yet
                 # include the Ein grid points (the first argument), since that
                 # will be dependent upon the thread's given work
-                linearize_args = (do_by_rxn, func_args, self.tolerance)
+                linearize_args = (do_by_rxn, func_args, self.tolerance,
+                                  self.minimum_relative_threshold,
+                                  self.scatter_format)
 
                 inputs = [(Ein_grid[e: e + 2],) + linearize_args
                           for e in range(len(Ein_grid) - 1)]
@@ -940,10 +944,8 @@ class Ndpp(object):
                         f = (Ein - rxn_grids[r][i]) / \
                             (rxn_grids[r][i + 1] - rxn_grids[r][i])
 
-                        combined += (1. - f) * rxn_results[r][i, ...] + \
-                            f * rxn_results[r][i + 1, ...]
-
-                combined = sps.csr_matrix(combined)
+                        combined += ((1. - f) * rxn_results[r][i] + \
+                                     f * rxn_results[r][i + 1]).toarray()
 
                 if len(nu_inelastic) >= 2:
                     # If we have enough points already, use our latest point,
@@ -951,20 +953,24 @@ class Ndpp(object):
                     # ago, and see if the point calculated (and kept)
                     # immediately prior to this is useful
 
+                    # First create a dense array from our last two entries
+                    # in nu_inelastic
+                    nu_inel_2 = nu_inelastic[-2].toarray()
+                    nu_inel_1 = nu_inelastic[-1].toarray()
+
                     # Find the interpolable result
                     f = (new_Ein_grid[-1] - new_Ein_grid[-2]) / \
                         (Ein - new_Ein_grid[-2])
-                    results_interp = (1. - f) * nu_inelastic[-2] + f * combined
+                    results_interp = (1. - f) * nu_inel_2 + f * combined
 
                     # Now see if the interpolable result is within our
                     # tolerance; if it is, keep it.
-                    error = np.subtract(results_interp, nu_inelastic[-1])
+                    error = results_interp - nu_inel_1
                     # Avoid division by 0 errors since they are fully expected
                     # with our sparse results
                     with np.errstate(divide='ignore', invalid='ignore'):
                         error = \
-                            np.abs(np.nan_to_num(np.divide(error,
-                                                           nu_inelastic[-1])))
+                            np.abs(np.nan_to_num(np.divide(error, nu_inel_1)))
 
                     if np.all(error < self.tolerance):
                         # If the error is sufficiently small, the middle point
@@ -980,20 +986,20 @@ class Ndpp(object):
 
                     # And add combined, and when we do it, lets save space by
                     # using a sparse representation
-                    nu_inelastic.append(sps.csr_matrix(combined))
+                    nu_inelastic.append(
+                        SparseScatter(combined,
+                                      self.minimum_relative_threshold,
+                                      self.scatter_format))
 
             # And add to our growing list of energies and results
             if self.inelastic_energy is not None:
-                self.inelastic_energy = np.concatenate((self.inelastic_energy,
-                                                        new_Ein_grid))
-                # self.nu_inelastic = np.concatenate((self.nu_inelastic,
-                #                                     nu_inelastic))
+                self.inelastic_energy = np.append(self.inelastic_energy,
+                                                  new_Ein_grid)
                 self.nu_inelastic = np.append(self.nu_inelastic, nu_inelastic)
             else:
                 # First time through, nothing to append to
                 self.inelastic_energy = np.array(new_Ein_grid)
                 self.nu_inelastic = np.array(nu_inelastic)
-            print(len(self.inelastic_energy))
 
         # Convert the nu_inelastic data into inelastic data, we will do this by
         # normalizing nu_inelastic and scale by the inelastic_xs
@@ -1009,29 +1015,19 @@ class Ndpp(object):
                 inelastic[e] = self.nu_inelastic[e] / norm * inelastic_xs[e]
             else:
                 inelastic[e] = self.nu_inelastic[e]
-        # if self.scatter_format == 'legendre':
-        #     norm = np.sum(self.nu_inelastic[:, :, 0], axis=1)
-        # else:
-        #     norm = np.sum(self.nu_inelastic, axis=(1, 2))
 
-        # for e in range(len(self.inelastic_energy)):
-        #     if norm[e] > 0.:
-        #         inelastic[e] = \
-        #             self.nu_inelastic[e, :, :] / norm[e] * inelastic_xs[e]
         self.inelastic = inelastic
 
         # Finally, duplicate the top point to help with interpolation if Ein is
         # exactly equal in the Monte Carlo code to the top energy
         self.inelastic_energy = np.append(self.inelastic_energy,
                                           self.inelastic_energy[-1] + 1.e-1)
-        # self.nu_inelastic = np.concatenate((self.nu_inelastic,
-        #                                     [self.nu_inelastic[-1, :, :]]))
-        # self.inelastic = np.concatenate((self.inelastic,
-        #                                  [self.inelastic[-1, :, :]]))
-        self.nu_inelastic = np.concatenate((self.nu_inelastic,
-                                            [self.nu_inelastic[-1]]))
-        self.inelastic = np.concatenate((self.inelastic,
-                                         [self.inelastic[-1]]))
+        self.nu_inelastic = np.append(self.nu_inelastic,
+                                      [self.nu_inelastic[-1]])
+        self.inelastic = np.append(self.inelastic, [self.inelastic[-1]])
+
+        self.nu_inelastic = SparseScatters(self.nu_inelastic)
+        self.inelastic = SparseScatters(self.inelastic)
 
     def _compute_chi(self, kT, strT):
         """Computes the pre-processed fission spectral data from an
@@ -1094,7 +1090,9 @@ class Ndpp(object):
             # Set the arguments for our linearize function, except dont yet
             # include the Ein grid points (the first argument), since that will
             # be dependent upon the thread's work
-            linearize_args = (do_chi, func_args, self.tolerance)
+            linearize_args = (do_chi, func_args, self.tolerance,
+                              self.minimum_relative_threshold,
+                              self.scatter_format, False)
 
             inputs = [(Ein_grid[e: e + 2],) + linearize_args
                       for e in range(len(Ein_grid) - 1)]
@@ -1217,9 +1215,7 @@ class Ndpp(object):
 
         # Add temperature dependent data
         for T, energy in self.elastic_energy.items():
-            g_out_bounds, flattened = _sparsify(energy, self.elastic[T],
-                                                self.scatter_format,
-                                                self.minimum_relative_threshold)
+            g_out_bounds, flattened = _sparsify(energy, self.elastic[T])
             Tgroup = g.create_group(T)
             Tgroup.create_dataset('elastic_energy', data=energy)
             Tgroup.create_dataset('elastic', data=flattened)
@@ -1228,18 +1224,14 @@ class Ndpp(object):
 
         # Temperature independent data
         if self.inelastic_energy is not None:
-            g_out_bounds, flattened = _sparsify2(self.inelastic_energy,
-                                                self.inelastic,
-                                                self.scatter_format,
-                                                self.minimum_relative_threshold)
+            g_out_bounds, flattened = _sparsify(self.inelastic_energy,
+                                                self.inelastic)
             g.create_dataset('inelastic_energy', data=self.inelastic_energy)
             g.create_dataset('inelastic', data=flattened)
             g.create_dataset("inelastic_g_min", data=g_out_bounds[:, 0])
             g.create_dataset("inelastic_g_max", data=g_out_bounds[:, 1])
-            g_out_bounds, flattened = _sparsify2(self.inelastic_energy,
-                                                self.nu_inelastic,
-                                                self.scatter_format,
-                                                self.minimum_relative_threshold)
+            g_out_bounds, flattened = _sparsify(self.inelastic_energy,
+                                                self.nu_inelastic)
             g.create_dataset('nu_inelastic', data=flattened)
 
         if self.chi_energy:
@@ -1247,12 +1239,12 @@ class Ndpp(object):
                 Tgroup = g[T]
                 Tgroup.create_dataset('chi_energy', data=energy)
                 g_out_bounds, flattened = \
-                    _sparsify(energy, self.total_chi[T], 'chi',
-                              self.minimum_relative_threshold)
+                    _sparsify1(energy, self.total_chi[T], 'chi',
+                               self.minimum_relative_threshold)
                 Tgroup.create_dataset('total_chi', data=flattened)
                 g_out_bounds, flattened = \
-                    _sparsify(energy, self.prompt_chi[T], 'chi',
-                              self.minimum_relative_threshold)
+                    _sparsify1(energy, self.prompt_chi[T], 'chi',
+                               self.minimum_relative_threshold)
                 Tgroup.create_dataset("total_chi_g_min",
                                       data=g_out_bounds[:, 0])
                 Tgroup.create_dataset("total_chi_g_max",
@@ -1265,8 +1257,8 @@ class Ndpp(object):
                 dgroup = Tgroup.create_group('delayed_chi')
                 for c in range(self.num_delayed_groups):
                     g_out_bounds, flattened = \
-                        _sparsify(energy, self.delayed_chi[T][:, c, :], 'chi',
-                                  self.minimum_relative_threshold)
+                        _sparsify1(energy, self.delayed_chi[T][:, c, :], 'chi',
+                                   self.minimum_relative_threshold)
                     dgroup.create_dataset(str(c + 1), data=flattened)
                     dgroup.create_dataset(str(c + 1) + "_g_min",
                                           data=g_out_bounds[:, 0])
@@ -1427,7 +1419,26 @@ def initialize_quadrature(order):
     return mus_k, wgts
 
 
-def _sparsify(energy, data, datatype, min_rel_threshold):
+def _sparsify(energy, data, datatype=None):
+    g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
+    flattened = []
+    for ei in range(len(energy)):
+        g_out_bounds[ei, :] = data[ei].gout_min, data[ei].gout_max
+        if datatype is not 'chi':
+            for g_out in range(data[ei].data.shape[0]):
+                for l in range(data[ei].shape[1]):
+                    flattened.append(data[ei][g_out, l])
+        else:
+            for g_out in range(data[ei].data.shape[0]):
+                flattened.append(data[ei][g_out])
+
+    # And finally, adjust g_out_bounds for 1-based group counting
+    g_out_bounds[:, :] += 1
+
+    return g_out_bounds, np.array(flattened)
+
+
+def _sparsify1(energy, data, datatype, min_rel_threshold):
     g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
     for ei in range(len(energy)):
         if datatype == 'legendre':
@@ -1469,45 +1480,3 @@ def _sparsify(energy, data, datatype, min_rel_threshold):
 
     return g_out_bounds, np.array(flattened)
 
-
-def _sparsify2(energy, data, datatype, min_rel_threshold):
-    g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
-    for ei in range(len(energy)):
-        if datatype == 'legendre':
-            matrix = data[ei].toarray()[:, 0]
-        elif datatype == 'histogram':
-            matrix = \
-                np.sum(data[ei].toarray()[:, :],
-                       axis=1)
-        elif datatype == 'chi':
-            matrix = data[ei].toarray()[:]
-
-        # Apply the relative threshold
-        thresh = np.sum(matrix) * min_rel_threshold
-        matrix[matrix < thresh] = 0.
-
-        nz = np.nonzero(matrix)
-        # It is possible that there only zeros in matrix
-        # and therefore nz will be empty, in that case set
-        # g_out_bounds to -1s
-        if len(nz[0]) == 0:
-            g_out_bounds[ei, :] = -1
-        else:
-            g_out_bounds[ei, 0] = nz[0][0]
-            g_out_bounds[ei, 1] = nz[0][-1]
-
-    # Now create the flattened array
-    flattened = []
-    for ei in range(len(energy)):
-        if datatype is not 'chi':
-            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
-                for l in range(len(data[ei].toarray()[g_out, :])):
-                    flattened.append(data[ei].toarray()[g_out, l])
-        else:
-            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
-                flattened.append(data[ei].toarray()[g_out])
-
-    # And finally, adjust g_out_bounds for 1-based group counting
-    g_out_bounds[:, :] += 1
-
-    return g_out_bounds, np.array(flattened)

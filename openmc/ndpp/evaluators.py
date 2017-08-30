@@ -2,6 +2,7 @@ import numpy as np
 import scipy.special as ss
 
 from .integrators import integrate
+from .sparsescatter import SparseScatter
 
 
 _DE_REL_THRESH = 1.E-6
@@ -14,7 +15,8 @@ def linearizer_wrapper(linearizer_args):
     return _linearizer(*linearizer_args)
 
 
-def _linearizer(Ein_grid, func, args, tolerance):
+def _linearizer(Ein_grid, func, args, tolerance, min_rel_threshold,
+                scatter_format, use_sparsescatter=True):
     # This method constructs the Ein and results grid with the incoming grid
     # set so that the tolerance is achieved when interpolating between values
     # This method is based on the openmc.data.linearize method, but modified to
@@ -26,12 +28,22 @@ def _linearizer(Ein_grid, func, args, tolerance):
     results_out = []
     # Initialize stack
     Ein_stack = [Ein_grid[0]]
-    results_stack = [func(Ein_grid[0], *args)]
+    if use_sparsescatter:
+        results_stack = [SparseScatter(func(Ein_grid[0], *args),
+                                       min_rel_threshold, scatter_format)]
+    else:
+        results_stack = [func(Ein_grid[0], *args)]
+
     error = np.empty(results_stack[0].shape)
 
     for i in range(Ein_grid.shape[0] - 1):
         Ein_stack.insert(0, Ein_grid[i + 1])
-        results_stack.insert(0, func(Ein_grid[i + 1], *args))
+        if use_sparsescatter:
+            results_stack.insert(0, SparseScatter(func(Ein_grid[i + 1], *args),
+                                                  min_rel_threshold,
+                                                  scatter_format))
+        else:
+            results_stack.insert(0, func(Ein_grid[i + 1], *args))
 
         while True:
             Ein_high, Ein_low = Ein_stack[-2:]
@@ -46,6 +58,10 @@ def _linearizer(Ein_grid, func, args, tolerance):
                     break
             else:
                 results_high, results_low = results_stack[-2:]
+                if use_sparsescatter:
+                    results_high = results_high.toarray()
+                    results_low = results_low.toarray()
+
                 Ein_mid = 0.5 * (Ein_low + Ein_high)
                 results_mid = func(Ein_mid, *args)
 
@@ -61,7 +77,13 @@ def _linearizer(Ein_grid, func, args, tolerance):
 
                 if np.any(error > tolerance):
                     Ein_stack.insert(-1, Ein_mid)
-                    results_stack.insert(-1, results_mid)
+                    if use_sparsescatter:
+                        results_stack.insert(-1,
+                                             SparseScatter(results_mid,
+                                                           min_rel_threshold,
+                                                           scatter_format))
+                    else:
+                        results_stack.insert(-1, results_mid)
                 else:
                     Ein_output.append(Ein_stack.pop())
                     results_out.append(results_stack.pop())
