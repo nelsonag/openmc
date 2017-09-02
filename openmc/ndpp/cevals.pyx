@@ -29,12 +29,6 @@ cdef double tabular_eval(double[:] this_x, double[:] this_p, size_t end_x,
         return this_p[end_x]
 
     # Get index for interpolation and interpolant
-    # if x == this_x[0]:
-    #     return this_p[0]
-    # elif x == this_x[end_x]:
-    #     return this_p[end_x]
-    # else:
-    #     i = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     i = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     xi = this_x[i]
     xi1 = this_x[i + 1]
@@ -72,14 +66,6 @@ cdef double tabular_eval_w_search_params(double[:] this_x, double[:] this_p,
         return this_p[end_x]
 
     # Get index for interpolation and interpolant
-    # if x == this_x[0]:
-    #     i[0] = 0
-    #     return this_p[0]
-    # elif x == this_x[end_x]:
-    #     i[0] = end_x
-    #     return this_p[end_x]
-    # else:
-    #     i[0] = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     i[0] = bisect(this_x, x, lo=0, hi=end_x + 1) - 1
     xi = this_x[i[0]]
     xi1 = this_x[i[0] + 1]

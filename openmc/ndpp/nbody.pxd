@@ -6,12 +6,12 @@
 
 from libc.math cimport sqrt
 
+from scipy.special.cython_special cimport eval_legendre
 cimport numpy as np
 import numpy as np
 
+from .cconstants cimport *
 from .energyangledist cimport EnergyAngle_Cython
-
-_PI = np.pi
 
 
 cdef class NBody(EnergyAngle_Cython):
@@ -33,3 +33,11 @@ cdef class NBody(EnergyAngle_Cython):
     cpdef double Eout_min(self)
 
     cpdef double Eout_max(self)
+
+    cpdef integrate_lab_legendre(self, double[::1] Eouts,
+                                 double[:, ::1] integral, double [::1] grid,
+                                 double[::1] mus_grid, double[:, ::1] wgts)
+
+    cpdef integrate_lab_histogram(self, double[::1] Eouts,
+                                 double[:, ::1] integral, double [::1] grid,
+                                 double[::1] mus)

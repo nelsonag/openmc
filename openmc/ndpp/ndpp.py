@@ -184,9 +184,7 @@ class Ndpp(object):
         self.nu_inelastic = None
         self.inelastic = None
         self.inelastic_energy = None
-        self.total_chi = {}
-        self.prompt_chi = {}
-        self.delayed_chi = {}
+        self.chi = {}
         self.chi_energy = {}
         self.fissionable = False
         self.num_delayed_groups = 0
@@ -276,16 +274,8 @@ class Ndpp(object):
         return self._inelastic_energy
 
     @property
-    def total_chi(self):
-        return self._total_chi
-
-    @property
-    def prompt_chi(self):
-        return self._prompt_chi
-
-    @property
-    def delayed_chi(self):
-        return self._delayed_chi
+    def chi(self):
+        return self._chi
 
     @property
     def chi_energy(self):
@@ -408,13 +398,14 @@ class Ndpp(object):
     @inelastic.setter
     def inelastic(self, inelastic):
         if inelastic is not None:
-            cv.check_type('inelastic', inelastic, np.ndarray)
+            cv.check_type('inelastic', inelastic, (np.ndarray, SparseScatters))
         self._inelastic = inelastic
 
     @nu_inelastic.setter
     def nu_inelastic(self, nu_inelastic):
         if nu_inelastic is not None:
-            cv.check_type('nu_inelastic', nu_inelastic, np.ndarray)
+            cv.check_type('nu_inelastic', nu_inelastic, (np.ndarray,
+                                                         SparseScatters))
         self._nu_inelastic = nu_inelastic
 
     @inelastic_energy.setter
@@ -423,23 +414,11 @@ class Ndpp(object):
             cv.check_iterable_type('inelastic_energy', inelastic_energy, Real)
         self._inelastic_energy = inelastic_energy
 
-    @total_chi.setter
-    def total_chi(self, total_chi):
-        if total_chi is not None:
-            cv.check_type('total_chi', total_chi, MutableMapping)
-        self._total_chi = total_chi
-
-    @prompt_chi.setter
-    def prompt_chi(self, prompt_chi):
-        if prompt_chi is not None:
-            cv.check_type('prompt_chi', prompt_chi, MutableMapping)
-        self._prompt_chi = prompt_chi
-
-    @delayed_chi.setter
-    def delayed_chi(self, delayed_chi):
-        if delayed_chi is not None:
-            cv.check_type('delayed_chi', delayed_chi, MutableMapping)
-        self._delayed_chi = delayed_chi
+    @chi.setter
+    def chi(self, chi):
+        if chi is not None:
+            cv.check_type('chi', chi, MutableMapping)
+        self._chi = chi
 
     @chi_energy.setter
     def chi_energy(self, chi_energy):
@@ -1092,7 +1071,7 @@ class Ndpp(object):
             # be dependent upon the thread's work
             linearize_args = (do_chi, func_args, self.tolerance,
                               self.minimum_relative_threshold,
-                              self.scatter_format, False)
+                              self.scatter_format)
 
             inputs = [(Ein_grid[e: e + 2],) + linearize_args
                       for e in range(len(Ein_grid) - 1)]
@@ -1142,7 +1121,7 @@ class Ndpp(object):
             # Finally combine the reaction grid and xs grid
             Ein_grid = np.union1d(Ein_grid, xs_grid)
 
-            pd_results = np.zeros((len(Ein_grid),) + rxn_results[0].shape[1:])
+            results = np.empty_like(Ein_grid)
 
             # Now interpolate the reaction distributions at each Ein on xs_grid
             # and combine in to a unionized grid
@@ -1159,9 +1138,9 @@ class Ndpp(object):
                         f = (Ein - rxn_grids[r][i]) / \
                             (rxn_grids[r][i + 1] - rxn_grids[r][i])
 
-                        pd_results[e, ...] += \
-                            ((1. - f) * rxn_results[r][i, ...] +
-                             f * rxn_results[r][i + 1, ...]) * xs_funcs[r](Ein)
+                        results[e] += \
+                            ((1. - f) * rxn_results[r][i] +
+                             f * rxn_results[r][i + 1]) * xs_funcs[r](Ein)
 
         else:
             # If we only have the total fission channel, then we dont have to
@@ -1170,29 +1149,21 @@ class Ndpp(object):
             # Lets just put the data in to the same variables as the other
             # side of the if-branch
             Ein_grid = rxn_grids[0]
-            pd_results = rxn_results[0]
-
-        # Create the total secondary energy data (i.e. prompt + delayed)
-        tot_results = np.sum(pd_results, axis=1)
+            results = rxn_results[0]
 
         # With chi data, we only care about the normalized secondary energy
         # data, so lets normalize before we thin
-        tot_results[:, :] = np.nan_to_num(
-            np.divide(tot_results[:, :],
-                      np.sum(tot_results[:, :], axis=1)[:, None]))
-        pd_results[:, :, :] = np.nan_to_num(
-            np.divide(pd_results, np.sum(pd_results, axis=-1)[:, :, None]))
+        for e in range(len(Ein_grid)):
+            for tpd in range(2 + n_delayed):
+                results[e].data[:, tpd] /= np.sum(results[e].data[:, tpd])
 
         # Add a top point to use as interpolation
         Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
-        pd_results = np.concatenate((pd_results, [pd_results[-1, :, :]]))
-        tot_results = np.concatenate((tot_results, [tot_results[-1, :]]))
+        results = np.append(results, [results[-1]])
 
         # Finally store the incoming energy grid and chi values
         self.chi_energy[strT] = Ein_grid[:]
-        self.prompt_chi[strT] = pd_results[:, 0, :]
-        self.delayed_chi[strT] = pd_results[:, 1:, :]
-        self.total_chi[strT] = tot_results[:, :]
+        self.chi[strT] = SparseScatters(results[:])
         self.num_delayed_groups = n_delayed
 
     def to_hdf5(self, file):
@@ -1238,27 +1209,25 @@ class Ndpp(object):
             for T, energy in self.chi_energy.items():
                 Tgroup = g[T]
                 Tgroup.create_dataset('chi_energy', data=energy)
-                g_out_bounds, flattened = \
-                    _sparsify1(energy, self.total_chi[T], 'chi',
-                               self.minimum_relative_threshold)
-                Tgroup.create_dataset('total_chi', data=flattened)
-                g_out_bounds, flattened = \
-                    _sparsify1(energy, self.prompt_chi[T], 'chi',
-                               self.minimum_relative_threshold)
-                Tgroup.create_dataset("total_chi_g_min",
-                                      data=g_out_bounds[:, 0])
-                Tgroup.create_dataset("total_chi_g_max",
-                                      data=g_out_bounds[:, 1])
-                Tgroup.create_dataset('prompt_chi', data=flattened)
-                Tgroup.create_dataset("prompt_chi_g_min",
-                                      data=g_out_bounds[:, 0])
-                Tgroup.create_dataset("prompt_chi_g_max",
-                                      data=g_out_bounds[:, 1])
+                # Do prompt and total
+                for i in range(2):
+                    if i == 0:
+                        label = 'total_'
+                    if i == 1:
+                        label = 'prompt_'
+                    g_out_bounds, flattened = \
+                        _sparsify_chi(energy, self.chi[T], i)
+                    Tgroup.create_dataset(label + 'chi', data=flattened)
+                    Tgroup.create_dataset(label + "_g_min",
+                                          data=g_out_bounds[:, 0])
+                    Tgroup.create_dataset(label + "_g_max",
+                                          data=g_out_bounds[:, 1])
+
+                # Do for delayed
                 dgroup = Tgroup.create_group('delayed_chi')
                 for c in range(self.num_delayed_groups):
                     g_out_bounds, flattened = \
-                        _sparsify1(energy, self.delayed_chi[T][:, c, :], 'chi',
-                                   self.minimum_relative_threshold)
+                        _sparsify_chi(energy, self.chi[T], c + 2)
                     dgroup.create_dataset(str(c + 1), data=flattened)
                     dgroup.create_dataset(str(c + 1) + "_g_min",
                                           data=g_out_bounds[:, 0])
@@ -1419,18 +1388,14 @@ def initialize_quadrature(order):
     return mus_k, wgts
 
 
-def _sparsify(energy, data, datatype=None):
+def _sparsify(energy, data):
     g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
     flattened = []
     for ei in range(len(energy)):
         g_out_bounds[ei, :] = data[ei].gout_min, data[ei].gout_max
-        if datatype is not 'chi':
-            for g_out in range(data[ei].data.shape[0]):
-                for l in range(data[ei].shape[1]):
-                    flattened.append(data[ei][g_out, l])
-        else:
-            for g_out in range(data[ei].data.shape[0]):
-                flattened.append(data[ei][g_out])
+        for g_out in range(data[ei].data.shape[0]):
+            for l in range(data[ei].shape[1]):
+                flattened.append(data[ei][g_out, l])
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1
@@ -1438,21 +1403,10 @@ def _sparsify(energy, data, datatype=None):
     return g_out_bounds, np.array(flattened)
 
 
-def _sparsify1(energy, data, datatype, min_rel_threshold):
+def _sparsify_chi(energy, data, index):
     g_out_bounds = np.zeros((len(energy), 2), dtype=np.int)
     for ei in range(len(energy)):
-        if datatype == 'legendre':
-            matrix = data[ei, :, 0]
-        elif datatype == 'histogram':
-            matrix = \
-                np.sum(data[ei, :, :],
-                       axis=1)
-        elif datatype == 'chi':
-            matrix = data[ei, :]
-
-        # Apply the relative threshold
-        thresh = np.sum(matrix) * min_rel_threshold
-        matrix[matrix < thresh] = 0.
+        matrix = data[ei, :, index]
 
         nz = np.nonzero(matrix)
         # It is possible that there only zeros in matrix
@@ -1467,16 +1421,10 @@ def _sparsify1(energy, data, datatype, min_rel_threshold):
     # Now create the flattened array
     flattened = []
     for ei in range(len(energy)):
-        if datatype is not 'chi':
-            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
-                for l in range(len(data[ei, g_out, :])):
-                    flattened.append(data[ei, g_out, l])
-        else:
-            for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
-                flattened.append(data[ei, g_out])
+        for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
+            flattened.append(data[ei, g_out, index])
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1
 
     return g_out_bounds, np.array(flattened)
-

@@ -7,94 +7,16 @@
 from libc.math cimport sqrt
 
 from scipy.special.cython_special cimport eval_legendre
-from scipy.special import roots_sh_legendre
 cimport numpy as np
 import numpy as np
 
-from .nbody cimport NBody
-from .correlated cimport Correlated
-from .uncorrelated cimport Uncorrelated
-from .kalbach cimport KM
+from .cconstants cimport *
 from .energyangledist cimport EnergyAngle_Cython
 from .freegas cimport CALC_ER_INTEGRAL, calc_Er_integral_doppler, \
                       calc_Er_integral_cxs
 
-# The quadrature points can be gathered now, we will get them between 0 and 1
-# so the shifting to the proper Elo, Ehi bounds is easier later
-cdef int _N_QUAD = 20
-cdef double[::1] _POINTS
-cdef double[::1] _WEIGHTS
-_POINTS, _WEIGHTS = roots_sh_legendre(_N_QUAD)
-cdef double[::1] _FMU = np.empty(_N_QUAD)
-
-# The number of outgoing energy points to use when integrating the free-gas
-# kernel; we are using simpson's 3/8 rule so this needs to be a multiple of 3
-cdef int _N_EOUT = 201
-cdef double _N_EOUT_DOUBLE = <double> _N_EOUT
-
-# Set our simpson 3/8 rule coefficients
-cdef double[::1] _SIMPSON_WEIGHTS = np.empty(_N_EOUT)
-cdef int index
-for index in range(_N_EOUT):
-    if (index == 0) or (index == _N_EOUT - 1):
-        _SIMPSON_WEIGHTS[index] = 0.375
-    elif index % 3 == 0:
-        _SIMPSON_WEIGHTS[index] = 0.375 * 2.
-    else:
-        _SIMPSON_WEIGHTS[index] = 0.375 * 3.
-
-# Minimum value of c, the constant used when converting inelastic CM
-# distributions to the lab-frame
-cdef double _MIN_C = 25.
-cdef double _MIN_C2 = _MIN_C * _MIN_C
-
 # Function pointer to use for free-gas integration
 cdef CALC_ER_INTEGRAL _FREEGAS_FUNCTION
-
-
-###############################################################################
-# GENERIC QUADRATURE INTEGRATION
-###############################################################################
-
-
-cdef fixed_quad_histogram(func, double[::1] mus, tuple args,
-                          double[::1] integral, double min_mu, double max_mu):
-    """This function integrates a function between the min_mu and max_mu
-    parameters, but subdivided into each of the bins inside the mus
-    parameter. The function must have a signature of
-    func(x, remaining arguments).
-    """
-    cdef double dmu, value, u, mu_lo, mu_hi
-    cdef int l, p
-
-    for l in range(mus.shape[0] - 1):
-        value = 0.
-        mu_lo = max(mus[l], min_mu)
-        mu_hi = min(mus[l + 1], max_mu)
-
-        dmu = mu_hi - mu_lo
-        for p in range(_N_QUAD):
-            u = _POINTS[p] * dmu + mu_lo
-            value += _WEIGHTS[p] * func(u, *args)
-        integral[l] = value * dmu
-
-
-cdef fixed_quad_all_legendres(func, tuple args, double[::1] integral,
-                              double[::1] mus_grid, double[:, ::1] wgts):
-    """This function integrates a function between -1 and 1 for
-    each Legendre order. Since the integration range is [-1,1], a special
-    quadrature can be used which incorporates the Legendre values evaluated
-    at the points of interest already; simplifying the number of computation.
-    The function must have a signature of
-    func(x, legendre order, remaining arguments).
-    """
-    cdef double value, u
-    cdef int p, l
-
-    for p in range(mus_grid.shape[0]):
-        value = func(mus_grid[p], *args)
-        for l in range(integral.shape[0]):
-            integral[l] = value * wgts[p, l]
 
 
 ###############################################################################
@@ -192,11 +114,14 @@ cdef fixed_quad_all_legendres_freegas(double Eout, double Ein, double beta,
                                       bint Ein_is_Eout, double[::1] integral,
                                       double [::1] fmu, double[::1] mus_grid,
                                       double[:, ::1] wgts):
-    """This function integrates the free-gas function between -1 and 1 for
-    each Legendre order. This method is similar to fixed_quad_all_legendres,
-    except it is specialized to deal with the extra factor included by the
-    result of func when Eout = Ein
+    """This function integrates a function between -1 and 1 for
+    each Legendre order. Since the integration range is [-1,1], a special
+    quadrature can be used which incorporates the Legendre values evaluated
+    at the points of interest already; simplifying the number of computation.
+    This function is specialized to deal with the extra factor included when
+    Eout == Ein.
     """
+
     cdef int p, l
 
     _FREEGAS_FUNCTION(mus_grid, Eout, Ein, beta, alpha, awr, kT, half_beta_2,
@@ -275,11 +200,12 @@ cdef fixed_quad_histogram_freegas(CALC_ER_INTEGRAL func, double[::1] mus,
                                   long[::1] xs_bpts, long[::1] xs_interp,
                                   bint Ein_is_Eout, double[::1] integral,
                                   double [::1] fmu):
-    """This function integrates the free-gas function between -1 and 1 for
-    each histogram bin. This method is similar to fixed_quad_histogram,
-    except it is specialized to deal with the extra factor included by the
-    result of func when Eout = Ein
+    """This function integrates a function between the min_mu and max_mu
+    parameters, but subdivided into each of the bins inside the mus
+    parameter. This method is specialized to deal with the extra factor
+    included by the result of the func when Eout = Ein.
     """
+
     cdef double dmu, value, u, mu_lo, mu_hi
     cdef int l, p
 
@@ -369,7 +295,7 @@ cpdef integrate_twobody_cm_TAR(double Ein, double[::1] Eouts,
     cdef double R, onep_awr2, Ein_1pR2, inv_2REin, Eo_lo, Eo_hi, wlo, whi
     cdef int g
     cdef INTEGRAND_CM_TAR_LEGENDRE func
-    cdef double dmu, u
+    cdef double dmu, u, value, mu_lo, mu_hi
     cdef int l, p
 
     # Calculate the reduced mass and other shorthand parameters
@@ -423,7 +349,16 @@ cpdef integrate_twobody_cm_TAR(double Ein, double[::1] Eouts,
                     integral[g, l] += _WEIGHTS[p] * func(u, l, R, adist)
                 integral[g, l] *= dmu
         else:
-            fixed_quad_histogram(adist._eval, mus, (), integral[g, :], wlo, whi)
+            for l in range(mus.shape[0] - 1):
+                value = 0.
+                mu_lo = max(mus[l], wlo)
+                mu_hi = min(mus[l + 1], whi)
+
+                dmu = mu_hi - mu_lo
+                for p in range(_N_QUAD):
+                    u = _POINTS[p] * dmu + mu_lo
+                    value += _WEIGHTS[p] * adist._eval(u)
+                integral[g, l] = value * dmu
 
 
 ###############################################################################
@@ -444,9 +379,9 @@ cpdef integrate_cm(double Ein, double[::1] Eouts, double Eout_cm_max,
                    double awr, double[:, ::1] integral,
                    EnergyAngle_Cython eadist,
                    bint legendre, double[::1] mus):
-    cdef int g, eo, l, orders
+    cdef int g, eo, l, orders, p
     cdef double inv_awrp1, Eout_l_max, Eout_l_min, a, b
-    cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev
+    cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev, value, mu_lo
     cdef double[::1] y
     cdef double[::1] y_prev
 
@@ -494,8 +429,15 @@ cpdef integrate_cm(double Ein, double[::1] Eouts, double Eout_cm_max,
                     y[l] += _FMU[p] * eval_legendre(l, u)
                 y[l] *= dmu
         else:
-            fixed_quad_histogram(integrand_cm, mus, (Eout, c, Ein, eadist),
-                                 y[:], mu_l_min, 1.)
+            for l in range(mus.shape[0] - 1):
+                value = 0.
+                mu_lo = max(mus[l], mu_l_min)
+
+                dmu = mus[l + 1] - mu_lo
+                for p in range(_N_QUAD):
+                    u = _POINTS[p] * dmu + mu_lo
+                    value += _WEIGHTS[p] * integrand_cm(u, Eout, c, Ein, eadist)
+                y[l] = value * dmu
 
         if eo > 0:
             # Perform the running integration of our point according to the
@@ -522,157 +464,3 @@ cpdef integrate_cm(double Ein, double[::1] Eouts, double Eout_cm_max,
                 a = 0.5 * (Eout - Eout_prev)
                 for l in range(orders):
                     integral[g, l] += a * (y_prev[l] + y[l])
-
-
-###############################################################################
-# LAB-FRAME INTEGRATION METHODS
-###############################################################################
-
-# UNCORRELATED
-# ------------
-
-cpdef integrate_uncorr_lab(double Ein, double[::1] Eouts,
-                           double[:, ::1] integral, double[::1] grid,
-                           double[::1] mus_grid, double[:, ::1] wgts,
-                           Uncorrelated eadist, bint legendre,
-                           double[::1] mus):
-    cdef int g, eo, l
-    cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
-    cdef double mu_l_min, dE, Eout, dmu, u
-    cdef double[::1] angle_integral
-
-    Eo_min = eadist.Eout_min()
-    Eo_max = eadist.Eout_max()
-
-    angle_integral = np.empty_like(grid)
-
-    if legendre:
-        fixed_quad_all_legendres(eadist.adist._eval, (), angle_integral,
-                                 mus_grid, wgts)
-    else:
-        fixed_quad_histogram(eadist.adist._eval, mus, (), angle_integral,
-                             -1., 1.)
-
-    for g in range(Eouts.shape[0] - 1):
-        Eout_lo = Eouts[g]
-        Eout_hi = Eouts[g + 1]
-
-        # If our group is below the possible outgoing energies, just skip it
-        if Eout_hi < Eo_min:
-            continue
-        # If our group is above the max energy then we are all done
-        if Eout_lo > Eo_max:
-            break
-
-        Eout_lo = max(Eo_min, Eout_lo)
-        Eout_hi = min(Eo_max, Eout_hi)
-
-        for l in range(grid.shape[0]):
-            integral[g, l] = angle_integral[l] * \
-                eadist.edist.integrate(Eout_lo, Eout_hi)
-
-
-# CORRELATED
-# ----------
-
-
-cpdef integrate_corr_lab(double Ein, double[::1] Eouts,
-                         double[:, ::1] integral, double[::1] grid,
-                         double[::1] mus_grid, double[:, ::1] wgts,
-                         Correlated eadist, bint legendre, double[::1] mus):
-    cdef int g, eo, l
-    cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
-    cdef double mu_l_min, dE, Eout, dmu, u
-
-    Eo_min = eadist.Eout_min()
-    Eo_max = eadist.Eout_max()
-
-    for g in range(Eouts.shape[0] - 1):
-        Eout_lo = Eouts[g]
-        Eout_hi = Eouts[g + 1]
-
-        # If our group is below the possible outgoing energies, just skip it
-        if Eout_hi < Eo_min:
-            continue
-        # If our group is above the max energy then we are all done
-        if Eout_lo > Eo_max:
-            break
-
-        Eout_lo = max(Eo_min, Eout_lo)
-        Eout_hi = min(Eo_max, Eout_hi)
-
-        dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
-
-        for eo in range(_N_EOUT):
-            Eout = Eout_lo + ((<double>eo) * dE)
-
-            if legendre:
-                fixed_quad_all_legendres(eadist.eval, (Eout,), grid, mus_grid,
-                                         wgts)
-            else:
-                fixed_quad_histogram(eadist.eval, (Eout,), mus, grid, -1., 1.)
-
-            for l in range(integral.shape[1]):
-                integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
-        for l in range(integral.shape[1]):
-            integral[g, l] *= dE
-
-
-# NBODY
-# -----
-
-
-cpdef integrate_nbody_lab(double Ein, double[::1] Eouts,
-                          double[:, ::1] integral, double[::1] grid,
-                          NBody eadist, bint legendre, double[::1] mus):
-    cdef int g, eo, l
-    cdef double Eout_hi, Eout_lo, Eo_max
-    cdef double mu_l_min, dE, Eout, dmu, u
-
-    # The astute reader will notice that we dont check against Eo_min in this
-    # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
-    # The reason is because Eo_min is 0 for an NBody, so no reason to check.
-    Eo_max = eadist.Eout_max()
-
-    for g in range(Eouts.shape[0] - 1):
-        Eout_lo = Eouts[g]
-        Eout_hi = Eouts[g + 1]
-
-        # If our group is above the max energy then we are all done
-        if Eout_lo > Eo_max:
-            break
-
-        Eout_hi = min(Eo_max, Eout_hi)
-
-        dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
-
-        for eo in range(_N_EOUT):
-            Eout = Eout_lo + ((<double>eo) * dE)
-            mu_l_min = eadist.mu_min(Eout)
-
-            # Make sure we stay in the allowed bounds
-            if mu_l_min < -1.:
-                mu_l_min = -1.
-            elif mu_l_min > 1.:
-                break
-
-            if legendre:
-                dmu = 1. - mu_l_min
-                for p in range(_N_QUAD):
-                    u = _POINTS[p] * dmu + mu_l_min
-                    _FMU[p] = \
-                        _WEIGHTS[p] * eadist.integrand_legendre_lab(u, Eout)
-
-                for l in range(integral.shape[1]):
-                    grid[l] = 0.
-                    for p in range(_N_QUAD):
-                        u = _POINTS[p] * dmu + mu_l_min
-                        grid[l] += _FMU[p] * eval_legendre(l, u)
-                    grid[l] *= dmu
-            else:
-                eadist.integrand_histogram_lab(Eout, mus, grid)
-
-            for l in range(integral.shape[1]):
-                integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
-        for l in range(integral.shape[1]):
-            integral[g, l] *= dE

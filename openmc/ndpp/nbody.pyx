@@ -77,3 +77,96 @@ cdef class NBody(EnergyAngle_Cython):
             integral[i] = a / (d * self.exponent + d) * \
                 ((self.Emax - b + d * mu_hi)**exp_p1 -
                  (self.Emax - b + d * mu_lo)**exp_p1)
+
+    cpdef integrate_lab_legendre(self, double[::1] Eouts,
+                                 double[:, ::1] integral, double [::1] grid,
+                                 double[::1] mus_grid, double[:, ::1] wgts):
+        cdef int g, eo, l
+        cdef double Eout_hi, Eout_lo, Eo_max
+        cdef double mu_l_min, dE, Eout, dmu, u
+
+        # The astute reader will notice that we dont check against Eo_min in this
+        # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
+        # The reason is because Eo_min is 0 for an NBody, so no reason to check.
+        Eo_max = self.Eout_max()
+
+        for g in range(Eouts.shape[0] - 1):
+            Eout_lo = Eouts[g]
+            Eout_hi = Eouts[g + 1]
+
+            # If our group is above the max energy then we are all done
+            if Eout_lo > Eo_max:
+                break
+
+            Eout_hi = min(Eo_max, Eout_hi)
+
+            dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
+
+            for eo in range(_N_EOUT):
+                Eout = Eout_lo + ((<double>eo) * dE)
+                mu_l_min = self.mu_min(Eout)
+
+                # Make sure we stay in the allowed bounds
+                if mu_l_min < -1.:
+                    mu_l_min = -1.
+                elif mu_l_min > 1.:
+                    break
+
+                dmu = 1. - mu_l_min
+                for p in range(_N_QUAD):
+                    u = _POINTS[p] * dmu + mu_l_min
+                    _FMU[p] = \
+                        _WEIGHTS[p] * self.integrand_legendre_lab(u, Eout)
+
+                for l in range(integral.shape[1]):
+                    grid[l] = 0.
+                    for p in range(_N_QUAD):
+                        u = _POINTS[p] * dmu + mu_l_min
+                        grid[l] += _FMU[p] * eval_legendre(l, u)
+                    grid[l] *= dmu
+
+                for l in range(integral.shape[1]):
+                    integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
+            for l in range(integral.shape[1]):
+                integral[g, l] *= dE
+
+    cpdef integrate_lab_histogram(self, double[::1] Eouts,
+                                 double[:, ::1] integral, double [::1] grid,
+                                 double[::1] mus):
+        cdef int g, eo, l
+        cdef double Eout_hi, Eout_lo, Eo_max
+        cdef double mu_l_min, dE, Eout
+
+        # The astute reader will notice that we dont check against Eo_min in this
+        # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
+        # The reason is because Eo_min is 0 for an NBody, so no reason to check.
+        Eo_max = self.Eout_max()
+
+        for g in range(Eouts.shape[0] - 1):
+            Eout_lo = Eouts[g]
+            Eout_hi = Eouts[g + 1]
+
+            # If our group is above the max energy then we are all done
+            if Eout_lo > Eo_max:
+                break
+
+            Eout_hi = min(Eo_max, Eout_hi)
+
+            dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
+
+            for eo in range(_N_EOUT):
+                Eout = Eout_lo + ((<double>eo) * dE)
+                mu_l_min = self.mu_min(Eout)
+
+                # Make sure we stay in the allowed bounds
+                if mu_l_min < -1.:
+                    mu_l_min = -1.
+                elif mu_l_min > 1.:
+                    break
+
+                self.integrand_histogram_lab(Eout, mus, grid)
+
+                for l in range(integral.shape[1]):
+                    integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
+            for l in range(integral.shape[1]):
+                integral[g, l] *= dE

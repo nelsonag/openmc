@@ -79,6 +79,8 @@ if have_cython:
                   include_dirs=[np.get_include()]),
         Extension("openmc.stats.bisect", ['openmc/stats/bisect.pyx'],
                   include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.cconstants", ['openmc/ndpp/cconstants.pyx'],
+                  include_dirs=[np.get_include()]),
         Extension("openmc.ndpp.cevals", ['openmc/ndpp/cevals.pyx'],
                   include_dirs=[np.get_include()]),
         Extension("openmc.ndpp.correlated", ['openmc/ndpp/correlated.pyx'],

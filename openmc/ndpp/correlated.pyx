@@ -98,3 +98,92 @@ cdef class Correlated(EnergyAngle_Cython):
                               mu)
 
         return f * g
+
+    cpdef integrate_lab_legendre(self, double[::1] Eouts,
+                                 double[:, ::1] integral, double [::1] grid,
+                                 double[::1] mus_grid, double[:, ::1] wgts):
+        """Routine to integrate this distribution represented as a lab-frame
+        and expanded via Legendre polynomials
+        """
+
+        cdef int g, eo, l, p
+        cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
+        cdef double mu_l_min, dE, Eout, dmu, u, value
+
+        Eo_min = self.Eout_min()
+        Eo_max = self.Eout_max()
+
+        for g in range(Eouts.shape[0] - 1):
+            Eout_lo = Eouts[g]
+            Eout_hi = Eouts[g + 1]
+
+            # If our group is below the possible outgoing energies, just skip it
+            if Eout_hi < Eo_min:
+                continue
+            # If our group is above the max energy then we are all done
+            if Eout_lo > Eo_max:
+                break
+
+            Eout_lo = max(Eo_min, Eout_lo)
+            Eout_hi = min(Eo_max, Eout_hi)
+
+            dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
+
+            for eo in range(_N_EOUT):
+                Eout = Eout_lo + ((<double>eo) * dE)
+
+                for p in range(mus_grid.shape[0]):
+                    value = self.eval(mus_grid[p], Eout)
+                    for l in range(grid.shape[0]):
+                        grid[l] = value * wgts[p, l]
+
+                for l in range(integral.shape[1]):
+                    integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
+            for l in range(integral.shape[1]):
+                integral[g, l] *= dE
+
+    cpdef integrate_lab_histogram(self, double[::1] Eouts,
+                                  double[:, ::1] integral, double [::1] grid,
+                                  double[::1] mus):
+        """Routine to integrate this distribution represented as a lab-frame
+        and expanded in the histogram bins defined by mus
+        """
+
+        cdef int g, eo, l, p
+        cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
+        cdef double mu_l_min, dE, Eout, dmu, u, value
+
+        Eo_min = self.Eout_min()
+        Eo_max = self.Eout_max()
+
+        for g in range(Eouts.shape[0] - 1):
+            Eout_lo = Eouts[g]
+            Eout_hi = Eouts[g + 1]
+
+            # If our group is below the possible outgoing energies, just skip it
+            if Eout_hi < Eo_min:
+                continue
+            # If our group is above the max energy then we are all done
+            if Eout_lo > Eo_max:
+                break
+
+            Eout_lo = max(Eo_min, Eout_lo)
+            Eout_hi = min(Eo_max, Eout_hi)
+
+            dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
+
+            for eo in range(_N_EOUT):
+                Eout = Eout_lo + ((<double>eo) * dE)
+
+                for l in range(mus.shape[0] - 1):
+                    value = 0.
+                    dmu = mus[l + 1] - mus[l]
+                    for p in range(_N_QUAD):
+                        u = _POINTS[p] * dmu + mus[l]
+                        value += _WEIGHTS[p] * self.eval(u, Eout)
+                    grid[l] = value * dmu
+
+                for l in range(integral.shape[1]):
+                    integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
+            for l in range(integral.shape[1]):
+                integral[g, l] *= dE

@@ -63,10 +63,10 @@ def _generic_addsub(self, other, operator):
                 other_start = other.gout_min - gout_min
                 other_end = other.gout_max - other.gout_min + other_start
 
-                data[self_start: self_start + self_end + 1] = self.data
-                data[other_start: other_start + other_end + 1] = \
-                    operator(data[other_start: other_start + other_end + 1],
-                             other.data)
+                data[self_start: self_end + 1] = self.data
+
+                data[other_start: other_end + 1] = \
+                    operator(data[other_start: other_end + 1], other.data)
 
                 result.gout_min = gout_min
                 result.gout_max = gout_max
@@ -208,6 +208,9 @@ class SparseScatters(object):
             return self.scatters[indices]
         else:
             raise ValueError("Invalid Indices")
+
+    def __len__(self):
+        return self.scatters.shape[0]
 
     def append(self, value):
         if isinstance(value, SparseScatter):
