@@ -78,15 +78,19 @@ cdef class NBody(EnergyAngle_Cython):
                 ((self.Emax - b + d * mu_hi)**exp_p1 -
                  (self.Emax - b + d * mu_lo)**exp_p1)
 
-    cpdef integrate_lab_legendre(self, double[::1] Eouts,
-                                 double[:, ::1] integral, double [::1] grid,
+    cpdef integrate_lab_legendre(self, double[::1] Eouts, int order,
                                  double[::1] mus_grid, double[:, ::1] wgts):
         cdef int g, eo, l
         cdef double Eout_hi, Eout_lo, Eo_max
         cdef double mu_l_min, dE, Eout, dmu, u
+        cdef np.ndarray[np.double_t, ndim=2] integral
+        cdef np.ndarray[np.double_t, ndim=1] grid
+
+        integral = np.zeros((Eouts.shape[0] - 1, order + 1))
+        grid = np.empty(integral.shape[1])
 
         # The astute reader will notice that we dont check against Eo_min in this
-        # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
+        # routine like we would for the correlated and uncorrelated versions.
         # The reason is because Eo_min is 0 for an NBody, so no reason to check.
         Eo_max = self.Eout_max()
 
@@ -130,12 +134,17 @@ cdef class NBody(EnergyAngle_Cython):
             for l in range(integral.shape[1]):
                 integral[g, l] *= dE
 
-    cpdef integrate_lab_histogram(self, double[::1] Eouts,
-                                 double[:, ::1] integral, double [::1] grid,
-                                 double[::1] mus):
+        return integral
+
+    cpdef integrate_lab_histogram(self, double[::1] Eouts, double[::1] mus):
         cdef int g, eo, l
         cdef double Eout_hi, Eout_lo, Eo_max
         cdef double mu_l_min, dE, Eout
+        cdef np.ndarray[np.double_t, ndim=2] integral
+        cdef np.ndarray[np.double_t, ndim=1] grid
+
+        integral = np.zeros((Eouts.shape[0] - 1, mus.shape[0] - 1))
+        grid = np.empty(integral.shape[1])
 
         # The astute reader will notice that we dont check against Eo_min in this
         # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
@@ -170,3 +179,5 @@ cdef class NBody(EnergyAngle_Cython):
                     integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
             for l in range(integral.shape[1]):
                 integral[g, l] *= dE
+
+        return integral

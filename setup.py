@@ -85,9 +85,6 @@ if have_cython:
                   include_dirs=[np.get_include()]),
         Extension("openmc.ndpp.correlated", ['openmc/ndpp/correlated.pyx'],
                   include_dirs=[np.get_include()]),
-        Extension("openmc.ndpp.cython_integrators",
-                  ['openmc/ndpp/cython_integrators.pyx'],
-                  include_dirs=[np.get_include()]),
         Extension("openmc.ndpp.energyangledist",
                   ['openmc/ndpp/energyangledist.pyx'],
                   include_dirs=[np.get_include()]),
@@ -98,6 +95,10 @@ if have_cython:
         Extension("openmc.ndpp.nbody", ['openmc/ndpp/nbody.pyx'],
                   include_dirs=[np.get_include()]),
         Extension("openmc.ndpp.uncorrelated", ['openmc/ndpp/uncorrelated.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.twobody_tar", ['openmc/ndpp/twobody_tar.pyx'],
+                  include_dirs=[np.get_include()]),
+        Extension("openmc.ndpp.twobody_fgk", ['openmc/ndpp/twobody_fgk.pyx'],
                   include_dirs=[np.get_include()])]
     kwargs.update({
         'ext_modules': cythonize(extensions)

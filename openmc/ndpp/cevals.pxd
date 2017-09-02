@@ -8,14 +8,7 @@ from libc.math cimport exp, log
 
 from openmc.stats.bisect cimport bisect, bisect_int
 
-
-# CONSTANTS USED IN PLACE OF openmc.stats.Univariate interpolation types
-cdef int HISTOGRAM = 1
-cdef int LINLIN = 2
-cdef int LINLOG = 3
-cdef int LOGLIN = 4
-cdef int LOGLOG = 5
-
+from .cconstants cimport HISTOGRAM, LINLIN, LINLOG, LOGLIN, LOGLOG
 
 cdef double discrete_eval(double[:] this_x, double[:] this_p, size_t end_x,
                           double x)

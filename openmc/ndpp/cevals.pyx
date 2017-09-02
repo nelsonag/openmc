@@ -191,6 +191,7 @@ cdef double tabulated1d_eval_w_search_params(double[:] this_x, double[:] this_y,
 cdef double fast_tabulated1d_eval(double x, double xi, double xi1, double yi,
                                   double yi1, int interp_type):
     cdef double y
+
     if interp_type == HISTOGRAM:
         y = yi
     elif interp_type == LINLIN:

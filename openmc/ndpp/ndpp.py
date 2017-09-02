@@ -16,7 +16,7 @@ from openmc.mgxs import EnergyGroups
 import openmc.checkvalue as cv
 from . import NDPP_VERSION_MAJOR
 from .evaluators import *
-from .cython_integrators import set_freegas_method
+from .twobody_fgk import set_freegas_method
 from .sparsescatter import *
 
 if sys.version_info[0] >= 3:

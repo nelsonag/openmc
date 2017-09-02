@@ -1,16 +1,15 @@
 import numpy as np
-import scipy.optimize as sopt
 
 import openmc.stats
 from openmc.data import KalbachMann, UncorrelatedAngleEnergy, \
     CorrelatedAngleEnergy, LevelInelastic, NBodyPhaseSpace, Uniform
 from .interpolators import *
-from .cython_integrators import *
 from .uncorrelated import Uncorrelated
 from .correlated import Correlated
 from .kalbach import KM
 from .nbody import NBody
-from .freegas import *
+from .twobody_tar import TwoBody_TAR
+from .twobody_fgk import TwoBody_FGK
 
 
 # The free-gas kernel (FGK) functions asymptotically go to zero as outgoing
@@ -122,12 +121,8 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
                                                  q_value, order, mus)
 
     # Now move on to general center-of-mass or lab-frame integration
-    if cm:
-        return _integrate_generic_cm(this, Ein, Eouts, awr, order, mus,
-                                     mus_grid, wgts)
-    else:
-        return _integrate_generic_lab(this, Ein, Eouts, order, mus, mus_grid,
-                                      wgts)
+    return _integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid,
+                              wgts, cm)
 
 
 ###############################################################################
@@ -224,96 +219,14 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
         adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
                         'histogram')
 
-    # For the same reasons as the above block, convert the string interpolation
-    # keys to integers
-    if adist._interpolation == 'histogram':
-        adist_interp = 1
-    elif adist._interpolation == 'linear-linear':
-        adist_interp = 2
-    elif adist._interpolation == 'linear-log':
-        adist_interp = 3
-    elif adist._interpolation == 'log-linear':
-        adist_interp = 4
-    elif adist._interpolation == 'log-log':
-        adist_interp = 5
+    eadist = TwoBody_FGK(adist, Ein, awr, kT, xs, Eouts)
 
-    # Set up results vector
     if order is not None:
-        integral = np.zeros((len(Eouts) - 1, order + 1))
+        integral = eadist.integrate_cm_legendre(Ein, Eouts, order, mus_grid,
+                                                wgts)
     else:
-        integral = np.zeros((len(Eouts) - 1, len(mus) - 1))
-    grid = np.empty(integral.shape[1], np.float)
+        integral = eadist.integrate_cm_histogram(Ein, Eouts, mus)
 
-    # Set the constants to be used in our calculation
-    beta = (awr + 1.) / awr
-    half_beta_2 = 0.25 * beta * beta
-    alpha = awr / kT
-    srch_args = (Ein, beta, alpha, awr, kT, half_beta_2, adist._x, adist._p,
-                 adist_interp, xs._x, xs._y, xs._breakpoints,
-                 xs._interpolation)
-
-    # Find the Eout bounds
-    # We will search both backward and forward scattering conditions to see
-    # what the most extreme outgoing energies we need to consider are
-
-    # Do the following for backward scattering
-    # Now find the maximum value so we can bracket our range and also use it
-    # to find our roots (when function passes tolerance * max)
-    maximum = sopt.minimize_scalar(find_freegas_integral_max,
-                                   bracket=[0., Ein + 12. / alpha],
-                                   args=(_MU_BACK, *srch_args, _FGK_RESULT))
-    Eout_peak = maximum.x
-    func_peak = -maximum.fun
-
-    # Now find the upper and lower roots around this peak
-    Eout_min_back = \
-        sopt.brentq(find_freegas_integral_root, Eouts[0], Eout_peak,
-                    args=(_MU_BACK, *srch_args, _FGK_RESULT,
-                          _FGK_ROOT_TOL * func_peak))
-    Eout_max_back = \
-        sopt.brentq(find_freegas_integral_root, Eout_peak, Eouts[-1],
-                    args=(_MU_BACK, *srch_args, _FGK_RESULT,
-                          _FGK_ROOT_TOL * func_peak))
-
-    # Now we have to repeat for the top end;
-    # Here we dont do mu=1, since the problem is unstable at mu=1, Ein=Eout,
-    # which would give us a peak many orders of magnitude higher than the
-    # surrounding points (so almost any point would pass the tolerance * peak
-    # root check even with pretty low tolerances).
-    # Instead we search at mu=0.9 and linearly interpolate to mu=1.
-    maximum = \
-        sopt.minimize_scalar(find_freegas_integral_max,
-                             bracket=[0., Ein + 12. / alpha],
-                             args=(_MU_FWD, *srch_args, _FGK_RESULT))
-    Eout_peak = maximum.x
-    func_peak = -maximum.fun
-    Eout_min_fwd = sopt.brentq(find_freegas_integral_root,
-                               Eouts[0], Eout_peak,
-                               args=(_MU_FWD, *srch_args, _FGK_RESULT,
-                                     _FGK_ROOT_TOL * func_peak))
-    Eout_max_fwd = sopt.brentq(find_freegas_integral_root,
-                               Eout_peak, Eouts[-1],
-                               args=(_MU_FWD, *srch_args, _FGK_RESULT,
-                                     _FGK_ROOT_TOL * func_peak))
-
-    Eout_min_fwd = (1. - _INTERP_MU) * Eout_min_back + \
-        _INTERP_MU * Eout_min_fwd
-    Eout_max_fwd = (1. - _INTERP_MU) * Eout_max_back + \
-        _INTERP_MU * Eout_max_fwd
-    Eout_min = min(Eout_min_back, Eout_min_fwd)
-    Eout_max = max(Eout_max_back, Eout_max_fwd)
-
-    # Finally, perform the integration
-    if order is not None:
-        integrate_legendres_freegas(Ein, Eouts, beta, alpha, awr, kT,
-                                    half_beta_2, adist._x, adist._p,
-                                    adist_interp, xs._x, xs._y,
-                                    xs._breakpoints, xs._interpolation,
-                                    grid, integral, mus_grid, wgts, Eout_min,
-                                    Eout_max)
-    else:
-        integrate_histogram_freegas(Ein, Eouts, mus, *args, grid, integral,
-                                    Eout_min, Eout_max)
     return integral
 
 
@@ -327,76 +240,35 @@ def _integrate_twobody_cm_TAR(this, Ein, Eouts, awr, q_value, order, mus):
     if this._angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = Uniform(-1., 1.)
+        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                        'histogram')
 
-    # Set up results vector and integrand function
+    eadist = TwoBody_TAR(adist, Ein, awr, q_value)
+
     if order is not None:
-        integral = np.zeros((len(Eouts) - 1, order + 1))
+        integral = eadist.integrate_cm_legendre(Ein, Eouts, order)
     else:
-        integral = np.zeros((len(Eouts) - 1, len(mus) - 1))
-
-    integrate_twobody_cm_TAR(Ein, Eouts, awr, q_value, adist, integral,
-                             order is not None, mus)
+        integral = eadist.integrate_cm_histogram(Ein, Eouts, mus)
 
     return integral
 
 
 ###############################################################################
-# GENERIC CENTER-OF-MASS INTEGRATION
+# GENERIC NON-TWO-BODY INTEGRATION
 ###############################################################################
 
 
-def _integrate_generic_cm(this, Ein, Eouts, awr, order, mus, mus_grid, wgts):
-    """Integrates a distribution at a given incoming energy, over a given
-    outgoing energy bounds when Legendre coefficients are requested.
+def _integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid, wgts, cm):
+    """Integrates this distribution at a given incoming energy,
+    over a given lab or cm-frame mu range and given outgoing energy bounds.
     """
-
-    # Initialize the memory for the result.
-    if order is not None:
-        integral = np.zeros((len(Eouts) - 1, order + 1))
-    else:
-        integral = np.zeros((len(Eouts) - 1, len(mus) - 1))
 
     # Pre-process to obtain our energy and angle distributions
     if isinstance(this, UncorrelatedAngleEnergy):
         eadist = _preprocess_uncorr(this, Ein)
+
     elif isinstance(this, KalbachMann):
         eadist = _preprocess_kalbach(this, Ein)
-    elif isinstance(this, CorrelatedAngleEnergy):
-        eadist = _preprocess_corr(this, Ein)
-    elif isinstance(this, NBodyPhaseSpace):
-        eadist = _preprocess_nbody(this, Ein)
-
-    # Call our integration routine
-    Eout_max = eadist.Eout_max()
-    integrate_cm(Ein, Eouts, Eout_max, awr, integral, eadist,
-                 order is not None, mus)
-
-    return integral
-
-
-###############################################################################
-# LAB-FRAME INTEGRATION
-###############################################################################
-
-def _integrate_generic_lab(this, Ein, Eouts, order, mus, mus_grid, wgts):
-    """Integrates this distribution at a given incoming energy,
-    over a given lab-frame mu range and given outgoing energy bounds when a
-    lab-frame distribution is provided.
-    """
-
-    # Initialize the memory for the result.
-    if order is not None:
-        integral = np.zeros((len(Eouts) - 1, order + 1))
-    else:
-        integral = np.zeros((len(Eouts) - 1, len(mus) - 1))
-    grid = np.empty(integral.shape[1], np.float)
-
-    legendre = order is not None
-
-    # Pre-process and call the distribution-type specific method
-    if isinstance(this, UncorrelatedAngleEnergy):
-        eadist = _preprocess_uncorr(this, Ein)
 
     elif isinstance(this, CorrelatedAngleEnergy):
         eadist = _preprocess_corr(this, Ein)
@@ -404,9 +276,17 @@ def _integrate_generic_lab(this, Ein, Eouts, order, mus, mus_grid, wgts):
     elif isinstance(this, NBodyPhaseSpace):
         eadist = _preprocess_nbody(this, Ein)
 
-    if legendre:
-        eadist.integrate_lab_legendre(Eouts, integral, grid, mus_grid, wgts)
+    # Initialize the memory for the result and call our integration routine
+    # The specific calls depends on if we are using a Legendre expansion or not
+    if cm:
+        if order is not None:
+            integral = eadist.integrate_cm_legendre(Ein, Eouts, awr, order)
+        else:
+            integral = eadist.inegrate_cm_histogram(Ein, Eouts, awr, mus)
     else:
-        eadist.integrate_lab_histogram(Eouts, integral, grid, mus)
+        if order is not None:
+            integral = eadist.integrate_lab_legendre(Eouts, mus_grid, wgts)
+        else:
+            integral = eadist.integrate_lab_histogram(Eouts, mus)
 
     return integral

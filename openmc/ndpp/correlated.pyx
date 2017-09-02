@@ -99,8 +99,7 @@ cdef class Correlated(EnergyAngle_Cython):
 
         return f * g
 
-    cpdef integrate_lab_legendre(self, double[::1] Eouts,
-                                 double[:, ::1] integral, double [::1] grid,
+    cpdef integrate_lab_legendre(self, double[::1] Eouts, int order,
                                  double[::1] mus_grid, double[:, ::1] wgts):
         """Routine to integrate this distribution represented as a lab-frame
         and expanded via Legendre polynomials
@@ -109,6 +108,11 @@ cdef class Correlated(EnergyAngle_Cython):
         cdef int g, eo, l, p
         cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
         cdef double mu_l_min, dE, Eout, dmu, u, value
+        cdef np.ndarray[np.double_t, ndim=2] integral
+        cdef np.ndarray[np.double_t, ndim=1] grid
+
+        integral = np.zeros((Eouts.shape[0] - 1, order + 1))
+        grid = np.empty(integral.shape[1])
 
         Eo_min = self.Eout_min()
         Eo_max = self.Eout_max()
@@ -142,9 +146,9 @@ cdef class Correlated(EnergyAngle_Cython):
             for l in range(integral.shape[1]):
                 integral[g, l] *= dE
 
-    cpdef integrate_lab_histogram(self, double[::1] Eouts,
-                                  double[:, ::1] integral, double [::1] grid,
-                                  double[::1] mus):
+        return integral
+
+    cpdef integrate_lab_histogram(self, double[::1] Eouts, double[::1] mus):
         """Routine to integrate this distribution represented as a lab-frame
         and expanded in the histogram bins defined by mus
         """
@@ -152,6 +156,11 @@ cdef class Correlated(EnergyAngle_Cython):
         cdef int g, eo, l, p
         cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
         cdef double mu_l_min, dE, Eout, dmu, u, value
+        cdef np.ndarray[np.double_t, ndim=2] integral
+        cdef np.ndarray[np.double_t, ndim=1] grid
+
+        integral = np.zeros((Eouts.shape[0] - 1, mus.shape[0] - 1))
+        grid = np.empty(integral.shape[1])
 
         Eo_min = self.Eout_min()
         Eo_max = self.Eout_max()
@@ -187,3 +196,5 @@ cdef class Correlated(EnergyAngle_Cython):
                     integral[g, l] += _SIMPSON_WEIGHTS[eo] * grid[l]
             for l in range(integral.shape[1]):
                 integral[g, l] *= dE
+
+        return integral

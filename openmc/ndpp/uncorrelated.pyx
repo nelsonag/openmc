@@ -40,8 +40,7 @@ cdef class Uncorrelated(EnergyAngle_Cython):
 
         return f_Eout * self.adist._eval(mu)
 
-    cpdef integrate_lab_legendre(self, double[::1] Eouts,
-                                 double[:, ::1] integral, double [::1] grid,
+    cpdef integrate_lab_legendre(self, double[::1] Eouts, int order,
                                  double[::1] mus_grid, double[:, ::1] wgts):
         """Routine to integrate this distribution represented as a lab-frame
         and expanded via Legendre polynomials
@@ -51,11 +50,14 @@ cdef class Uncorrelated(EnergyAngle_Cython):
         cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
         cdef double mu_l_min, dE, Eout, dmu, u, value
         cdef double[::1] angle_integral
+        cdef np.ndarray[np.double_t, ndim=2] integral
+
+        integral = np.zeros((Eouts.shape[0] - 1, order + 1))
 
         Eo_min = self.Eout_min()
         Eo_max = self.Eout_max()
 
-        angle_integral = np.empty_like(grid)
+        angle_integral = np.empty(order + 1)
 
         for p in range(mus_grid.shape[0]):
             value = self.adist._eval(mus_grid[p])
@@ -76,14 +78,13 @@ cdef class Uncorrelated(EnergyAngle_Cython):
             Eout_lo = max(Eo_min, Eout_lo)
             Eout_hi = min(Eo_max, Eout_hi)
 
-            for l in range(grid.shape[0]):
+            for l in range(angle_integral.shape[0]):
                 integral[g, l] = angle_integral[l] * \
                     self.edist.integrate(Eout_lo, Eout_hi)
 
+        return integral
 
-    cpdef integrate_lab_histogram(self, double[::1] Eouts,
-                                  double[:, ::1] integral, double [::1] grid,
-                                  double[::1] mus):
+    cpdef integrate_lab_histogram(self, double[::1] Eouts, double[::1] mus):
         """Routine to integrate this distribution represented as a lab-frame
         and expanded in the histogram bins defined by mus
         """
@@ -92,11 +93,14 @@ cdef class Uncorrelated(EnergyAngle_Cython):
         cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
         cdef double mu_l_min, dE, Eout, dmu, u, value
         cdef double[::1] angle_integral
+        cdef np.ndarray[np.double_t, ndim=2] integral
+
+        integral = np.zeros((Eouts.shape[0] - 1, mus.shape[0] - 1))
 
         Eo_min = self.Eout_min()
         Eo_max = self.Eout_max()
 
-        angle_integral = np.empty_like(grid)
+        angle_integral = np.empty(mus.shape[0] - 1)
 
         for l in range(mus.shape[0] - 1):
             value = 0.
@@ -120,7 +124,9 @@ cdef class Uncorrelated(EnergyAngle_Cython):
             Eout_lo = max(Eo_min, Eout_lo)
             Eout_hi = min(Eo_max, Eout_hi)
 
-            for l in range(grid.shape[0]):
+            for l in range(angle_integral.shape[0]):
                 integral[g, l] = angle_integral[l] * \
                     self.edist.integrate(Eout_lo, Eout_hi)
+
+        return integral
 

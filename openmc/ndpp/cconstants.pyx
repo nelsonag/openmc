@@ -8,6 +8,7 @@ _PI = np.pi
 _N_QUAD = 20
 _POINTS, _WEIGHTS = roots_sh_legendre(_N_QUAD)
 _FMU = np.empty(_N_QUAD)
+_MU = np.empty(_N_QUAD)
 
 # The number of outgoing energy points to use when integrating the free-gas
 # kernel; we are using simpson's 3/8 rule so this needs to be a multiple of 3
@@ -33,3 +34,10 @@ _MIN_C2 = _MIN_C * _MIN_C
 _ADIST_TYPE_TABULAR = 0
 _ADIST_TYPE_UNIFORM = 1
 _ADIST_TYPE_DISCRETE = 2
+
+# CONSTANTS USED IN PLACE OF openmc.stats.Univariate interpolation types
+HISTOGRAM = 1
+LINLIN = 2
+LINLOG = 3
+LOGLIN = 4
+LOGLOG = 5

@@ -13,6 +13,7 @@ import numpy as np
 
 from openmc.stats.bisect cimport bisect
 from .cevals cimport *
+from .cconstants cimport HISTOGRAM, LINLIN, LINLOG, LOGLIN, LOGLOG
 
 """
 The Free-Gas Kernel method used in this code is from
