@@ -6,7 +6,6 @@ from numbers import Integral, Real
 from functools import reduce
 
 import numpy as np
-import h5py
 
 from openmc.data.data import K_BOLTZMANN
 from openmc.data.endf import SUM_RULES
@@ -169,7 +168,7 @@ class Ndpp(object):
     def __init__(self, library, group_structure, scatter_format,
                  order, kTs=None, num_threads=None, tolerance=0.001,
                  freegas_cutoff=None, freegas_method='cxs',
-                 minimum_relative_threshold=1.e-10):
+                 minimum_relative_threshold=1.e-6):
         self.library = library
         self.group_structure = group_structure
         self.scatter_format = scatter_format
@@ -501,6 +500,11 @@ class Ndpp(object):
             xs_range.append(elastic_Ein[-1])
         Ein_intervals = np.clip(xs_range, self.group_edges[0],
                                 self.group_edges[-1])
+
+        # Add in the group boundaries
+        Ein_intervals = np.append(Ein_intervals, self.group_edges)
+
+        # Remove duplicates and make sure all the numbers in the right order
         Ein_intervals = np.unique(Ein_intervals)
         Ein_intervals.sort()
 
@@ -636,6 +640,12 @@ class Ndpp(object):
         # Get our reaction data
         awr = self.library.atomic_weight_ratio
 
+        # Set the freegas cutoff in units of eV
+        freegas_cutoff = self.freegas_cutoff * kT
+
+        # Set the free-gas method to use
+        set_freegas_method(self.freegas_method == 'cxs')
+
         # Pre-calculate our free-gas kernel weights if needed
         if self.scatter_format == 'legendre':
             mus_grid, wgts = initialize_quadrature(self.order)
@@ -659,15 +669,15 @@ class Ndpp(object):
         Ein_low = self.group_edges[0]
         Ein_high = self.group_edges[-1]
         # Reduce the high Ein if we need to consider freegas scattering
-        if self.freegas_cutoff > 0.:
-            Ein_high = min(self.freegas_cutoff * kT, self.group_edges[-1])
+        if freegas_cutoff > 0.:
+            Ein_high = min(freegas_cutoff, self.group_edges[-1])
         Ein_grid = np.logspace(np.log10(Ein_low), np.log10(Ein_high),
                                num=(_NUM_ENERGY_SUBDIV),
                                endpoint=False)
 
         # If Ein_high was set by the freegas cutoff, then we need to
         # also add in the bins for the non-freegas part
-        if Ein_high == self.freegas_cutoff * kT:
+        if Ein_high == freegas_cutoff:
             Ein_low = Ein_high
             Ein_high = self.group_edges[-1]
             upper_grid = np.logspace(np.log10(Ein_low),
@@ -703,10 +713,8 @@ class Ndpp(object):
         # the multiprocessing pool
         func_args = (awr, self.library.reactions[2],
                      self.library.reactions[2].products[0], self, kT, mu_bins,
-                     self.library.reactions[2].xs[strT], mus_grid, wgts)
-
-        # Set the free-gas method to use
-        set_freegas_method(self.freegas_method == 'cxs')
+                     self.library.reactions[2].xs[strT], freegas_cutoff,
+                     mus_grid, wgts)
 
         # Set the arguments for our linearize function, except dont yet include
         # the Ein grid points (the first argument), since that will be
@@ -847,7 +855,7 @@ class Ndpp(object):
                 # These have to be aggregated into a tuple to support the usage
                 # of the multiprocessing pool
                 func_args = (awr, rxn, products[r], self, kT, mu_bins,
-                             xs_funcs[r], mus_grid, wgts)
+                             xs_funcs[r], 0., mus_grid, wgts)
 
                 # Set the arguments for our linearize function, except dont yet
                 # include the Ein grid points (the first argument), since that
@@ -914,7 +922,9 @@ class Ndpp(object):
                 for r in range(len(rxn_grids)):
                     if Ein > thresholds[r]:
                         # Find the corresponding point
-                        if Ein < rxn_grids[r][-2]:
+                        if Ein <= rxn_grids[r][0]:
+                            i = 0
+                        elif Ein < rxn_grids[r][-2]:
                             i = np.searchsorted(rxn_grids[r], Ein) - 1
                         else:
                             i = len(rxn_grids[r]) - 2
@@ -923,14 +933,14 @@ class Ndpp(object):
                         f = (Ein - rxn_grids[r][i]) / \
                             (rxn_grids[r][i + 1] - rxn_grids[r][i])
 
-                        combined += ((1. - f) * rxn_results[r][i] + \
+                        combined += ((1. - f) * rxn_results[r][i] +
                                      f * rxn_results[r][i + 1]).toarray()
 
                 if len(nu_inelastic) >= 2:
-                    # If we have enough points already, use our latest point,
-                    # in combined, and the point calculated (and kept) 2 times
-                    # ago, and see if the point calculated (and kept)
-                    # immediately prior to this is useful
+                    # If we have enough points already, use our latest point
+                    # and the point calculated (and kept) 2 times ago, and see
+                    # if the point calculated (and kept) immediately prior to
+                    # this is useful
 
                     # First create a dense array from our last two entries
                     # in nu_inelastic
@@ -986,9 +996,9 @@ class Ndpp(object):
         inelastic = np.zeros_like(self.nu_inelastic)
         for e in range(len(self.inelastic_energy)):
             if self.scatter_format == 'legendre':
-                norm = np.sum(self.nu_inelastic[e][:, 0])
+                norm = np.sum(self.nu_inelastic[e].data[:, 0])
             else:
-                norm = np.sum(self.nu_inelastic[e][:, :])
+                norm = np.sum(self.nu_inelastic[e].data[:, :])
 
             if norm > 0.:
                 inelastic[e] = self.nu_inelastic[e] / norm * inelastic_xs[e]
@@ -1129,7 +1139,9 @@ class Ndpp(object):
                 for r in range(len(rxn_grids)):
                     if Ein > thresholds[r]:
                         # Find the corresponding point
-                        if Ein < rxn_grids[r][-2]:
+                        if Ein <= rxn_grids[r][0]:
+                            i = 0
+                        elif Ein < rxn_grids[r][-2]:
                             i = np.searchsorted(rxn_grids[r], Ein) - 1
                         else:
                             i = len(rxn_grids[r]) - 2
@@ -1235,15 +1247,15 @@ class Ndpp(object):
                                           data=g_out_bounds[:, 1])
 
     @classmethod
-    def from_hdf5(cls, group_or_filename):
+    def from_hdf5(cls, file, name):
         """Generate continuous-energy neutron interaction data from HDF5 group
 
         Parameters
         ----------
-        group_or_filename : h5py.Group or str
-            HDF5 group containing the pre-processed data. If given as a string,
-            it is assumed to be the filename for the HDF5 file, and the first
-            group is used to read from.
+        file : h5py.File
+            HDF5 File (a root Group) to read from
+        name : str
+            Name of data to read
 
         Returns
         -------
@@ -1251,38 +1263,34 @@ class Ndpp(object):
             Pre-processed nuclear data (NDPP) object
 
         """
-        if isinstance(group_or_filename, h5py.Group):
-            group = group_or_filename
-        else:
-            h5file = h5py.File(group_or_filename, 'r')
 
-            # Make sure version matches
-            if 'version' in h5file.attrs:
-                major, minor = h5file.attrs['version']
-                if major != NDPP_VERSION_MAJOR:
-                    raise IOError(
-                        'HDF5 data format uses version {}.{} whereas your '
-                        'installation of the OpenMC Python API expects '
-                        ' version{}.x.'.format(major, minor,
-                                               NDPP_VERSION_MAJOR))
-            else:
+        # Make sure version matches
+        if 'version' in file.attrs:
+            major, minor = file.attrs['version']
+            if major != NDPP_VERSION_MAJOR:
                 raise IOError(
-                    'HDF5 data does not indicate a version. Your installation '
-                    'of the OpenMC Python API expects version {}.x data.'
-                    .format(NDPP_VERSION_MAJOR))
+                    'HDF5 data format uses version {}.{} whereas your '
+                    'installation of the OpenMC Python API expects '
+                    ' version{}.x.'.format(major, minor,
+                                           NDPP_VERSION_MAJOR))
+        else:
+            raise IOError(
+                'HDF5 data does not indicate a version. Your installation '
+                'of the OpenMC Python API expects version {}.x data.'
+                .format(NDPP_VERSION_MAJOR))
 
-            group = list(h5file.values())[0]
-
-        group_structure = \
-            EnergyGroups(group.attrs['group_structure'])
-        scatter_format = group.attrs['scatter_format']
-        order = group.attrs['order']
-        freegas_cutoff = group.attrs['freegas_cutoff']
-        freegas_method = group.attrs['freegas_method']
-        library = None
+        # Get the info needed to instantiate the object from the root of the
+        # file
+        group_structure = EnergyGroups(file['group structure'].value[:])
+        scatter_format = file.attrs['scatter_format'].decode()
+        order = file.attrs['order']
+        freegas_cutoff = file.attrs['freegas_cutoff']
+        freegas_method = file.attrs['freegas_method'].decode()
+        library = IncidentNeutron.from_hdf5('/opt/xsdata/nndc/O16.h5')
         if freegas_cutoff == -1:
             freegas_cutoff = None
 
+        group = file[name]
         kTg = group['kTs']
         kTs = []
         for temp in kTg:
@@ -1292,25 +1300,71 @@ class Ndpp(object):
                    freegas_cutoff=freegas_cutoff,
                    freegas_method=freegas_method)
 
+        # Read in the Library-specific data
+        data.fisionable = group.attrs['fissionable']
+        data.num_delayed_groups = group.attrs['num_delayed_groups']
+
         # Read temperature dependent data
         for T, Tgroup in group.items():
             if T.endswith('K'):
-                grid = Tgroup['elastic_energy'].value
-                data.elastic_energy[T] = grid[:]
-                data = Tgroup['elastic'].value
-                data.elastic_energy[T] = data[:, :, :]
+                data.elastic_energy[T] = Tgroup['elastic_energy'].value
+                elastic_flat = Tgroup['elastic'].value[:]
+                elastic_g_min = Tgroup['elastic_g_min'].value[:] - 1
+                elastic_g_max = Tgroup['elastic_g_max'].value[:] - 1
+
+                # Have to "unsparsify" it
+                data.elastic[T] = _unsparsify(elastic_g_min, elastic_g_max,
+                                              elastic_flat,
+                                              (data.num_groups,
+                                               data.num_angle))
+
+                # Get Chi
                 if 'chi_energy' in Tgroup:
-                    data.fissionable = True
-                    data.chi_energy[T] = group['chi_energy'].value[:]
-                    data.total_chi[T] = group['total_chi'].value[:, :]
-                    data.prompt_chi[T] = group['prompt_chi'].value[:, :]
-                    data.delayed_chi[T] = group['delayed_chi'].value[:, :, :]
+                    data.chi_energy[T] = Tgroup['chi_energy'].value[:]
+                    total_flat = Tgroup['total_chi'].value[:]
+                    total_g_min = Tgroup['total__g_min'].value[:] - 1
+                    total_g_max = Tgroup['total__g_max'].value[:] - 1
+                    prompt_flat = Tgroup['prompt_chi'].value[:]
+                    prompt_g_min = Tgroup['prompt__g_min'].value[:] - 1
+                    prompt_g_max = Tgroup['prompt__g_max'].value[:] - 1
+
+                    dgroup = Tgroup['delayed_chi']
+                    delay_flat_data = [None] * data.num_delayed_groups
+                    delay_g_min_data = [None] * data.num_delayed_groups
+                    delay_g_max_data = [None] * data.num_delayed_groups
+                    for c in range(data.num_delayed_groups):
+                        delay_flat = dgroup[str(c + 1)].value[:]
+                        delay_g_min = dgroup[str(c + 1) + '_g_min'].value[:] - 1
+                        delay_g_max = dgroup[str(c + 1) + '_g_max'].value[:] - 1
+                        delay_flat_data[c] = delay_flat[:]
+                        delay_g_min_data[c] = delay_g_min[:]
+                        delay_g_max_data[c] = delay_g_max[:]
+
+                    # Unsparsify the chi data
+                    data.chi[T] = \
+                        _unsparsify_chi(total_g_min, total_g_max, total_flat,
+                                        prompt_g_min, prompt_g_max,
+                                        prompt_flat, delay_g_min_data,
+                                        delay_g_max_data, delay_flat_data,
+                                        (data.num_groups,
+                                         2 + data.num_delayed_groups))
 
         # Read temperature independent data
         if 'inelastic_energy' in group:
             data.inelastic_energy = group['inelastic_energy'].value[:]
-            data.inelastic = group['inelastic'].value[:]
-            data.nu_inelastic = group['nu_inelastic'].value[:]
+            inelastic_flat = group['inelastic'].value[:]
+            nu_inelastic_flat = group['nu_inelastic'].value[:]
+            inelastic_g_min = group['inelastic_g_min'].value[:] - 1
+            inelastic_g_max = group['inelastic_g_max'].value[:] - 1
+
+            # Have to "unsparsify" it
+            data.inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
+                                         inelastic_flat,
+                                         (data.num_groups, data.num_angle))
+            data.nu_inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
+                                            nu_inelastic_flat,
+                                            (data.num_groups, data.num_groups,
+                                             data.num_angle))
 
         return data
 
@@ -1393,14 +1447,28 @@ def _sparsify(energy, data):
     flattened = []
     for ei in range(len(energy)):
         g_out_bounds[ei, :] = data[ei].gout_min, data[ei].gout_max
-        for g_out in range(data[ei].data.shape[0]):
-            for l in range(data[ei].shape[1]):
-                flattened.append(data[ei][g_out, l])
+        flattened.extend(data[ei].data.flatten())
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1
 
     return g_out_bounds, np.array(flattened)
+
+
+def _unsparsify(g_min, g_max, flat_data, shape):
+    data = []
+    orders = shape[-1]
+    twod_data = flat_data.reshape((-1, orders))
+    i = 0
+    for ei in range(g_min.shape[0]):
+        ein_data = np.zeros(shape)
+        if g_min[ei] != -1:
+            for gout in range(g_min[ei], g_max[ei] + 1):
+                ein_data[gout, :] = twod_data[i, :]
+                i += 1
+        data.append(SparseScatter(ein_data))
+    data = SparseScatters(data)
+    return data
 
 
 def _sparsify_chi(energy, data, index):
@@ -1421,10 +1489,47 @@ def _sparsify_chi(energy, data, index):
     # Now create the flattened array
     flattened = []
     for ei in range(len(energy)):
-        for g_out in range(g_out_bounds[ei, 0], g_out_bounds[ei, 1] + 1):
-            flattened.append(data[ei, g_out, index])
+        for g_out in range(data[ei].data.shape[0]):
+            flattened.append(data[ei].data[g_out, index])
 
     # And finally, adjust g_out_bounds for 1-based group counting
     g_out_bounds[:, :] += 1
 
     return g_out_bounds, np.array(flattened)
+
+
+def _unsparsify_chi(total_g_min, total_g_max, total_flat,
+                    prompt_g_min, prompt_g_max, prompt_flat,
+                    delay_g_min, delay_g_max, delay_flat, shape):
+    data = []
+
+    # Initialize counters for the total, prompt, and delayed data
+    t = 0
+    p = 0
+    d = [0] * len(delay_g_min)
+    for ei in range(len(delay_g_min)):
+        ein_data = np.zeros(shape)
+
+        # Include the total data
+        ein_data[total_g_min[ei]: total_g_max[ei] + 1, 0] = \
+            total_flat[t: t + total_g_max[ei] - total_g_min[ei] + 1]
+        t += total_g_max[ei] - total_g_min[ei] + 1
+
+        # Include the prompt data
+        ein_data[prompt_g_min[ei]: prompt_g_max[ei] + 1, 1] = \
+            prompt_flat[p: p + prompt_g_max[ei] - prompt_g_min[ei] + 1]
+        p += prompt_g_max[ei] - prompt_g_min[ei] + 1
+
+        # Include the delayed data
+        for dg in range(len(d)):
+            gmin = delay_g_min[dg][ei]
+            if gmin == -1:
+                continue
+            gmax = delay_g_max[dg][ei]
+            ein_data[gmin: gmax + 1, 2 + dg] = \
+                delay_flat[dg][d[dg]: d[dg] + gmax - gmin + 1]
+            d[dg] += gmax - gmin + 1
+
+        data.append(SparseScatter(ein_data))
+    data = SparseScatters(data)
+    return data

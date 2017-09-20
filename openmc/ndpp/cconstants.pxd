@@ -19,10 +19,6 @@ cdef double _N_EOUT_DOUBLE
 cdef double[::1] _SIMPSON_WEIGHTS
 cdef int index
 
-# Minimum value of c, the constant used when converting inelastic CM
-# distributions to the lab-frame
-cdef double _MIN_C, _MIN_C2
-
 # Angular distribution types
 cdef int _ADIST_TYPE_TABULAR, _ADIST_TYPE_UNIFORM, _ADIST_TYPE_DISCRETE
 

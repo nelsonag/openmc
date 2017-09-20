@@ -262,18 +262,28 @@ class SparseScatter(object):
     def __init__(self, matrix=None, minimum_relative_threshold=None,
                  scatter_format=None):
         if isinstance(matrix, np.ndarray):
+
+            # Apply the minimum threshold
             if minimum_relative_threshold is not None:
                 if scatter_format == 'legendre':
-                    threshold = np.sum(matrix[:, 0]) * \
-                        minimum_relative_threshold
-                else:
-                    threshold = np.sum(matrix) * minimum_relative_threshold
+                    pre_thin_sum = np.sum(matrix[:, 0])
+                    threshold = pre_thin_sum * minimum_relative_threshold
 
-                # Apply the relative threshold
-                matrix[np.abs(matrix) < threshold] = 0.
+                    for gout in range(matrix.shape[0]):
+                        if matrix[gout, 0] < threshold:
+                            matrix[gout, :] = 0.
+                else:
+                    pre_thin_sum = np.sum(matrix)
+                    threshold = pre_thin_sum * minimum_relative_threshold
+                    for gout in range(matrix.shape[0]):
+                        if np.sum(matrix[gout, :]) < threshold:
+                            matrix[gout, :] = 0.
 
             # Find the nonzero entries using numpy
-            nz = np.nonzero(matrix)
+            if scatter_format == 'legendre':
+                nz = np.nonzero(matrix[:, 0])
+            else:
+                nz = np.nonzero(np.sum(matrix, axis=-1))
 
             # Now get our outgoing group bounds
             if len(nz[0]) == 0:

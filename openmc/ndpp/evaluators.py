@@ -5,7 +5,9 @@ from .integrators import integrate
 from .sparsescatter import SparseScatter
 
 
-_DE_REL_THRESH = 1.E-6
+# Minimum relative change in energy to allow for the linearizer's grid
+# generation
+_DE_REL_THRESH = 1.E-4
 
 
 def linearizer_wrapper(linearizer_args):
@@ -60,15 +62,21 @@ def _linearizer(Ein_grid, func, args, tolerance, min_rel_threshold,
                 Ein_mid = 0.5 * (Ein_low + Ein_high)
                 results_mid = func(Ein_mid, *args)
 
+                # Don't let insignificant values require additional Ein grid
+                # points.
+                # We do it with the SparseScatter object to ensure we have the
+                # same methods at all steps of the process
+                results_mid = SparseScatter(results_mid, min_rel_threshold,
+                                            scatter_format).toarray()
+
                 results_interp = results_low + (results_high - results_low) / \
                     (Ein_high - Ein_low) * (Ein_mid - Ein_low)
 
-                error = np.subtract(results_interp, results_mid)
+                error = results_interp - results_mid
                 # Avoid division by 0 errors since they are fully expected
                 # with our sparse results
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    error = np.abs(np.nan_to_num(np.divide(error,
-                                                           results_mid)))
+                    error = np.abs(np.nan_to_num(error / results_mid))
 
                 if np.any(error > tolerance):
                     Ein_stack.insert(-1, Ein_mid)
@@ -196,7 +204,7 @@ def _do_sab_inelastic(Ein, num_groups, num_angle, scatter_format, group_edges,
 
 
 def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func,
-              mus_grid=None, wgts=None):
+              freegas_cutoff, mus_grid=None, wgts=None):
     # Initialize the storage
     results = np.zeros((this.num_groups, this.num_angle))
 
@@ -208,9 +216,8 @@ def do_by_rxn(Ein, awr, rxn, product, this, kT, mu_bins, xs_func,
 
         unnorm_result = integrate(Ein, distrib, this.group_edges,
                                   this.scatter_format, rxn.center_of_mass,
-                                  awr, this.freegas_cutoff * kT, kT,
-                                  rxn.q_value, mu_bins, this.order, xs_func,
-                                  mus_grid, wgts)
+                                  awr, freegas_cutoff, kT, rxn.q_value,
+                                  mu_bins, this.order, xs_func, mus_grid, wgts)
 
         # Now normalize and multiply by applicability
         if this.scatter_format == 'legendre':

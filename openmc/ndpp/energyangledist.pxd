@@ -19,14 +19,13 @@ cdef class EnergyAngle_Cython:
     cdef double[::1] edist_x
     cdef double[::1] edist_p
     cdef int edist_interpolation
-
-    cpdef double Eout_min(self)
-
-    cpdef double Eout_max(self)
+    cdef double Eout_min
+    cdef double Eout_max
 
     cdef double eval(self, double mu, double Eout)
 
-    cdef double eval_cm(self, double mu_l, double Eo_l, double c, double Ein)
+    cdef double eval_cm(self, double mu_l, double Eo_l, double c, double J,
+                        double Ein)
 
     cpdef integrate_cm_legendre(self, double Ein, double[::1] Eouts, double awr,
                                 int order)

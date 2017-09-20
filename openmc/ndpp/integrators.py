@@ -56,13 +56,11 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
         parameter.
     cm : bool
         Flag stating whether or not the reaction providing the distribution
-        is in the center of mass frame (True) or not.  Defaults to False.
+        is in the center of mass frame (True) or not.
     awr : float
-        Atomic weight ratio; optional. Required if the distribution is
-        provided in the center-of-mass frame.
+        Atomic weight ratio
     freegas_cutoff : float
-        Maximal energy (in eV) in which the free-gas kernel is applied;
-        defaults to 400 eV for most nuclides, but 20 MeV for H-1.
+        Maximal energy (in eV) in which the free-gas kernel is applied
     kT : float
         Temperature (in units of eV) of the material; defaults to 2.53E-2 eV.
     q_value : float
@@ -113,16 +111,15 @@ def integrate(Ein, this, Eouts, scatter_format, cm, awr, freegas_cutoff, kT,
     if isinstance(this, UncorrelatedAngleEnergy):
         if this.energy is None or isinstance(this.energy, LevelInelastic):
             if Ein <= freegas_cutoff and q_value == 0.:
-                return _integrate_twobody_cm_freegas(this, Ein, Eouts, order,
-                                                     mus, awr, kT, xs,
-                                                     mus_grid, wgts)
+                return integrate_twobody_cm_freegas(this, Ein, Eouts, order,
+                                                    mus, awr, kT, xs,
+                                                    mus_grid, wgts)
             else:
-                return _integrate_twobody_cm_TAR(this, Ein, Eouts, awr,
-                                                 q_value, order, mus)
-
+                return integrate_twobody_cm_TAR(this, Ein, Eouts, awr,
+                                                q_value, order, mus)
     # Now move on to general center-of-mass or lab-frame integration
-    return _integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid,
-                              wgts, cm)
+    return integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid,
+                             wgts, cm)
 
 
 ###############################################################################
@@ -196,8 +193,8 @@ def _preprocess_nbody(this, Ein):
 ###############################################################################
 
 
-def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
-                                  mus_grid, wgts):
+def integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
+                                 mus_grid, wgts):
     """Integrates this distribution at a given incoming energy,
     over a given lab-frame mu range and given outgoing energy bounds
     for a target-in-motion.
@@ -230,7 +227,7 @@ def _integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     return integral
 
 
-def _integrate_twobody_cm_TAR(this, Ein, Eouts, awr, q_value, order, mus):
+def integrate_twobody_cm_TAR(this, Ein, Eouts, awr, q_value, order, mus):
     """Integrates this distribution at a given incoming energy,
     over a given lab-frame mu range and given outgoing energy bounds when a
     center-of-mass distribution is provided assuming a target-at-rest
@@ -258,7 +255,7 @@ def _integrate_twobody_cm_TAR(this, Ein, Eouts, awr, q_value, order, mus):
 ###############################################################################
 
 
-def _integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid, wgts, cm):
+def integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid, wgts, cm):
     """Integrates this distribution at a given incoming energy,
     over a given lab or cm-frame mu range and given outgoing energy bounds.
     """
@@ -282,10 +279,11 @@ def _integrate_generic(this, Ein, Eouts, awr, order, mus, mus_grid, wgts, cm):
         if order is not None:
             integral = eadist.integrate_cm_legendre(Ein, Eouts, awr, order)
         else:
-            integral = eadist.inegrate_cm_histogram(Ein, Eouts, awr, mus)
+            integral = eadist.integrate_cm_histogram(Ein, Eouts, awr, mus)
     else:
         if order is not None:
-            integral = eadist.integrate_lab_legendre(Eouts, mus_grid, wgts)
+            integral = eadist.integrate_lab_legendre(Eouts, order, mus_grid,
+                                                     wgts)
         else:
             integral = eadist.integrate_lab_histogram(Eouts, mus)
 

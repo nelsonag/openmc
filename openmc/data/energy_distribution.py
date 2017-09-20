@@ -193,7 +193,7 @@ class GeneralEvaporation(EnergyDistribution):
         self.u = u
 
     def __call__(self, Eout, Ein):
-        domain = self.domain(Ein)
+        domain = self.get_domain(Ein)
         if domain[0] < Eout <= domain[1]:
             x = Eout / self._theta(Ein)
             return self._g(x)
@@ -266,7 +266,7 @@ class MaxwellEnergy(EnergyDistribution):
         self.u = u
 
     def __call__(self, Eout, Ein):
-        domain = self.domain(Ein)
+        domain = self.get_domain(Ein)
         if domain[0] < Eout <= domain[1]:
             theta = self._theta(Ein)
             EmU_th = (Ein - self._u) / theta
@@ -414,7 +414,7 @@ class Evaporation(EnergyDistribution):
         self.u = u
 
     def __call__(self, Eout, Ein):
-        domain = self.domain(Ein)
+        domain = self.get_domain(Ein)
         if domain[0] < Eout <= domain[1]:
             theta = self._theta(Ein)
             EmU_th = (Ein - self._u) / theta
@@ -564,7 +564,7 @@ class WattEnergy(EnergyDistribution):
         self.u = u
 
     def __call__(self, Eout, Ein):
-        domain = self.domain(Ein)
+        domain = self.get_domain(Ein)
         if domain[0] < Eout <= domain[1]:
             a = self._a(Ein)
             b = self._b(Ein)

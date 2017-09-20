@@ -30,6 +30,7 @@ cdef double _PI = np.pi
 cdef int _N_SUBDIVISIONS = 5
 cdef int _N_QUAD_ORDER = 2
 cdef int _N_EOUTS_CXS = 200
+cdef double _N_EOUTS_CXS_DE = 199.
 
 # The quadrature points can be gathered now, we will get them between 0 and 1
 # so the shifting to the proper Elo, Ehi bounds is easier later
@@ -82,7 +83,7 @@ cdef void calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
         xc = sqrt(xc)
         minE = Estar + max(0., b - xc)**2 / alpha
         maxE = Estar + (b + xc)**2 / alpha
-        dE = (maxE - minE) / float(_N_EOUTS_CXS - 1)
+        dE = (maxE - minE) / _N_EOUTS_CXS_DE
 
         # Perform trapezoidal integration over all the Eout points
         value = 0.
@@ -90,9 +91,9 @@ cdef void calc_Er_integral_cxs(double[::1] mus, double Eout, double Ein,
                          most_of_mu_cm, adist_x, adist_p, adist_interp)
         for i in range(_N_EOUTS_CXS - 1):
             flo = fhi
-            fhi = _integrand(minE + float(i + 1) * dE, Eout, Estar, E0, alpha,
-                             most_of_eta, most_of_mu_cm, adist_x, adist_p,
-                             adist_interp)
+            fhi = _integrand(minE + (<double>(i + 1)) * dE, Eout, Estar, E0,
+                             alpha, most_of_eta, most_of_mu_cm, adist_x,
+                             adist_p, adist_interp)
             value += flo + fhi
         value *= (maxE - minE) * 0.5
 
@@ -172,9 +173,9 @@ cdef void calc_Er_integral_doppler(double[::1] mus, double Eout, double Ein,
                 xshi = xs_y[i + 1]
 
             # Evaluate each of the subdivisions
-            dE = (Ehi - Elo) / float(_N_SUBDIVISIONS)
+            dE = (Ehi - Elo) / (<double> _N_SUBDIVISIONS)
             for s in range(_N_SUBDIVISIONS):
-                Esub_lo = Elo + float(s) * dE
+                Esub_lo = Elo + (<double> s) * dE
                 temp_value = 0.
                 for p in range(_N_QUAD_ORDER):
                     Epoint = _POINTS[p] * dE + Esub_lo

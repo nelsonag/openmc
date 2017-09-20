@@ -59,6 +59,10 @@ cdef class Correlated(EnergyAngle_Cython):
         elif edist._interpolation == 'log-log':
             self.edist_interpolation = LOGLOG
 
+        # Set the Eout min and max attributes
+        self.Eout_min = self.edist_x[0]
+        self.Eout_max = self.edist_x[self.edist_x.shape[0] - 1]
+
     def __call__(self, double mu, double Eout):
         return self.eval(mu, Eout)
 
@@ -106,7 +110,7 @@ cdef class Correlated(EnergyAngle_Cython):
         """
 
         cdef int g, eo, l, p
-        cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
+        cdef double Eout_hi, Eout_lo
         cdef double mu_l_min, dE, Eout, dmu, u, value
         cdef np.ndarray[np.double_t, ndim=2] integral
         cdef np.ndarray[np.double_t, ndim=1] grid
@@ -114,22 +118,19 @@ cdef class Correlated(EnergyAngle_Cython):
         integral = np.zeros((Eouts.shape[0] - 1, order + 1))
         grid = np.empty(integral.shape[1])
 
-        Eo_min = self.Eout_min()
-        Eo_max = self.Eout_max()
-
         for g in range(Eouts.shape[0] - 1):
             Eout_lo = Eouts[g]
             Eout_hi = Eouts[g + 1]
 
             # If our group is below the possible outgoing energies, just skip it
-            if Eout_hi < Eo_min:
+            if Eout_hi < self.Eout_min:
                 continue
             # If our group is above the max energy then we are all done
-            if Eout_lo > Eo_max:
+            if Eout_lo > self.Eout_max:
                 break
 
-            Eout_lo = max(Eo_min, Eout_lo)
-            Eout_hi = min(Eo_max, Eout_hi)
+            Eout_lo = max(self.Eout_min, Eout_lo)
+            Eout_hi = min(self.Eout_max, Eout_hi)
 
             dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
 
@@ -154,7 +155,7 @@ cdef class Correlated(EnergyAngle_Cython):
         """
 
         cdef int g, eo, l, p
-        cdef double Eout_hi, Eout_lo, Eo_min, Eo_max
+        cdef double Eout_hi, Eout_lo
         cdef double mu_l_min, dE, Eout, dmu, u, value
         cdef np.ndarray[np.double_t, ndim=2] integral
         cdef np.ndarray[np.double_t, ndim=1] grid
@@ -162,22 +163,19 @@ cdef class Correlated(EnergyAngle_Cython):
         integral = np.zeros((Eouts.shape[0] - 1, mus.shape[0] - 1))
         grid = np.empty(integral.shape[1])
 
-        Eo_min = self.Eout_min()
-        Eo_max = self.Eout_max()
-
         for g in range(Eouts.shape[0] - 1):
             Eout_lo = Eouts[g]
             Eout_hi = Eouts[g + 1]
 
             # If our group is below the possible outgoing energies, just skip it
-            if Eout_hi < Eo_min:
+            if Eout_hi < self.Eout_min:
                 continue
             # If our group is above the max energy then we are all done
-            if Eout_lo > Eo_max:
+            if Eout_lo > self.Eout_max:
                 break
 
-            Eout_lo = max(Eo_min, Eout_lo)
-            Eout_hi = min(Eo_max, Eout_hi)
+            Eout_lo = max(self.Eout_min, Eout_lo)
+            Eout_hi = min(self.Eout_max, Eout_hi)
 
             dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
 

@@ -15,7 +15,7 @@ import scipy.optimize as sopt
 
 # This term sets the fraction of the peak (for a given mu) of the FGK function
 # to look for when finding the lower and upper Eout values of integration
-_FGK_ROOT_TOL = 1.e-2
+cdef double _FGK_ROOT_TOL = 1.e-2
 
 # These are constants we initialize once instead of every time through that are
 # used during the search for the FGK roots
@@ -26,7 +26,7 @@ _MU_BACK = np.array([-1.])
 _MU_FWD = np.array([0.9])
 # Set the mu interpolant to extend the range found at _MU_BACK and _MU_BACK
 # all the way to a forward-scatter mu of 1.0
-_INTERP_MU = (_MU_FWD[0] - (_MU_BACK[0])) * 0.5
+cdef double _INTERP_MU = (_MU_FWD[0] - (_MU_BACK[0])) * 0.5
 # Store space for our results
 _FGK_RESULT = np.empty_like(_MU_BACK)
 # Function pointer to use for free-gas integration
@@ -65,13 +65,7 @@ cdef class TwoBody_FGK:
         self.awr = awr
         self.kT = kT
 
-        # self.Eout_min = Eout_min
-        # self.Eout_max = Eout_max
-
         # Set the constants to be used in our calculation
-        beta = (awr + 1.) / awr
-        half_beta_2 = 0.25 * beta * beta
-        alpha = awr / kT
         srch_args = (Ein, self.beta, self.alpha, self.awr, self.kT,
                      self.half_beta_2, adist._x, adist._p, self.adist_interp,
                      xs._x, xs._y, xs._breakpoints, xs._interpolation)
@@ -86,15 +80,15 @@ cdef class TwoBody_FGK:
         maximum = sopt.minimize_scalar(find_freegas_integral_max,
                                        bracket=[0., Ein + 12. / self.alpha],
                                        args=(_MU_BACK, *srch_args, _FGK_RESULT))
-        Eout_peak = maximum.x
-        func_peak = -maximum.fun
+        cdef double Eout_peak = maximum.x
+        cdef double func_peak = -maximum.fun
 
         # Now find the upper and lower roots around this peak
-        Eout_min_back = \
+        cdef double Eout_min_back = \
             sopt.brentq(find_freegas_integral_root, Eouts[0], Eout_peak,
                         args=(_MU_BACK, *srch_args, _FGK_RESULT,
                               _FGK_ROOT_TOL * func_peak))
-        Eout_max_back = \
+        cdef double Eout_max_back = \
             sopt.brentq(find_freegas_integral_root, Eout_peak,
                         Eouts[Eouts.shape[0] - 1],
                         args=(_MU_BACK, *srch_args, _FGK_RESULT,
@@ -112,24 +106,23 @@ cdef class TwoBody_FGK:
                                  args=(_MU_FWD, *srch_args, _FGK_RESULT))
         Eout_peak = maximum.x
         func_peak = -maximum.fun
-        Eout_min_fwd = sopt.brentq(find_freegas_integral_root,
-                                   Eouts[0], Eout_peak,
-                                   args=(_MU_FWD, *srch_args, _FGK_RESULT,
-                                         _FGK_ROOT_TOL * func_peak))
-        Eout_max_fwd = sopt.brentq(find_freegas_integral_root,
-                                   Eout_peak, Eouts[Eouts.shape[0] - 1],
-                                   args=(_MU_FWD, *srch_args, _FGK_RESULT,
-                                         _FGK_ROOT_TOL * func_peak))
+        cdef double Eout_min_fwd = \
+            sopt.brentq(find_freegas_integral_root, Eouts[0], Eout_peak,
+                        args=(_MU_FWD, *srch_args, _FGK_RESULT,
+                              _FGK_ROOT_TOL * func_peak))
+        cdef double Eout_max_fwd = \
+            sopt.brentq(find_freegas_integral_root, Eout_peak,
+                        Eouts[Eouts.shape[0] - 1],
+                        args=(_MU_FWD, *srch_args, _FGK_RESULT,
+                              _FGK_ROOT_TOL * func_peak))
 
         Eout_min_fwd = (1. - _INTERP_MU) * Eout_min_back + \
             _INTERP_MU * Eout_min_fwd
         Eout_max_fwd = (1. - _INTERP_MU) * Eout_max_back + \
             _INTERP_MU * Eout_max_fwd
-        Eout_min = min(Eout_min_back, Eout_min_fwd)
-        Eout_max = max(Eout_max_back, Eout_max_fwd)
 
-        self.Eout_min = Eout_min
-        self.Eout_max = Eout_max
+        self.Eout_min = min(Eout_min_back, Eout_min_fwd)
+        self.Eout_max = max(Eout_max_back, Eout_max_fwd)
 
     cpdef integrate_cm_legendre(self, double Ein, double[::1] Eouts, int order,
                                 double[::1] mus_grid, double[:, ::1] wgts):
@@ -264,13 +257,13 @@ def set_freegas_method(bint use_cxs):
         _FREEGAS_FUNCTION = calc_Er_integral_doppler
 
 
-def find_freegas_integral_max(double Eout, double[::1] mu, double Ein,
-                              double beta, double alpha, double awr, double kT,
-                              double half_beta_2, double[::1] adist_x,
-                              double[::1] adist_p, int adist_interp,
-                              double[::1] xs_x, double[::1] xs_y,
-                              long[::1] xs_bpts, long[::1] xs_interp,
-                              double[::1] result):
+cpdef find_freegas_integral_max(double Eout, double[::1] mu, double Ein,
+                                double beta, double alpha, double awr, double kT,
+                                double half_beta_2, double[::1] adist_x,
+                                double[::1] adist_p, int adist_interp,
+                                double[::1] xs_x, double[::1] xs_y,
+                                long[::1] xs_bpts, long[::1] xs_interp,
+                                double[::1] result):
     # Function used to find the maximum value of the FGK(Eout) at a given mu
     _FREEGAS_FUNCTION(mu, Eout, Ein, beta, alpha, awr, kT, half_beta_2,
                       adist_x, adist_p, adist_interp, xs_x, xs_y, xs_bpts,
@@ -278,13 +271,13 @@ def find_freegas_integral_max(double Eout, double[::1] mu, double Ein,
     return -result[0]
 
 
-def find_freegas_integral_root(double Eout, double[::1] mu, double Ein,
-                               double beta, double alpha, double awr, double kT,
-                               double half_beta_2, double[::1] adist_x,
-                               double[::1] adist_p, int adist_interp,
-                               double[::1] xs_x, double[::1] xs_y,
-                               long[::1] xs_bpts, long[::1] xs_interp,
-                               double[::1]result, double value):
+cpdef find_freegas_integral_root(double Eout, double[::1] mu, double Ein,
+                                 double beta, double alpha, double awr, double kT,
+                                 double half_beta_2, double[::1] adist_x,
+                                 double[::1] adist_p, int adist_interp,
+                                 double[::1] xs_x, double[::1] xs_y,
+                                 long[::1] xs_bpts, long[::1] xs_interp,
+                                 double[::1]result, double value):
     # Function used to find the root of the FGK(Eout) at a given mu
     _FREEGAS_FUNCTION(mu, Eout, Ein, beta, alpha, awr, kT, half_beta_2,
                       adist_x, adist_p, adist_interp, xs_x, xs_y, xs_bpts,

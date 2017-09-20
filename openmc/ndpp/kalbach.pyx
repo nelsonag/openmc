@@ -34,6 +34,10 @@ cdef class KM(EnergyAngle_Cython):
         elif edist._interpolation == 'log-log':
             self.edist_interpolation = LOGLOG
 
+        # Set the Eout min and max attributes
+        self.Eout_min = self.edist_x[0]
+        self.Eout_max = self.edist_x[self.edist_x.shape[0] - 1]
+
     def __call__(self, double mu, double Eout):
         return self.eval(mu, Eout)
 

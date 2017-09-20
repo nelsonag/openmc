@@ -11,19 +11,12 @@ cdef class EnergyAngle_Cython:
     Correlated, Uncorrelated, and NBody distribution;
     """
 
-    cpdef double Eout_min(self):
-        return self.edist_x[0]
-
-    cpdef double Eout_max(self):
-        return self.edist_x[self.edist_x.shape[0] - 1]
-
     cdef double eval(self, double mu, double Eout):
         pass
 
-
-    cdef double eval_cm(self, double mu_l, double Eo_l, double c, double Ein):
-        cdef double J, Eo_cm, mu_cm
-        J = 1. / sqrt(1. + c * c - 2. * c * mu_l)
+    cdef double eval_cm(self, double mu_l, double Eo_l, double c, double J,
+                        double Ein):
+        cdef double Eo_cm, mu_cm
         Eo_cm = Eo_l / (J * J)
         mu_cm = J * (mu_l - c)
         return self.eval(mu_cm, Eo_cm)
@@ -31,25 +24,33 @@ cdef class EnergyAngle_Cython:
     cpdef integrate_cm_legendre(self, double Ein, double[::1] Eouts, double awr,
                                 int order):
         cdef int g, eo, l, orders, p
-        cdef double Eout_cm_max, inv_awrp1, Eout_l_max, Eout_l_min, a, b
-        cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev, value, mu_lo
+        cdef double inv_awrp1, Eout_l_max, Eout_l_min, a, b
+        cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev, value
+        cdef double mu_lo, J
         cdef double[::1] y
         cdef double[::1] y_prev
         cdef np.ndarray[np.double_t, ndim=2] integral
 
         integral = np.zeros((Eouts.shape[0] - 1, order + 1))
 
-        Eout_cm_max = self.Eout_max()
-
+        # Get the distributions minimum and maximum lab-frame Eouts
         inv_awrp1 = 1. / (awr + 1.)
-        Eout_l_min = max(Ein * inv_awrp1 * inv_awrp1 / _MIN_C2, Eouts[0])
-        Eout_l_max = min(Ein * (sqrt(Eout_cm_max / Ein) + inv_awrp1)**2,
-                         Eouts[Eouts.shape[0] - 1])
+        Eout_l_min = Ein * (sqrt(self.Eout_min / Ein) - inv_awrp1)**2
+        Eout_l_max = Ein * (sqrt(self.Eout_max / Ein) + inv_awrp1)**2
+
+        # Adjust the Eout_l_min/max for the group boundaries
+        Eout_l_min = max(Eouts[0], Eout_l_min)
+        Eout_l_max = min(Eouts[Eouts.shape[0] - 1], Eout_l_max)
 
         dE = (Eout_l_max - Eout_l_min) / (_N_EOUT_DOUBLE - 1.)
 
         # Find the group of Eout_l_min
-        g = np.searchsorted(Eouts, Eout_l_min) - 1
+        if Eout_l_min <= Eouts[0]:
+            g = 0
+        elif Eout_l_min >= Eouts[Eouts.shape[0] - 1]:
+            return integral
+        else:
+            g = np.searchsorted(Eouts, Eout_l_min) - 1
 
         Eout = Eout_l_min - dE
         y = np.zeros(integral.shape[1])
@@ -62,7 +63,7 @@ cdef class EnergyAngle_Cython:
                 Eout += dE
             y_prev = y
             c = inv_awrp1 * sqrt(Ein / Eout)
-            mu_l_min = (1. + c * c - Eout_cm_max / Eout) / (2. * c)
+            mu_l_min = (1. + c * c - self.Eout_max / Eout) / (2. * c)
 
             # Make sure we stay in the allowed bounds
             if mu_l_min < -1.:
@@ -73,7 +74,8 @@ cdef class EnergyAngle_Cython:
             dmu = 1. - mu_l_min
             for p in range(_N_QUAD):
                 u = _POINTS[p] * dmu + mu_l_min
-                _FMU[p] = _WEIGHTS[p] * self.eval_cm(u, Eout, c, Ein)
+                J = 1. / sqrt(1. + c * c - 2. * c * u)
+                _FMU[p] = _WEIGHTS[p] * self.eval_cm(u, Eout, c, J, Ein) * J
 
             for l in range(order + 1):
                 y[l] = 0.
@@ -114,25 +116,34 @@ cdef class EnergyAngle_Cython:
     cpdef integrate_cm_histogram(self, double Ein, double[::1] Eouts,
                                  double awr, double[::1] mus):
         cdef int g, eo, l, orders, p
-        cdef double Eout_cm_max, inv_awrp1, Eout_l_max, Eout_l_min, a, b
-        cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev, value, mu_lo
+        cdef double inv_awrp1, Eout_l_max, Eout_l_min, a, b
+        cdef double c, mu_l_min, dE, dmu, u, yg, f, Eout, Eout_prev, value
+        cdef double mu_lo, J
         cdef double[::1] y
         cdef double[::1] y_prev
         cdef np.ndarray[np.double_t, ndim=2] integral
 
         integral = np.zeros((Eouts.shape[0] - 1, mus.shape[0] - 1))
-        Eout_cm_max = self.Eout_max()
         orders = integral.shape[1]
 
+        # Get the distributions minimum and maximum lab-frame Eouts
         inv_awrp1 = 1. / (awr + 1.)
-        Eout_l_min = max(Ein * inv_awrp1 * inv_awrp1 / _MIN_C2, Eouts[0])
-        Eout_l_max = min(Ein * (sqrt(Eout_cm_max / Ein) + inv_awrp1)**2,
-                         Eouts[Eouts.shape[0] - 1])
+        Eout_l_min = Ein * (sqrt(self.Eout_min / Ein) - inv_awrp1)**2
+        Eout_l_max = Ein * (sqrt(self.Eout_max / Ein) + inv_awrp1)**2
+
+        # Adjust the Eout_l_min/max for the group boundaries
+        Eout_l_min = max(Eouts[0], Eout_l_min)
+        Eout_l_max = min(Eouts[Eouts.shape[0] - 1], Eout_l_max)
 
         dE = (Eout_l_max - Eout_l_min) / (_N_EOUT_DOUBLE - 1.)
 
         # Find the group of Eout_l_min
-        g = np.searchsorted(Eouts, Eout_l_min) - 1
+        if Eout_l_min <= Eouts[0]:
+            g = 0
+        elif Eout_l_min >= Eouts[Eouts.shape[0] - 1]:
+            return integral
+        else:
+            g = np.searchsorted(Eouts, Eout_l_min) - 1
 
         Eout = Eout_l_min - dE
         y = np.zeros(integral.shape[1])
@@ -145,7 +156,7 @@ cdef class EnergyAngle_Cython:
                 Eout += dE
             y_prev = y
             c = inv_awrp1 * sqrt(Ein / Eout)
-            mu_l_min = (1. + c * c - Eout_cm_max / Eout) / (2. * c)
+            mu_l_min = (1. + c * c - self.Eout_max / Eout) / (2. * c)
 
             # Make sure we stay in the allowed bounds
             if mu_l_min < -1.:
@@ -160,7 +171,8 @@ cdef class EnergyAngle_Cython:
                 dmu = mus[l + 1] - mu_lo
                 for p in range(_N_QUAD):
                     u = _POINTS[p] * dmu + mu_lo
-                    value += _WEIGHTS[p] * self.eval_cm(u, Eout, c, Ein)
+                    J = 1. / sqrt(1. + c * c - 2. * c * u)
+                    value += _WEIGHTS[p] * self.eval_cm(u, Eout, c, J, Ein) * J
                 y[l] = value * dmu
 
             if eo > 0:

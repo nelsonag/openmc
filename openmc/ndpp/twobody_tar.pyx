@@ -61,7 +61,7 @@ cdef class TwoBody_TAR:
         specific to the case of Legendre expansions
         """
 
-        cdef double onep_awr2, Ein_1pR2, inv_2REin, Eo_lo, Eo_hi, wlo, whi
+        cdef double onep_awr2, Ein_1pR2, inv_2REin, wlo, whi
         cdef int g
         cdef double dmu, u, value, mu_lo, mu_hi
         cdef int l, p
@@ -75,29 +75,21 @@ cdef class TwoBody_TAR:
         inv_2REin = 0.5 / (self.R * Ein)
 
         for g in range(Eouts.shape[0] - 1):
-            Eo_lo = Eouts[g]
-            Eo_hi = Eouts[g + 1]
             wlo = (Eouts[g] * onep_awr2 - Ein_1pR2) * inv_2REin
             whi = (Eouts[g + 1] * onep_awr2 - Ein_1pR2) * inv_2REin
 
-            # Adjust to make sure we are in the correct bounds
+            # Adjust to make sure we are in the correct bounds while also
+            # skipping the groups we dont need to consider because the
+            # energies are too low, and exit if the energies are too
+            # high (since we finished all groups)
             if wlo < -1.:
                 wlo = -1.
             elif wlo > 1.:
-                wlo = 1.
+                break
             if whi < -1.:
-                whi = -1.
+                continue
             elif whi > 1.:
                 whi = 1.
-
-            # Skip the groups we dont need to consider because the
-            # energies are too low, and exit if the energies are too
-            # high (since we finished all groups)
-            if wlo == whi:
-                if wlo == -1.:
-                    continue
-                elif wlo == 1.:
-                    break
 
             dmu = whi - wlo
             for l in range(integral.shape[1]):
@@ -116,7 +108,7 @@ cdef class TwoBody_TAR:
         specific to histogram integration.
         """
 
-        cdef double onep_awr2, Ein_1pR2, inv_2REin, Eo_lo, Eo_hi, wlo, whi
+        cdef double onep_awr2, Ein_1pR2, inv_2REin, wlo, whi
         cdef int g
         cdef double dmu, u, value, mu_lo, mu_hi
         cdef int l, p
@@ -130,8 +122,6 @@ cdef class TwoBody_TAR:
         inv_2REin = 0.5 / (self.R * Ein)
 
         for g in range(Eouts.shape[0] - 1):
-            Eo_lo = Eouts[g]
-            Eo_hi = Eouts[g + 1]
             wlo = (Eouts[g] * onep_awr2 - Ein_1pR2) * inv_2REin
             whi = (Eouts[g + 1] * onep_awr2 - Ein_1pR2) * inv_2REin
 

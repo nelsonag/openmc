@@ -25,11 +25,6 @@ for index in range(_N_EOUT):
     else:
         _SIMPSON_WEIGHTS[index] = 0.375 * 3.
 
-# Minimum value of c, the constant used when converting inelastic CM
-# distributions to the lab-frame
-_MIN_C = 25.
-_MIN_C2 = _MIN_C * _MIN_C
-
 # Angular distribution types
 _ADIST_TYPE_TABULAR = 0
 _ADIST_TYPE_UNIFORM = 1

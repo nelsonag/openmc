@@ -28,15 +28,13 @@ cdef class NBody(EnergyAngle_Cython):
             self.C = 256. / (14. * _PI * (self.Emax**5))
             self.exponent = 3.5
 
+        # Set the Eout min and max attributes
+        self.Eout_min = 0.
+        self.Eout_max = self.Emax
+
     cdef double eval(self, double mu, double Eout):
         # Compute f(mu, Eout) for the nbody distribution
         return self.C * sqrt(Eout) * (self.Emax - Eout) ** self.exponent
-
-    cpdef double Eout_min(self):
-        return 0.
-
-    cpdef double Eout_max(self):
-        return self.Emax
 
     cdef double mu_min(self, double Eout):
         cdef double value
@@ -61,7 +59,7 @@ cdef class NBody(EnergyAngle_Cython):
         cdef double a, b, c, exp_p1, mu_lo, mu_hi, mu_min
         cdef int i
 
-        a = self.C * sqrt(self.Eout)
+        a = self.C * sqrt(Eout)
         b = self.Estar + Eout
         d = 2. * sqrt(self.Estar * Eout)
         exp_p1 = self.exponent + 1.
@@ -81,7 +79,7 @@ cdef class NBody(EnergyAngle_Cython):
     cpdef integrate_lab_legendre(self, double[::1] Eouts, int order,
                                  double[::1] mus_grid, double[:, ::1] wgts):
         cdef int g, eo, l
-        cdef double Eout_hi, Eout_lo, Eo_max
+        cdef double Eout_hi, Eout_lo
         cdef double mu_l_min, dE, Eout, dmu, u
         cdef np.ndarray[np.double_t, ndim=2] integral
         cdef np.ndarray[np.double_t, ndim=1] grid
@@ -91,18 +89,17 @@ cdef class NBody(EnergyAngle_Cython):
 
         # The astute reader will notice that we dont check against Eo_min in this
         # routine like we would for the correlated and uncorrelated versions.
-        # The reason is because Eo_min is 0 for an NBody, so no reason to check.
-        Eo_max = self.Eout_max()
+        # The reason is because Eout_min is 0 for an NBody, so no reason to check.
 
         for g in range(Eouts.shape[0] - 1):
             Eout_lo = Eouts[g]
             Eout_hi = Eouts[g + 1]
 
             # If our group is above the max energy then we are all done
-            if Eout_lo > Eo_max:
+            if Eout_lo > self.Eout_max:
                 break
 
-            Eout_hi = min(Eo_max, Eout_hi)
+            Eout_hi = min(self.Eout_max, Eout_hi)
 
             dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
 
@@ -138,7 +135,7 @@ cdef class NBody(EnergyAngle_Cython):
 
     cpdef integrate_lab_histogram(self, double[::1] Eouts, double[::1] mus):
         cdef int g, eo, l
-        cdef double Eout_hi, Eout_lo, Eo_max
+        cdef double Eout_hi, Eout_lo
         cdef double mu_l_min, dE, Eout
         cdef np.ndarray[np.double_t, ndim=2] integral
         cdef np.ndarray[np.double_t, ndim=1] grid
@@ -149,17 +146,16 @@ cdef class NBody(EnergyAngle_Cython):
         # The astute reader will notice that we dont check against Eo_min in this
         # routine like we would for integrate_corr_lab and integrate_uncorr_lab.
         # The reason is because Eo_min is 0 for an NBody, so no reason to check.
-        Eo_max = self.Eout_max()
 
         for g in range(Eouts.shape[0] - 1):
             Eout_lo = Eouts[g]
             Eout_hi = Eouts[g + 1]
 
             # If our group is above the max energy then we are all done
-            if Eout_lo > Eo_max:
+            if Eout_lo > self.Eout_max:
                 break
 
-            Eout_hi = min(Eo_max, Eout_hi)
+            Eout_hi = min(self.Eout_max, Eout_hi)
 
             dE = (Eout_hi - Eout_lo) / (_N_EOUT_DOUBLE - 1.)
 

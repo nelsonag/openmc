@@ -4,7 +4,8 @@ import numpy as np
 
 import openmc.checkvalue as cv
 from openmc.data import Tabulated1D, Polynomial, AngleDistribution, \
-    ContinuousTabular, ArbitraryTabulated
+    ContinuousTabular, ArbitraryTabulated, Evaporation
+from openmc.data import linearize
 from openmc.stats import Discrete, Uniform, Maxwell, Watt, Tabular, Legendre, \
     Mixture
 
@@ -146,8 +147,10 @@ def interpolate_distribution(this, Ein):
         return _interpolate_ContinuousTabular(this, Ein)
     elif isinstance(this, ArbitraryTabulated):
         return _interpolate_ArbitraryTabulated(this, Ein)
+    elif isinstance(this, Evaporation):
+        return _interpolate_Evaporation(this, Ein)
     else:
-        raise ValueError("Invalid class provided!")
+        raise ValueError("Invalid class provided: " + str(type(this)))
 
 
 def interpolate_function(this, that, my_in, this_in, that_in, interp_type):
@@ -282,6 +285,23 @@ def _interpolate_ArbitraryTabulated(this, Ein):
     new = interpolate_function(this._pdf[i], this._pdf[i + 1], Ein,
                                this._energy[i], this._energy[i + 1],
                                interp_type='unit_base')
+
+    return new
+
+
+def _interpolate_Evaporation(this, Ein):
+    # Get the right value of theta
+    theta = this.theta(Ein)
+    u = this.u
+    EmU_th = (Ein - u) / theta
+    norm = theta * theta * (1. - np.exp(-EmU_th) * (1. + EmU_th))
+    x_guess = np.array(this.get_domain(Ein))
+
+    def func(Eout):
+        return Eout / norm * np.exp(-Eout / theta)
+
+    x, p = linearize(x_guess, func, tolerance=0.00001)
+    new = Tabular(x, p)
 
     return new
 
@@ -529,11 +549,12 @@ def _interpolate_Tabular(this, that, my_in, this_in, that_in, interp_type):
         # Now get a new x grid
         x = (1. - f) * ub_x_this + f * ub_x_that
 
+    # Make sure any negative values of p from f.p. error are set to 0.
+    p[p < 0] = 0.
+
     # Make sure that p is normalized still
     p = np.divide(p, np.trapz(p, x))
-
-    # Assume we can use interpolation and ignore_negative from this
-    new = Tabular(x, p, this._interpolation, this._ignore_negative)
+    new = Tabular(x, p, this._interpolation)
 
     return new
 

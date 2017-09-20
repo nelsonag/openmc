@@ -373,12 +373,17 @@ class NdppLibrary(object):
         cv.check_filetype_version(f, NDPP_FILETYPE, NDPP_VERSION)
 
         group_edges = f.attrs['group structure']
-        scatter_format = f.attrs['scatter_format']
+        group_structure = openmc.mgxs.EnergyGroups(group_edges)
+        scatter_format = f.attrs['scatter_format'].decode()
         order = f.attrs['order']
         freegas_cutoff = f.attrs['freegas_cutoff']
-        freegas_method = f.attrs['freegas_method']
+        freegas_method = f.attrs['freegas_method'].decode()
 
-        data = cls(energy_groups, num_delayed_groups)
+        # Initialize the object
+        data = cls(libraries, group_structure, scatter_format, order)
+        # (self, libraries, group_structure, scatter_format,
+        #          order, kTs=None, num_threads=None, tolerance=0.001,
+        #          freegas_cutoff=None, freegas_method='cxs')
 
         for group_name, group in f.items():
             data.add_xsdata(openmc.XSdata.from_hdf5(group, group_name,

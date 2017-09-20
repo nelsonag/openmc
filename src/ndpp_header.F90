@@ -504,7 +504,7 @@ module ndpp_header
     ! to hold the flattened data
     length = 0
     do i = 1, data_length
-      if (gmax(i) > 0) then
+      if (gmin(i) > 0) then
         length = length + order_dim * (gmax(i) - gmin(i) + 1)
       end if
     end do
@@ -517,13 +517,20 @@ module ndpp_header
     allocate(output_data % at_Ein(data_length))
     index = 1
     do i = 1, data_length
-      allocate(output_data % at_Ein(i) % data(order_dim, gmin(i):gmax(i)))
-      do gout = gmin(i), gmax(i)
-        do l = 1, order_dim
-          output_data % at_Ein(i) % data(l, gout) = temp_arr(index)
-          index = index + 1
+      if (gmin(i) > 0) then
+        allocate(output_data % at_Ein(i) % data(order_dim, gmin(i):gmax(i)))
+        do gout = gmin(i), gmax(i)
+          do l = 1, order_dim
+            output_data % at_Ein(i) % data(l, gout) = temp_arr(index)
+            index = index + 1
+          end do
         end do
-      end do
+      else
+        ! Still allocate something so we dont need lots of if-then downstream
+        ! to check
+        allocate(output_data % at_Ein(i) % data(order_dim, 1))
+        output_data % at_Ein(i) % data(:, 1) = ZERO
+      end if
     end do
   end subroutine sparse_data_from_hdf5
 
