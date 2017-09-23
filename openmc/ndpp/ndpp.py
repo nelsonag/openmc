@@ -920,7 +920,10 @@ class Ndpp(object):
             for e, Ein in enumerate(Ein_grid):
                 combined = np.zeros((self.num_groups, self.num_angle))
                 for r in range(len(rxn_grids)):
-                    if Ein > thresholds[r]:
+                    # If we are above the threshold, then go ahead and combine
+                    # the data; also, to deal with floating point error,
+                    # make sure Ein is within bounds of the energy grid
+                    if Ein > thresholds[r] and Ein < rxn_grids[r][-1]:
                         # Find the corresponding point
                         if Ein <= rxn_grids[r][0]:
                             i = 0
@@ -1031,6 +1034,7 @@ class Ndpp(object):
         thresholds = []
 
         n_delayed = 0
+        first_rxn = True
         for r in _FISSION_MTS.intersection(set(self.library.reactions)):
             rxn = self.library.reactions[r]
             # Store the reaction and create new lists to traverse for the
@@ -1041,9 +1045,13 @@ class Ndpp(object):
 
             # Look in all the products for distributions of interest so we can
             # count the number of delayed precursor groups
-            for p in (rxn.derived_products + rxn.products):
-                if p.particle == 'neutron' and p.emission_mode == 'delayed':
-                    n_delayed += 1
+            if first_rxn:
+                # We only do this for the first reaction type since all will be
+                # the same
+                for p in (rxn.derived_products + rxn.products):
+                    if p.particle == 'neutron' and p.emission_mode == 'delayed':
+                        n_delayed += 1
+                first_rxn = False
 
         # If we found no fission data, dont waste time with the rest
         if not rxns:
@@ -1080,8 +1088,7 @@ class Ndpp(object):
             # include the Ein grid points (the first argument), since that will
             # be dependent upon the thread's work
             linearize_args = (do_chi, func_args, self.tolerance,
-                              self.minimum_relative_threshold,
-                              self.scatter_format)
+                              self.minimum_relative_threshold, 'histogram')
 
             inputs = [(Ein_grid[e: e + 2],) + linearize_args
                       for e in range(len(Ein_grid) - 1)]
@@ -1131,11 +1138,12 @@ class Ndpp(object):
             # Finally combine the reaction grid and xs grid
             Ein_grid = np.union1d(Ein_grid, xs_grid)
 
-            results = np.empty_like(Ein_grid)
+            results = []
 
             # Now interpolate the reaction distributions at each Ein on xs_grid
             # and combine in to a unionized grid
             for e, Ein in enumerate(Ein_grid):
+                combined = np.zeros((self.num_groups, n_delayed + 2))
                 for r in range(len(rxn_grids)):
                     if Ein > thresholds[r]:
                         # Find the corresponding point
@@ -1150,9 +1158,12 @@ class Ndpp(object):
                         f = (Ein - rxn_grids[r][i]) / \
                             (rxn_grids[r][i + 1] - rxn_grids[r][i])
 
-                        results[e] += \
+                        combined += xs_funcs[r](Ein) * \
                             ((1. - f) * rxn_results[r][i] +
-                             f * rxn_results[r][i + 1]) * xs_funcs[r](Ein)
+                             f * rxn_results[r][i + 1]).toarray()
+                results.append(SparseScatter(combined,
+                                             self.minimum_relative_threshold,
+                                             'histogram'))
 
         else:
             # If we only have the total fission channel, then we dont have to
