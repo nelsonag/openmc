@@ -204,8 +204,8 @@ def integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     if this._angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
-                        'histogram')
+        adist = openmc.stats.Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                                     'histogram')
 
     # If the angular distribution is ONLY tabular, then the freegas integrands
     # can be written more explicitly, giving much needed speed (4x) in free-gas
@@ -213,8 +213,8 @@ def integrate_twobody_cm_freegas(this, Ein, Eouts, order, mus, awr, kT, xs,
     # those integration routines are nearly instantaneous anyways and so the
     # extra lines provide no value)
     if isinstance(adist, Uniform):
-        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
-                        'histogram')
+        adist = openmc.stats.Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                                     'histogram')
 
     eadist = TwoBody_FGK(adist, Ein, awr, kT, xs, Eouts)
 
@@ -237,8 +237,8 @@ def integrate_twobody_cm_TAR(this, Ein, Eouts, awr, q_value, order, mus):
     if this._angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
-                        'histogram')
+        adist = openmc.stats.Tabular(np.array([-1., 1.]), np.array([0.5, 0.5]),
+                                     'histogram')
 
     eadist = TwoBody_TAR(adist, Ein, awr, q_value)
 

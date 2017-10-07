@@ -5,6 +5,7 @@ from warnings import warn
 
 from six import add_metaclass
 import numpy as np
+from scipy.special import erf
 
 from .function import Tabulated1D, INTERPOLATION_SCHEME
 from openmc.stats.univariate import Univariate, Tabular, Discrete, Mixture
@@ -271,7 +272,7 @@ class MaxwellEnergy(EnergyDistribution):
             theta = self._theta(Ein)
             EmU_th = (Ein - self._u) / theta
             norm = theta ** 1.5 * (0.5 * np.sqrt(np.pi) *
-                                   np.erf(np.sqrt(EmU_th)) - np.sqrt(EmU_th) *
+                                   erf(np.sqrt(EmU_th)) - np.sqrt(EmU_th) *
                                    np.exp(-EmU_th))
             return np.sqrt(Eout) / norm * np.exp(-Eout / theta)
         else:
@@ -573,8 +574,8 @@ class WattEnergy(EnergyDistribution):
             ab_4 = 0.25 * a * b
             root_ab_4 = np.sqrt(ab_4)
             norm = 0.5 * np.sqrt(np.pi * ab_4) * np.exp(ab_4) * \
-                (np.erf(root_EmU_a - root_ab_4) +
-                 np.erf(root_EmU_a + root_ab_4)) - a * np.exp(-EmU_a) * \
+                (erf(root_EmU_a - root_ab_4) +
+                 erf(root_EmU_a + root_ab_4)) - a * np.exp(-EmU_a) * \
                 np.sinh(np.sqrt(b * (Ein - self._u)))
             return np.exp(-Eout / a) / norm * np.sinh(np.sqrt(b * Eout))
         else:

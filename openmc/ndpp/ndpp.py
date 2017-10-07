@@ -6,6 +6,7 @@ from numbers import Integral, Real
 from functools import reduce
 
 import numpy as np
+import h5py
 
 from openmc.data.data import K_BOLTZMANN
 from openmc.data.endf import SUM_RULES
@@ -13,7 +14,6 @@ from openmc.data.neutron import IncidentNeutron
 from openmc.data.thermal import ThermalScattering
 from openmc.mgxs import EnergyGroups
 import openmc.checkvalue as cv
-from . import NDPP_VERSION_MAJOR
 from .evaluators import *
 from .twobody_fgk import set_freegas_method
 from .sparsescatter import *
@@ -55,8 +55,12 @@ class Ndpp(object):
 
     Parameters
     ----------
-    library : openmc.data.IncidentNeutron or openmc.data.ThermalScattering
-        Nuclear data to operate on
+    name : str
+        Name of the library in this dataset.
+    filepath : str
+        Paths to this dataset's hdf5 file
+    is_neutron : bool
+        Whether or not this is a neutron or a thermal scattering library
     group_structure : openmc.mgxs.EnergyGroups
         Energy group structure for energy condensation
     scatter_format : {'legendre', 'histogram'}
@@ -89,7 +93,7 @@ class Ndpp(object):
         elastic scattering data is present in the `library`. Defaults to `cxs`.
     minimum_relative_threshold : float, optional
         The minimum threshold for which outgoing data will be included in the
-        output files. Defaults to 1.E-10.
+        output files. Defaults to 1.E-6.
 
     Attributes
     ----------
@@ -165,10 +169,20 @@ class Ndpp(object):
 
     """
 
-    def __init__(self, library, group_structure, scatter_format,
-                 order, kTs=None, num_threads=None, tolerance=0.001,
-                 freegas_cutoff=None, freegas_method='cxs',
+    def __init__(self, name, filepath, is_neutron, group_structure,
+                 scatter_format, order, kTs=None, num_threads=None,
+                 tolerance=0.001, freegas_cutoff=None, freegas_method='cxs',
                  minimum_relative_threshold=1.e-6):
+        self.name = name
+        self.filepath = filepath
+
+        # Get the library
+        h5file = h5py.File(filepath)
+        if is_neutron:
+            library = IncidentNeutron.from_hdf5(h5file[name])
+        else:
+            library = ThermalScattering.from_hdf5(h5file[name])
+
         self.library = library
         self.group_structure = group_structure
         self.scatter_format = scatter_format
@@ -202,7 +216,11 @@ class Ndpp(object):
 
     @property
     def name(self):
-        return self._library.name
+        return self._name
+
+    @property
+    def filepath(self):
+        return self._filepath
 
     @property
     def library(self):
@@ -300,6 +318,16 @@ class Ndpp(object):
     @property
     def temperatures(self):
         return ["{}K".format(int(round(kT / K_BOLTZMANN))) for kT in self.kTs]
+
+    @name.setter
+    def name(self, name):
+        cv.check_type('name', name, str)
+        self._name = name
+
+    @filepath.setter
+    def filepath(self, filepath):
+        cv.check_type('filepath', filepath, str)
+        self._filepath = filepath
 
     @library.setter
     def library(self, library):
@@ -440,7 +468,6 @@ class Ndpp(object):
         for ikT, kT in enumerate(self.kTs):
             # Get temperature string
             strT = "{}K".format(int(round(kT / K_BOLTZMANN)))
-            print('Evaluating Data at ' + strT)
             if isinstance(self.library, IncidentNeutron):
                 self._compute_neutron(ikT, kT, strT)
             elif isinstance(self.library, ThermalScattering):
@@ -458,24 +485,27 @@ class Ndpp(object):
         else:
             self.fissionable = False
 
-        # Calculate the scattering data
-        print('\tEvaluating Elastic Data')
-        self._compute_elastic(kT, strT)
-
         # Only do the inelastic data if it is our 1st time through since
         # it is temperature independent
         if ikT == 0:
-            print('\tEvaluating Inelastic Data')
+            print('  Processing Inelastic Data')
             self._compute_inelastic(kT, strT)
+
+        # Calculate the scattering data
+        print('  Processing Elastic Data at ' + strT)
+        self._compute_elastic(kT, strT)
 
         # Process the fission spectra data
         if self.fissionable:
-            print('\tEvaluating Fission Data')
+            print('  Processing Fission Data at ' + strT)
             self._compute_chi(kT, strT)
 
     def _compute_thermal(self, kT, strT):
         """Computes the pre-processed data for the ThermalScattering data
         """
+
+        # Calculate the scattering data
+        print('  Processing Thermal Data at ' + strT)
 
         # store a short hand to the library itself
         lib = self.library
@@ -823,8 +853,6 @@ class Ndpp(object):
         # Loop over incoming groups so we dont have too much memory storage
         # for each reaction at once before we combine the data
         for g in range(self.num_groups):
-            print("\t  Analyzing Incoming Energy Group {}".format(
-                  self.num_groups - g))
             # We will parse through each reaction one at a time. Doing so
             # allows us to get the variation in the reaction-wise distributions
             # themselves without having to individually evaluate the variation
@@ -843,7 +871,6 @@ class Ndpp(object):
                 # Note that we actually were above the threshold
                 above_threshold = True
 
-                print('\t\t', rxn)
                 # Create the energy grid we will be evaluating for this case
                 Ein_grid = np.logspace(np.log10(max(thresholds[r],
                                                     self.group_edges[g])),
@@ -903,8 +930,6 @@ class Ndpp(object):
             # Make sure we had any data above the threshold
             if not above_threshold:
                 continue
-
-            print("\t\t Combining Reactions")
 
             # Start with the energy grid
             Ein_grid = []
@@ -1070,7 +1095,6 @@ class Ndpp(object):
         rxn_results = [None] * len(rxns)
         rxn_grids = [None] * len(rxns)
         for r, rxn in enumerate(rxns):
-            print('\t\t', rxn)
 
             # Create the energy grid we will be evaluating for this case
             Ein_grid = np.logspace(np.log10(max(thresholds[r],
@@ -1120,7 +1144,6 @@ class Ndpp(object):
             rxn_results[r] = rxn_results[r][unique_indices, ...]
 
         if len(rxns) > 1:
-            print("\t\t Combining Reactions")
             # Then we have to combine the results on to a unionized grid
             # This unionized grid will be the union of the rxn_grids above
             # and the actual x/s grid in the range of interest
@@ -1257,16 +1280,13 @@ class Ndpp(object):
                     dgroup.create_dataset(str(c + 1) + "_g_max",
                                           data=g_out_bounds[:, 1])
 
-    @classmethod
-    def from_hdf5(cls, file, name):
-        """Generate continuous-energy neutron interaction data from HDF5 group
+    def from_hdf5(self, group):
+        """Extract the data from an HDF5 file
 
         Parameters
         ----------
-        file : h5py.File
+        group : h5py.Group
             HDF5 File (a root Group) to read from
-        name : str
-            Name of data to read
 
         Returns
         -------
@@ -1275,63 +1295,27 @@ class Ndpp(object):
 
         """
 
-        # Make sure version matches
-        if 'version' in file.attrs:
-            major, minor = file.attrs['version']
-            if major != NDPP_VERSION_MAJOR:
-                raise IOError(
-                    'HDF5 data format uses version {}.{} whereas your '
-                    'installation of the OpenMC Python API expects '
-                    ' version{}.x.'.format(major, minor,
-                                           NDPP_VERSION_MAJOR))
-        else:
-            raise IOError(
-                'HDF5 data does not indicate a version. Your installation '
-                'of the OpenMC Python API expects version {}.x data.'
-                .format(NDPP_VERSION_MAJOR))
-
-        # Get the info needed to instantiate the object from the root of the
-        # file
-        group_structure = EnergyGroups(file['group structure'].value[:])
-        scatter_format = file.attrs['scatter_format'].decode()
-        order = file.attrs['order']
-        freegas_cutoff = file.attrs['freegas_cutoff']
-        freegas_method = file.attrs['freegas_method'].decode()
-        library = IncidentNeutron.from_hdf5('/opt/xsdata/nndc/O16.h5')
-        if freegas_cutoff == -1:
-            freegas_cutoff = None
-
-        group = file[name]
-        kTg = group['kTs']
-        kTs = []
-        for temp in kTg:
-            kTs.append(kTg[temp].value)
-
-        data = cls(library, group_structure, scatter_format, order, kTs=kTs,
-                   freegas_cutoff=freegas_cutoff,
-                   freegas_method=freegas_method)
-
         # Read in the Library-specific data
-        data.fisionable = group.attrs['fissionable']
-        data.num_delayed_groups = group.attrs['num_delayed_groups']
+        self.fissionable = group.attrs['fissionable']
+        self.num_delayed_groups = group.attrs['num_delayed_groups']
 
-        # Read temperature dependent data
+        # Read temperature dependent self
         for T, Tgroup in group.items():
             if T.endswith('K'):
-                data.elastic_energy[T] = Tgroup['elastic_energy'].value
+                self.elastic_energy[T] = Tgroup['elastic_energy'].value
                 elastic_flat = Tgroup['elastic'].value[:]
                 elastic_g_min = Tgroup['elastic_g_min'].value[:] - 1
                 elastic_g_max = Tgroup['elastic_g_max'].value[:] - 1
 
                 # Have to "unsparsify" it
-                data.elastic[T] = _unsparsify(elastic_g_min, elastic_g_max,
+                self.elastic[T] = _unsparsify(elastic_g_min, elastic_g_max,
                                               elastic_flat,
-                                              (data.num_groups,
-                                               data.num_angle))
+                                              (self.num_groups,
+                                               self.num_angle))
 
                 # Get Chi
                 if 'chi_energy' in Tgroup:
-                    data.chi_energy[T] = Tgroup['chi_energy'].value[:]
+                    self.chi_energy[T] = Tgroup['chi_energy'].value[:]
                     total_flat = Tgroup['total_chi'].value[:]
                     total_g_min = Tgroup['total__g_min'].value[:] - 1
                     total_g_max = Tgroup['total__g_max'].value[:] - 1
@@ -1340,44 +1324,42 @@ class Ndpp(object):
                     prompt_g_max = Tgroup['prompt__g_max'].value[:] - 1
 
                     dgroup = Tgroup['delayed_chi']
-                    delay_flat_data = [None] * data.num_delayed_groups
-                    delay_g_min_data = [None] * data.num_delayed_groups
-                    delay_g_max_data = [None] * data.num_delayed_groups
-                    for c in range(data.num_delayed_groups):
+                    delay_flat_self = [None] * self.num_delayed_groups
+                    delay_g_min_self = [None] * self.num_delayed_groups
+                    delay_g_max_self = [None] * self.num_delayed_groups
+                    for c in range(self.num_delayed_groups):
                         delay_flat = dgroup[str(c + 1)].value[:]
                         delay_g_min = dgroup[str(c + 1) + '_g_min'].value[:] - 1
                         delay_g_max = dgroup[str(c + 1) + '_g_max'].value[:] - 1
-                        delay_flat_data[c] = delay_flat[:]
-                        delay_g_min_data[c] = delay_g_min[:]
-                        delay_g_max_data[c] = delay_g_max[:]
+                        delay_flat_self[c] = delay_flat[:]
+                        delay_g_min_self[c] = delay_g_min[:]
+                        delay_g_max_self[c] = delay_g_max[:]
 
-                    # Unsparsify the chi data
-                    data.chi[T] = \
+                    # Unsparsify the chi self
+                    self.chi[T] = \
                         _unsparsify_chi(total_g_min, total_g_max, total_flat,
                                         prompt_g_min, prompt_g_max,
-                                        prompt_flat, delay_g_min_data,
-                                        delay_g_max_data, delay_flat_data,
-                                        (data.num_groups,
-                                         2 + data.num_delayed_groups))
+                                        prompt_flat, delay_g_min_self,
+                                        delay_g_max_self, delay_flat_self,
+                                        (self.num_groups,
+                                         2 + self.num_delayed_groups))
 
-        # Read temperature independent data
+        # Read temperature independent self
         if 'inelastic_energy' in group:
-            data.inelastic_energy = group['inelastic_energy'].value[:]
+            self.inelastic_energy = group['inelastic_energy'].value[:]
             inelastic_flat = group['inelastic'].value[:]
             nu_inelastic_flat = group['nu_inelastic'].value[:]
             inelastic_g_min = group['inelastic_g_min'].value[:] - 1
             inelastic_g_max = group['inelastic_g_max'].value[:] - 1
 
             # Have to "unsparsify" it
-            data.inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
+            self.inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
                                          inelastic_flat,
-                                         (data.num_groups, data.num_angle))
-            data.nu_inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
+                                         (self.num_groups, self.num_angle))
+            self.nu_inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
                                             nu_inelastic_flat,
-                                            (data.num_groups, data.num_groups,
-                                             data.num_angle))
-
-        return data
+                                            (self.num_groups, self.num_groups,
+                                             self.num_angle))
 
 
 def get_inelastic_xs(Eins, rxns, xs_func):

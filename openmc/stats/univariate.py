@@ -78,6 +78,12 @@ class Discrete(Univariate):
         self.x = x
         self.p = p
 
+        # Use the first unique entries (this overcomes a problem with
+        # Cm-245, for example, when there are two Eout in a row with the same
+        # value for an outgoing energy distribution in ENDF/B-VII.0)
+        self.x, uniques = np.unique(self.x, return_index=True)
+        self.p = self.p[uniques]
+
     def __len__(self):
         return len(self.x)
 
@@ -427,6 +433,12 @@ class Tabular(Univariate):
         self.x = x
         self.p = p
         self.interpolation = interpolation
+
+        # Use the first unique entries (this overcomes a problem with
+        # Cm-245, for example, when there are two Eout in a row with the same
+        # value for an outgoing energy distribution in ENDF/B-VII.0)
+        self.x, uniques = np.unique(self.x, return_index=True)
+        self.p = self.p[uniques]
 
     def __call__(self, x):
         # Handle both array and scalar input

@@ -1,13 +1,15 @@
 from numbers import Real
 
 import numpy as np
+from scipy.special import erf
 
 import openmc.checkvalue as cv
-from openmc.data import Tabulated1D, Polynomial, AngleDistribution, \
-    ContinuousTabular, ArbitraryTabulated, Evaporation
-from openmc.data import linearize
-from openmc.stats import Discrete, Uniform, Maxwell, Watt, Tabular, Legendre, \
-    Mixture
+import openmc.data
+import openmc.stats
+
+
+# Linearization tolerance for EnergyDistribution objects
+_LIN_TOL = 0.00001
 
 
 def interpolate_kalbach(this, Ein):
@@ -49,7 +51,7 @@ def interpolate_uncorr(this, Ein):
     if this.angle:
         adist = interpolate_distribution(this._angle, Ein)
     else:
-        adist = Uniform(-1., 1.)
+        adist = openmc.stats.Uniform(-1., 1.)
 
     return edist, adist
 
@@ -141,14 +143,20 @@ def interpolate_distribution(this, Ein):
     cv.check_type('Ein', Ein, Real)
     cv.check_greater_than('Ein', Ein, 0, equality=True)
 
-    if isinstance(this, AngleDistribution):
+    if isinstance(this, openmc.data.AngleDistribution):
         return _interpolate_AngleDistribution(this, Ein)
-    elif isinstance(this, ContinuousTabular):
-        return _interpolate_ContinuousTabular(this, Ein)
-    elif isinstance(this, ArbitraryTabulated):
-        return _interpolate_ArbitraryTabulated(this, Ein)
-    elif isinstance(this, Evaporation):
-        return _interpolate_Evaporation(this, Ein)
+    elif isinstance(this, openmc.data.ContinuousTabular):
+        return _interpolate_ContinuousTabularDistribution(this, Ein)
+    elif isinstance(this, openmc.data.ArbitraryTabulated):
+        return _interpolate_ArbitraryTabulatedDistribution(this, Ein)
+    elif isinstance(this, openmc.data.Evaporation):
+        return _interpolate_EvaporationDistribution(this, Ein)
+    elif isinstance(this, openmc.data.GeneralEvaporation):
+        return _interpolate_GeneralEvaporationDistribution(this, Ein)
+    elif isinstance(this, openmc.data.MaxwellEnergy):
+        return _interpolate_MaxwellDistribution(this, Ein)
+    elif isinstance(this, openmc.data.WattEnergy):
+        return _interpolate_WattDistribution
     else:
         raise ValueError("Invalid class provided: " + str(type(this)))
 
@@ -191,37 +199,37 @@ def interpolate_function(this, that, my_in, this_in, that_in, interp_type):
     cv.check_value('interpolation type', interp_type,
                    ['unit-base', 'nearest', 'linear'])
 
-    if isinstance(this, Tabulated1D):
+    if isinstance(this, openmc.data.Tabulated1D):
         return _interpolate_Tabulated1D(this, that, my_in, this_in, that_in,
                                         interp_type)
-    elif isinstance(this, Polynomial):
+    elif isinstance(this, openmc.data.Polynomial):
         return _interpolate_Polynomial(this, that, my_in, this_in, that_in,
                                        interp_type)
-    elif isinstance(this, Discrete):
+    elif isinstance(this, openmc.stats.Discrete):
         return _interpolate_Discrete(this, that, my_in, this_in, that_in,
                                      interp_type)
-    elif isinstance(this, Uniform):
+    elif isinstance(this, openmc.stats.Uniform):
         return _interpolate_Uniform(this, that, my_in, this_in, that_in,
                                     interp_type)
-    elif isinstance(this, Maxwell):
+    elif isinstance(this, openmc.stats.Maxwell):
         return _interpolate_Maxwell(this, that, my_in, this_in, that_in,
                                     interp_type)
-    elif isinstance(this, Watt):
+    elif isinstance(this, openmc.stats.Watt):
         return _interpolate_Watt(this, that, my_in, this_in, that_in,
                                  interp_type)
-    elif isinstance(this, Tabular):
+    elif isinstance(this, openmc.stats.Tabular):
         return _interpolate_Tabular(this, that, my_in, this_in, that_in,
                                     interp_type)
-    elif isinstance(this, Legendre):
+    elif isinstance(this, openmc.stats.Legendre):
         return _interpolate_Legendre(this, that, my_in, this_in, that_in,
                                      interp_type)
-    elif isinstance(this, Mixture):
+    elif isinstance(this, openmc.stats.Mixture):
         return _interpolate_Mixture(this, that, my_in, this_in, that_in,
                                     interp_type)
     elif this is None:
         # Then we have an isotropic distribution
-        return Tabular(np.array([-1., 1.]), np.array([.5, .5]),
-                       'histogram', True)
+        return openmc.stats.Tabular(np.array([-1., 1.]), np.array([.5, .5]),
+                                    'histogram', True)
     else:
         # In addition to unforeseen configurations, it is also possible
         # that this is a None, but that is not (or vice versa); this would also
@@ -242,7 +250,7 @@ def _interpolate_AngleDistribution(this, Ein):
                                 interp_type='unit-base')
 
 
-def _interpolate_ContinuousTabular(this, Ein):
+def _interpolate_ContinuousTabularDistribution(this, Ein):
     if Ein >= this._energy[-1]:
         i = len(this._energy) - 2
     elif Ein <= this._energy[0]:
@@ -259,13 +267,13 @@ def _interpolate_ContinuousTabular(this, Ein):
     # If histogram interpolation, we will just be using the i-th bin
     if histogram_interp:
         # Then just take our current point, but convert to a Cythonized object
-        if isinstance(this._energy_out[i], Discrete):
+        if isinstance(this._energy_out[i], openmc.stats.Discrete):
             return this._energy_out[i]
-        elif isinstance(this, Uniform):
+        elif isinstance(this, openmc.stats.Uniform):
             return this._energy_out[i]
-        elif isinstance(this, Tabular):
+        elif isinstance(this, openmc.stats.Tabular):
             return this._energy_out[i]
-        elif isinstance(this, Legendre):
+        elif isinstance(this, openmc.stats.Legendre):
             return this._energy_out[i]
     else:
         return interpolate_function(this._energy_out[i],
@@ -274,7 +282,7 @@ def _interpolate_ContinuousTabular(this, Ein):
                                     interp_type='unit-base')
 
 
-def _interpolate_ArbitraryTabulated(this, Ein):
+def _interpolate_ArbitraryTabulatedDistribution(this, Ein):
     if Ein >= this._energy[-1]:
         i = len(this._energy) - 2
     elif Ein <= this._energy[0]:
@@ -289,19 +297,85 @@ def _interpolate_ArbitraryTabulated(this, Ein):
     return new
 
 
-def _interpolate_Evaporation(this, Ein):
+def _interpolate_GeneralEvaporationDistribution(this, Ein):
+    # Get the right value of theta
+    theta = this.theta(Ein)
+    x_guess = np.array(this.get_domain(Ein))
+    if x_guess[0] == 0:
+        x_guess[0] = 1.e-5
+
+    def func(Eout):
+        x_val = Eout / theta
+        return this.g(x_val)
+
+    x, p = openmc.data.linearize(x_guess, func, tolerance=_LIN_TOL)
+    new = openmc.stats.Tabular(x, p)
+
+    return new
+
+
+def _interpolate_MaxwellDistribution(this, Ein):
+    # Get the right value of theta
+    theta = this.theta(Ein)
+    u = this.u
+    EmU_th = (Ein - u) / theta
+    norm = theta ** 1.5 * (0.5 * np.sqrt(np.pi) * erf(np.sqrt(EmU_th)) -
+                           np.sqrt(EmU_th) * np.exp(-EmU_th))
+    x_guess = np.array(this.get_domain(Ein))
+    if x_guess[0] == 0:
+        x_guess[0] = 1.e-5
+
+    def func(Eout):
+        return np.sqrt(Eout) / norm * np.exp(-Eout / theta)
+
+    x, p = openmc.data.linearize(x_guess, func, tolerance=_LIN_TOL)
+    new = openmc.stats.Tabular(x, p)
+
+    return new
+
+
+def _interpolate_EvaporationDistribution(this, Ein):
     # Get the right value of theta
     theta = this.theta(Ein)
     u = this.u
     EmU_th = (Ein - u) / theta
     norm = theta * theta * (1. - np.exp(-EmU_th) * (1. + EmU_th))
     x_guess = np.array(this.get_domain(Ein))
+    if x_guess[0] == 0:
+        x_guess[0] = 1.e-5
 
     def func(Eout):
         return Eout / norm * np.exp(-Eout / theta)
 
-    x, p = linearize(x_guess, func, tolerance=0.00001)
-    new = Tabular(x, p)
+    x, p = openmc.data.linearize(x_guess, func, tolerance=_LIN_TOL)
+    new = openmc.stats.Tabular(x, p)
+
+    return new
+
+
+def _interpolate_WattDistribution(this, Ein):
+    # Get the right value of theta
+    a = this.a(Ein)
+    b = this.b(Ein)
+    u = this.u
+
+    EmU_a = (Ein - u) / a
+    root_EmU_a = np.sqrt(EmU_a)
+    ab_4 = 0.25 * a * b
+    root_ab_4 = np.sqrt(ab_4)
+    norm = 0.5 * np.sqrt(np.pi * ab_4) * np.exp(ab_4) * \
+        (erf(root_EmU_a - root_ab_4) + erf(root_EmU_a + root_ab_4)) - \
+        a * np.exp(-EmU_a) * np.sinh(np.sqrt(b * (Ein - u)))
+
+    x_guess = np.array(this.get_domain(Ein))
+    if x_guess[0] == 0:
+        x_guess[0] = 1.e-5
+
+    def func(Eout):
+        return np.exp(-Eout / a) / norm * np.sinh(np.sqrt(b * Eout))
+
+    x, p = openmc.data.linearize(x_guess, func, tolerance=_LIN_TOL)
+    new = openmc.stats.Tabular(x, p)
 
     return new
 
@@ -353,7 +427,7 @@ def _interpolate_Tabulated1D(this, that, my_in, this_in, that_in, interp_type):
         x = (1. - f) * ub_x_this + f * ub_x_that
 
     # Assume we can use breakpoints and interpolation from this
-    new = Tabulated1D(x, y, this._breakpoints, this._interpolation)
+    new = openmc.data.Tabulated1D(x, y, this._breakpoints, this._interpolation)
     return new
 
 
@@ -440,7 +514,7 @@ def _interpolate_Discrete(this, that, my_in, this_in, that_in, interp_type):
     p = np.divide(p, np.sum(p))
 
     # And create our new distribution
-    new = Discrete(x, p)
+    new = openmc.stats.Discrete(x, p)
 
     return new
 
@@ -475,7 +549,7 @@ def _interpolate_Maxwell(this, that, my_in, this_in, that_in, interp_type):
         # Get our interpolant
         f = (my_in - this_in) / (that_in - this_in)
         theta = (1. - f) * this.theta + f * that.theta
-        new = Maxwell(theta)
+        new = openmc.stats.Maxwell(theta)
         return new
 
 
@@ -493,7 +567,7 @@ def _interpolate_Watt(this, that, my_in, this_in, that_in, interp_type):
         f = (my_in - this_in) / (that_in - this_in)
         a = (1. - f) * this.a + f * that.a
         b = (1. - f) * this.b + f * that.b
-        new = Watt(a, b)
+        new = openmc.stats.Watt(a, b)
         return new
 
 
@@ -517,7 +591,7 @@ def _interpolate_Tabular(this, that, my_in, this_in, that_in, interp_type):
 
     elif interp_type == 'unit-base':
         # The first step is to convert this and that to a 'unit-base',
-        # that is, an x,y grid whose domain is [0,1] instead of its current
+        # that is, an x grid whose domain is [0,1] instead of its current
         # domain.
         # First, get a common x grid structure between this and that
         this_dx = this._x[-1] - this._x[0]
@@ -554,7 +628,7 @@ def _interpolate_Tabular(this, that, my_in, this_in, that_in, interp_type):
 
     # Make sure that p is normalized still
     p = np.divide(p, np.trapz(p, x))
-    new = Tabular(x, p, this._interpolation)
+    new = openmc.stats.Tabular(x, p, this._interpolation)
 
     return new
 
@@ -594,7 +668,7 @@ def _interpolate_Mixture(this, that, my_in, this_in, that_in, interp_type):
                         this.distribution[i].interpolate(that.distribution[i],
                                                          my_in, this_in,
                                                          that_in)
-                new = Mixture(prob, dist)
+                new = openmc.stats.Mixture(prob, dist)
                 return new
             else:
                 raise ValueError("Can not interpolate on openmc.stats.Mixture "
@@ -604,6 +678,6 @@ def _interpolate_Mixture(this, that, my_in, this_in, that_in, interp_type):
 
 def _uniform_to_tabular(this):
     prob = 1. / (this._b - this._a)
-    t = Tabular(np.array([this._a, this._b]), np.array([prob, prob]),
-                'histogram')
+    t = openmc.stats.Tabular(np.array([this._a, this._b]),
+                             np.array([prob, prob]), 'histogram')
     return t

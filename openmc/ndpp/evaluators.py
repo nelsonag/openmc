@@ -7,7 +7,7 @@ from .sparsescatter import SparseScatter
 
 # Minimum relative change in energy to allow for the linearizer's grid
 # generation
-_DE_REL_THRESH = 1.E-4
+_DE_REL_THRESH = 1.E-5
 
 
 def linearizer_wrapper(linearizer_args):

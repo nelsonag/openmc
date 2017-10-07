@@ -70,6 +70,9 @@ module ndpp_header
     ! instead of using the global data to avoid circular dependencies]
     integer :: temperature_method
 
+    integer :: index_temp ! Temperature index into elastic and chi data
+    real(8) :: last_temp  ! Last temperature that was requested
+
     ! Elastic data
     type(EnergyGrid),   allocatable :: elastic_grid(:) ! Ein grid for each kT
     type(MomentMatrix), allocatable :: elastic(:)  ! Elastic data for each kT
@@ -302,6 +305,10 @@ module ndpp_header
       this % has_inelastic = .false.
     end if
 
+    ! Initialize the temperature grid data
+    this % index_temp = 1
+    this % last_temp = this % kTs(1)
+
   end subroutine ndpp_from_hdf5
 
 !===============================================================================
@@ -315,7 +322,7 @@ module ndpp_header
   subroutine ndpp_tally_scatter(this, Ein, kT, ndpp_outgoing, t, &
                                 i_score, i_filter, score_bin, order, wgt, uvw, &
                                 elastic_xs)
-    class(Ndpp),       intent(in)    :: this
+    class(Ndpp),       intent(inout) :: this
     real(8),           intent(in)    :: Ein
     real(8),           intent(in)    :: kT
     real(8),           intent(inout) :: ndpp_outgoing(:, :)
@@ -334,10 +341,10 @@ module ndpp_header
     if (score_bin == SCORE_NDPP_NU_SCATTER_N .or. &
         score_bin == SCORE_NDPP_NU_SCATTER_PN .or. &
         score_bin == SCORE_NDPP_NU_SCATTER_YN) then
-      call get_scatter(this, Ein, kT, order, ndpp_outgoing, elastic_xs, &
+      call get_scatter(this, Ein, kT, order, ndpp_outgoing, wgt, elastic_xs, &
                        .true., gmin, gmax)
     else
-      call get_scatter(this, Ein, kT, order, ndpp_outgoing, elastic_xs, &
+      call get_scatter(this, Ein, kT, order, ndpp_outgoing, wgt, elastic_xs, &
                        .false., gmin, gmax)
     end if
 
@@ -351,7 +358,7 @@ module ndpp_header
 !$omp critical(case_nu_scatt_n)
       t % results(RESULT_VALUE, i_score, f_lo: f_hi) = &
            t % results(RESULT_VALUE, i_score, f_lo: f_hi) + &
-           ndpp_outgoing(1, gmin: gmax) * wgt
+           ndpp_outgoing(1, gmin: gmax)
 !$omp end critical(case_nu_scatt_n)
 
     case (SCORE_NDPP_SCATTER_PN, SCORE_NDPP_NU_SCATTER_PN)
@@ -361,7 +368,7 @@ module ndpp_header
 !$omp critical(case_nu_scatt_pn)
     t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) = &
          t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) + &
-         ndpp_outgoing(1: order + 1, gmin: gmax) * wgt
+         ndpp_outgoing(1: order + 1, gmin: gmax)
 !$omp end critical(case_nu_scatt_pn)
 
     case (SCORE_NDPP_SCATTER_YN, SCORE_NDPP_NU_SCATTER_YN)
@@ -376,7 +383,7 @@ module ndpp_header
         ! Update number of total n,m bins for this n (m = [-n: n])
         num_nm = 2 * n + 1
 
-        moments = calc_rn(n, uvw) * wgt
+        moments = calc_rn(n, uvw)
         do f = f_lo, f_hi
           ! multiply score by the angular flux moments and store
 !$omp critical (case_nu_scatt_yn)
@@ -650,11 +657,14 @@ module ndpp_header
     end select
   end function find_temperature_index
 
-  subroutine interp_data(Ein, grid, log_spacing, at_Ein, data, gmin, gmax)
+  subroutine interp_data(Ein, multiplier, grid, log_spacing, at_Ein, &
+                         is_elastic, data, gmin, gmax)
     real(8),          intent(in) :: Ein
+    real(8),          intent(in) :: multiplier ! Factor to multiply result by
     type(EnergyGrid), intent(in) :: grid
     real(8),          intent(in) :: log_spacing
     type(Jagged2D), allocatable, intent(in) :: at_Ein(:)
+    logical,          intent(in)    :: is_elastic
     real(8),          intent(inout) :: data(:, :)
     integer,          intent(out)   :: gmin
     integer,          intent(out)   :: gmax
@@ -690,18 +700,39 @@ module ndpp_header
       f = (Ein - grid % energy(e)) / (grid % energy(e + 1) - grid % energy(e))
     end if
 
+    ! Now adjust f to incorporate the multiplier so I dont do it throughout
+    f = multiplier * f
+
     low_gmin = lbound(at_Ein(e) % data, dim=2)
     low_gmax = ubound(at_Ein(e) % data, dim=2)
     high_gmin = lbound(at_Ein(e + 1) % data, dim=2)
     high_gmax = ubound(at_Ein(e + 1) % data, dim=2)
 
     ! Interpolate to our solution
-    do g = low_gmin, low_gmax
-      data(:, g) = data(:, g) + (ONE - f) * at_Ein(e) % data(:, g)
-    end do
-    do g = high_gmin, high_gmax
-      data(:, g) = data(:, g) + f * at_Ein(e + 1) % data(:, g)
-    end do
+    if (is_elastic) then
+      ! Then this is the first time through so reset data while we do it
+      data(:, :low_gmin - 1) = ZERO
+      data(:, low_gmax + 1:) = ZERO
+
+      do g = low_gmin, low_gmax
+        ! (multiplier - f) == multiplier * (1. - f), when f has already been
+        ! scaled by multiplier
+        data(:, g) = (multiplier - f) * at_Ein(e) % data(:, g)
+      end do
+
+      do g = high_gmin, high_gmax
+        data(:, g) = data(:, g) + f * at_Ein(e + 1) % data(:, g)
+      end do
+
+    else
+      ! Data has already been set to 0, so just use a += operation
+      do g = low_gmin, low_gmax
+        data(:, g) = data(:, g) + (multiplier - f) * at_Ein(e) % data(:, g)
+      end do
+      do g = high_gmin, high_gmax
+        data(:, g) = data(:, g) + f * at_Ein(e + 1) % data(:, g)
+      end do
+    end if
 
     gmin = min(low_gmin, high_gmin)
     gmax = max(low_gmax, high_gmax)
@@ -765,41 +796,46 @@ module ndpp_header
 
   end subroutine interp_chi_data
 
-  subroutine get_scatter(this, Ein, kT, order, data, elastic_xs, nu, gmin, gmax)
-    class(Ndpp), intent(in) :: this
-    real(8),     intent(in) :: Ein   ! Incoming energy
-    real(8),     intent(in) :: kT    ! Requested temperature
-    integer,     intent(in) :: order ! Order to include
+  subroutine get_scatter(this, Ein, kT, order, data, wgt, elastic_xs, nu, &
+                         gmin, gmax)
+    class(Ndpp), intent(inout) :: this
+    real(8),     intent(in)    :: Ein   ! Incoming energy
+    real(8),     intent(in)    :: kT    ! Requested temperature
+    integer,     intent(in)    :: order ! Order to include
     real(8),     intent(inout) :: data(:, :) ! combined data
-    real(8),     intent(in)  :: elastic_xs
-    logical,     intent(in)  :: nu
-    integer,     intent(out) :: gmin
-    integer,     intent(out) :: gmax
+    real(8),     intent(in)    :: wgt
+    real(8),     intent(in)    :: elastic_xs
+    logical,     intent(in)    :: nu
+    integer,     intent(out)   :: gmin
+    integer,     intent(out)   :: gmax
 
 
     integer :: t, el_gmin, el_gmax, inel_gmin, inel_gmax
 
-    data = ZERO
-
     ! First, find the temperature index
-    t = find_temperature_index(this % kTs, this % temperature_method, kT)
+    if (kT /= this % last_temp) then
+      t = find_temperature_index(this % kTs, this % temperature_method, kT)
+      this % last_temp = kT
+      this % index_temp = t
+    else
+      t = this % index_temp
+    end if
 
-    call interp_data(Ein, this % elastic_grid(t), &
+    call interp_data(Ein, elastic_xs * wgt, this % elastic_grid(t), &
                      this % elastic_log_spacing(t), &
-                     this % elastic(t) % at_Ein, data, el_gmin, el_gmax)
-
-    data(:, el_gmin: el_gmax) = elastic_xs * data(:, el_gmin: el_gmax)
+                     this % elastic(t) % at_Ein, .true., data, el_gmin, el_gmax)
 
     if (this % has_inelastic) then
       if (nu) then
-        call interp_data(Ein, this % inelastic_grid, &
+        call interp_data(Ein, wgt, this % inelastic_grid, &
                          this % inelastic_log_spacing, &
-                         this % nu_inelastic % at_Ein, data, inel_gmin, &
-                         inel_gmax)
+                         this % nu_inelastic % at_Ein, .false., data, &
+                         inel_gmin, inel_gmax)
       else
-        call interp_data(Ein, this % inelastic_grid, &
+        call interp_data(Ein, wgt, this % inelastic_grid, &
                          this % inelastic_log_spacing, &
-                         this % inelastic % at_Ein, data, inel_gmin, inel_gmax)
+                         this % inelastic % at_Ein, .false., data, inel_gmin, &
+                         inel_gmax)
       end if
       gmin = min(el_gmin, inel_gmin)
       gmax = max(el_gmax, inel_gmax)
