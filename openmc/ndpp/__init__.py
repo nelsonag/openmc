@@ -11,3 +11,4 @@ except ImportError:
 
 from .ndpplibrary import NdppLibrary
 from .ndpp import *
+from .ndpp_material_library import *

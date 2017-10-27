@@ -1,7 +1,7 @@
 from __future__ import division
 import operator
 from copy import deepcopy
-from numbers import Real
+from numbers import Real, Integral
 
 import numpy as np
 
@@ -179,7 +179,7 @@ class SparseScatters(object):
                 # Then we will assume this is to get access to the
                 # SparseScatter object
                 return self.scatters[indices[0]]
-        elif isinstance(indices, int):
+        elif isinstance(indices, Integral):
             # Then we will assume this is to get access to the SparseScatter
             # object
             return self.scatters[indices]

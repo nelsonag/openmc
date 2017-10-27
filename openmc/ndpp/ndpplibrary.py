@@ -1,3 +1,4 @@
+from collections import Iterable
 from numbers import Integral, Real
 import os
 
@@ -10,6 +11,7 @@ from openmc.mgxs import EnergyGroups
 import openmc.checkvalue as cv
 from . import NDPP_VERSION, NDPP_FILETYPE
 from .ndpp import Ndpp, _SCATTER_REPRESENTATION, _FREEGAS_METHODS
+from .sparsescatter import *
 
 
 class NdppLibrary(object):
@@ -59,7 +61,7 @@ class NdppLibrary(object):
     Attributes
     ----------
     names : List of str
-        The name of all the data libraries contained within this NDPP Library
+        The names of all the data libraries contained within this NDPP Library
     filepaths : List of str
         Paths to each dataset's hdf5 file
     cross_sections_xml : str
@@ -371,63 +373,6 @@ class NdppLibrary(object):
             print("Evaluating " + ndpp.name)
             ndpp.process()
 
-    def create_macroscopic_library(self, model,
-                                   material_path='macro_ndpp_lib.h5',
-                                   mode='a'):
-        """Create an hdf5 file with NDPP objects specific to the material data
-        itself.
-
-        Parameters
-        ----------
-        model : openmc.Model
-            Material information used to create the materials
-        path : str
-            Path to write HDF5 file to; defaults to 'macro_ndpp_lib.h5'
-        mode : {'r', r+', 'w', 'x', 'a'}
-            Mode that is used to open the HDF5 file.
-            This is the second argument to the :class:`h5py.File` constructor.
-        """
-
-        pass
-
-        # f = _open_for_writing(self, material_path, mode)
-
-        # # Get default temperature
-        # if model.settings.temperature:
-        #     default_kT = model.settings.temperature['default']
-        # else:
-        #     default_kT = 293.6
-        # default_strT = "{}K".format(int(round(default_kT / K_BOLTZMANN)))
-
-        # # Go through the geometry and get a list of all used materials and
-        # # their temperatures
-        # materials = []
-        # cells = model.geometry.get_all_cells()
-        # for cell in cells.values():
-        #     cell_materials = cell.get_all_materials()
-        #     for cell_material in cell_materials:
-        #         if cell_material not in materials:
-        #         else:
-        #             if isinstance(cell.temperature, Iterable):
-        #                 materials[cell_material]['kTs'].update(cell.)
-
-        # materials = model.materials
-
-        # for material in materials:
-        #     nuclides = material.get_nuclide_atom_densities()
-
-        #     # Get the combined energy grids from the microscopic library
-        #     inelastic_energy = None
-        #     elastic_energy = None
-        #     chi_energy = None
-        #     for nuclide in nuclides:
-        #         nuclide_ndpp = self.get_by_name(nuclide)
-
-        #     for nuclide in nuclides:
-        #         atom_density = nuclide[1]
-
-        #         micro_ndpp = self.get_by_name(nuclide)
-
     def export_to_hdf5(self, path='ndpp_lib.h5', mode='a'):
         """Create an hdf5 file that can be used for a simulation.
 
@@ -469,7 +414,7 @@ class NdppLibrary(object):
         f = h5py.File(filename, 'r')
 
         # Check filetype and version
-        cv.check_filetype_version(f, NDPP_FILETYPE, NDPP_VERSION)
+        cv.check_filetype_version(f, NDPP_FILETYPE, NDPP_VERSION[0])
 
         # Get cross section library
         cross_sections_xml = f.attrs['cross_sections_xml'].decode()
@@ -477,7 +422,8 @@ class NdppLibrary(object):
         # Get names
         names = []
         for name in f.items():
-            names.append(name)
+            if name[0] != 'group structure':
+                names.append(name[0])
 
         group_edges = f['group structure'].value
         group_structure = EnergyGroups(group_edges)
@@ -591,3 +537,5 @@ def _open_for_writing(this, path, mode):
         f.attrs['freegas_method'] = np.string_(this.freegas_method)
 
     return f
+
+

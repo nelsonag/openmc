@@ -141,18 +141,14 @@ class Ndpp(object):
         The array has a shape of (len(scatter_energy), num_groups, order)
     inelastic_energy : np.ndarray
         Incoming energy grid for the inelastic scattering data (in eV)
-    total_chi : np.ndarray
+    num_delayed_groups : int
+        Number of delayed neutron precursor groups
+    chi : np.ndarray
         Data calculated by the pre-processor for later use in tallying of
         multi-group fission spectra data by OpenMC.
-        The array has a shape of (len(chi_energy), num_groups)
-    prompt_chi : np.ndarray
-        Data calculated by the pre-processor for later use in tallying of
-        multi-group prompt fission spectra data by OpenMC.
-        The array has a shape of (len(chi_energy), num_groups)
-    delayed_chi : np.ndarray
-        Data calculated by the pre-processor for later use in tallying of
-        multi-group delayed fission spectra data by OpenMC.
-        The array has a shape of (len(chi_energy), num_groups)
+        The array has a shape of (len(chi_energy), num_groups,
+        num_delayed_groups + 2) and the final index is ordered as follows:
+        total, prompt, delayed[:num_delayed_groups]
     chi_energy : np.ndarray
         Incoming energy grid for the fission spectra data (in eV)
     freegas_cutoff : float
@@ -1198,7 +1194,7 @@ class Ndpp(object):
             results = rxn_results[0]
 
         # With chi data, we only care about the normalized secondary energy
-        # data, so lets normalize before we thin
+        # data, so lets normalize
         for e in range(len(Ein_grid)):
             for tpd in range(2 + n_delayed):
                 results[e].data[:, tpd] /= np.sum(results[e].data[:, tpd])
@@ -1296,7 +1292,7 @@ class Ndpp(object):
         """
 
         # Read in the Library-specific data
-        self.fissionable = group.attrs['fissionable']
+        self.fissionable = bool(group.attrs['fissionable'])
         self.num_delayed_groups = group.attrs['num_delayed_groups']
 
         # Read temperature dependent self
@@ -1358,8 +1354,7 @@ class Ndpp(object):
                                          (self.num_groups, self.num_angle))
             self.nu_inelastic = _unsparsify(inelastic_g_min, inelastic_g_max,
                                             nu_inelastic_flat,
-                                            (self.num_groups, self.num_groups,
-                                             self.num_angle))
+                                            (self.num_groups, self.num_angle))
 
 
 def get_inelastic_xs(Eins, rxns, xs_func):
@@ -1500,7 +1495,7 @@ def _unsparsify_chi(total_g_min, total_g_max, total_flat,
     t = 0
     p = 0
     d = [0] * len(delay_g_min)
-    for ei in range(len(delay_g_min)):
+    for ei in range(len(total_g_min)):
         ein_data = np.zeros(shape)
 
         # Include the total data

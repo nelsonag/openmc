@@ -1995,10 +1995,55 @@ class XSdata(object):
             xs_grp = grp.create_group(str(int(np.round(temperature))) + "K")
 
             if self._total[i] is None:
-                raise ValueError('total data must be provided when writing '
-                                 'the HDF5 library')
+                # Try and get it from absorption and scatter
 
-            xs_grp.create_dataset("total", data=self._total[i])
+                # raise ValueError('total data must be provided when writing '
+                #                  'the HDF5 library')
+                if self._absorption[i] is not None and \
+                    (self._scatter_matrix[i] is not None and
+                     self._multiplicity_matrix[i] is not None):
+
+                    if self.scatter_format == 'legendre':
+                        if self.representation == 'isotropic':
+                            matrix = self._scatter_matrix[i][:, :, 0]
+                            mult_matrix = self._multiplicity_matrix[i][:, :]
+                        elif self.representation == 'angle':
+                            matrix = self._scatter_matrix[i][:, :, :, :, 0]
+                            mult_matrix = \
+                                self._multiplicity_matrix[i][:, :, :, :]
+                    else:
+                        if self.representation == 'isotropic':
+                            matrix = np.sum(self._scatter_matrix[i][:, :, :],
+                                            axis=-1)
+                            mult_matrix = self._multiplicity_matrix[i][:, :]
+                        elif self.representation == 'angle':
+                            matrix = \
+                                np.sum(self._scatter_matrix[i][:, :, :, :, :],
+                                       axis=1)
+                            mult_matrix = \
+                                self._multiplicity_matrix[i][:, :, :, :]
+
+                    total = np.copy(self._absorption[i])
+                    for gin in range(self.energy_groups.num_groups):
+                        for gout in range(self.energy_groups.num_groups):
+                            if mult_matrix[gin, gout] > 0.:
+                                total[gin] += \
+                                    matrix[gin, gout] / mult_matrix[gin, gout]
+                            else:
+                                # Assume it should be 1.0; this could happen
+                                # if analog scattering of multiplicity didnt
+                                # get a result but an NDPP tally of scatter
+                                # did.
+                                total[gin] += matrix[gin, gout]
+
+                else:
+                    raise ValueError('total or absorption and scatter data '
+                                     'must be provided when writing the HDF5 '
+                                     'library')
+            else:
+                total = self._total[i]
+
+            xs_grp.create_dataset("total", data=total)
 
             if self._absorption[i] is None:
                 raise ValueError('absorption data must be provided when '

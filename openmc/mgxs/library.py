@@ -1088,34 +1088,32 @@ class Library(object):
                                                 subdomain=subdomain)
             using_multiplicity = True
 
-        # multiplicity will fall back to using scatter and nu-scatter
-        elif 'scatter matrix' in self.mgxs_types and \
-             'nu-scatter matrix' in self.mgxs_types:
-            scatt_mgxs = self.get_mgxs(domain, 'scatter matrix')
-            nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
-            xsdata.set_multiplicity_matrix_mgxs(nuscatt_mgxs, scatt_mgxs,
-                                                xs_type=xs_type,
-                                                nuclide=[nuclide],
-                                                subdomain=subdomain)
-            using_multiplicity = True
+        # multiplicity will fall back to using scatter and nu-scatter;
+        # the order of preference will be ndpp, consistent, and then regular
+        elif ('ndpp scatter matrix' in self.mgxs_types and
+              'ndpp nu-scatter matrix' in self.mgxs_types) or \
+            ('consistent scatter matrix' in self.mgxs_types and
+             'consistent nu-scatter matrix' in self.mgxs_types) or \
+            ('scatter matrix' in self.mgxs_types and
+             'nu-scatter matrix' in self.mgxs_types):
 
-        # multiplicity will fall back to using scatter and nu-scatter
-        elif 'consistent scatter matrix' in self.mgxs_types and \
-             'consistent nu-scatter matrix' in self.mgxs_types:
-            scatt_mgxs = self.get_mgxs(domain, 'consistent scatter matrix')
-            nuscatt_mgxs = \
-                self.get_mgxs(domain, 'consistent nu-scatter matrix')
-            xsdata.set_multiplicity_matrix_mgxs(nuscatt_mgxs, scatt_mgxs,
-                                                xs_type=xs_type,
-                                                nuclide=[nuclide],
-                                                subdomain=subdomain)
-            using_multiplicity = True
+            if 'ndpp scatter matrix' in self.mgxs_types and \
+                'ndpp nu-scatter matrix' in self.mgxs_types:
 
-        elif 'ndpp scatter matrix' in self.mgxs_types and \
-             'ndpp nu-scatter matrix' in self.mgxs_types:
-            scatt_mgxs = self.get_mgxs(domain, 'ndpp scatter matrix')
-            nuscatt_mgxs = \
-                self.get_mgxs(domain, 'ndpp nu-scatter matrix')
+                scatt_mgxs = self.get_mgxs(domain, 'ndpp scatter matrix')
+                nuscatt_mgxs = self.get_mgxs(domain, 'ndpp nu-scatter matrix')
+
+            elif 'consistent scatter matrix' in self.mgxs_types and \
+                'consistent nu-scatter matrix' in self.mgxs_types:
+
+                scatt_mgxs = self.get_mgxs(domain, 'consistent scatter matrix')
+                nuscatt_mgxs = \
+                    self.get_mgxs(domain, 'consistent nu-scatter matrix')
+
+            else:
+                scatt_mgxs = self.get_mgxs(domain, 'scatter matrix')
+                nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+
             xsdata.set_multiplicity_matrix_mgxs(nuscatt_mgxs, scatt_mgxs,
                                                 xs_type=xs_type,
                                                 nuclide=[nuclide],
@@ -1126,14 +1124,16 @@ class Library(object):
             using_multiplicity = False
 
         if using_multiplicity:
-            if 'nu-scatter matrix' in self.mgxs_types:
-                nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+            # Just get the scattering data (in order of preference of
+            # ndpp, consistent, and regular)
+            if 'ndpp nu-scatter matrix' in self.mgxs_types:
+                nuscatt_mgxs = self.get_mgxs(domain, 'ndpp nu-scatter matrix')
             elif 'consistent nu-scatter matrix' in self.mgxs_types:
                 nuscatt_mgxs = \
                     self.get_mgxs(domain, 'consistent nu-scatter matrix')
             else:
                 nuscatt_mgxs = \
-                    self.get_mgxs(domain, 'ndpp nu-scatter matrix')
+                    self.get_mgxs(domain, 'nu-scatter matrix')
             xsdata.set_scatter_matrix_mgxs(nuscatt_mgxs, xs_type=xs_type,
                                            nuclide=[nuclide],
                                            subdomain=subdomain)
@@ -1141,14 +1141,15 @@ class Library(object):
             if 'nu-scatter matrix' in self.mgxs_types or \
                     'consistent nu-scatter matrix' in self.mgxs_types or \
                     'ndpp nu-scatter matrix' in self.mgxs_types:
-                if 'nu-scatter matrix' in self.mgxs_types:
-                    nuscatt_mgxs = self.get_mgxs(domain, 'nu-scatter matrix')
+                if 'ndpp nu-scatter matrix' in self.mgxs_types:
+                    nuscatt_mgxs = self.get_mgxs(domain,
+                                                 'ndpp nu-scatter matrix')
                 elif 'consistent nu-scatter matrix' in self.mgxs_types:
                     nuscatt_mgxs = \
                         self.get_mgxs(domain, 'consistent nu-scatter matrix')
                 else:
                     nuscatt_mgxs = \
-                        self.get_mgxs(domain, 'ndpp nu-scatter matrix')
+                        self.get_mgxs(domain, 'nu-scatter matrix')
                 xsdata.set_scatter_matrix_mgxs(nuscatt_mgxs, xs_type=xs_type,
                                                nuclide=[nuclide],
                                                subdomain=subdomain)
@@ -1447,7 +1448,7 @@ class Library(object):
         if 'absorption' not in self.mgxs_types:
             error_flag = True
             warn('An "absorption" MGXS type is required but not provided.')
-        # Ensure nu-scattering matrix is required
+        # Ensure nu-scattering matrix is present
         if 'nu-scatter matrix' not in self.mgxs_types and \
             'consistent nu-scatter matrix' not in self.mgxs_types and \
             'ndpp nu-scatter matrix' not in self.mgxs_types:
@@ -1455,9 +1456,9 @@ class Library(object):
             warn('A "nu-scatter matrix" MGXS type is required but not provided.')
         else:
             # Ok, now see the status of scatter and/or multiplicity
-            if 'scatter matrix' not in self.mgxs_types or \
-                'consistent scatter matrix' not in self.mgxs_types and \
-                'ndpp scatter matrix' not in self.mgxs_types and \
+            if ('scatter matrix' not in self.mgxs_types or \
+                'consistent scatter matrix' not in self.mgxs_types or \
+                'ndpp scatter matrix' not in self.mgxs_types) and \
                 'multiplicity matrix' not in self.mgxs_types:
                 # We dont have data needed for multiplicity matrix, therefore
                 # we need total, and not transport.
@@ -1472,9 +1473,9 @@ class Library(object):
             warn('A "nu-transport" MGXS type is required since a "P0" '
                  'correction is applied, but a "nu-transport" MGXS is '
                  'not provided.')
-        elif self.correction is None and 'total' not in self.mgxs_types:
-            error_flag = True
-            warn('A "total" MGXS type is required, but not provided.')
+        # elif self.correction is None and 'total' not in self.mgxs_types:
+        #     error_flag = True
+        #     warn('A "total" MGXS type is required, but not provided.')
 
         if error_flag:
             raise ValueError('Invalid MGXS configuration encountered.')
