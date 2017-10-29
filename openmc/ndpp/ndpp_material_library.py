@@ -262,6 +262,36 @@ class NdppMaterial(Ndpp):
 
         nuclides = self.material.get_nuclide_atom_densities()
 
+        # First find the nuclides which should include S(a,b) data
+        # This will produce a list of microscopic S(a,b) NDPP objects and the
+        # fraction of applicability for every nuclide in the problem; if a
+        # nuclide has no S(a,b) data, then the list for that nuclide will be
+        # empty.
+        self.sabs = [[]] * len(nuclides)
+        for i_sab, sab in enumerate(self.material._sab):
+            # sab[0] is the library name, sab[1] is the fraction
+            thermal_micro_ndpp = nuclide_ndpp_lib.get_by_name(sab[0])
+
+            # Find nuclides for which the S(a,b) data is applicable
+            sab_nucs = thermal_micro_ndpp.library.nuclides
+            for n, nuclide in enumerate(nuclides):
+                if nuclide in sab_nucs:
+                    temp_keys = []
+                    for temperature in temperatures:
+                        kT = temperature * K_BOLTZMANN
+                        # Find the nearest temperature index and store
+                        iT = (np.abs(np.array(thermal_micro_ndpp.kTs) -
+                                     kT)).argmin()
+                        strT = \
+                            "{}K".format(int(round(thermal_micro_ndpp.kTs[iT] /
+                                                   K_BOLTZMANN)))
+                        temp_keys.append(strT)
+
+                    self.sabs[n].append((thermal_micro_ndpp, sab[1],
+                                         temp_keys))
+
+        # Now that we have the thermal nuclide info, go and get the standard
+        # nuclidic info
         for nuclide in nuclides:
             # Save the atom density
             self.atom_densities.append(nuclides[nuclide][1])
@@ -303,7 +333,9 @@ class NdppMaterial(Ndpp):
         for ikT, kT in enumerate(self.kTs):
             # Get temperature string
             strT = "{}K".format(int(round(kT / K_BOLTZMANN)))
-            self._compute_elastic(kT, strT, self.temp_keys[ikT])
+            # self._compute_elastic(kT, strT, self.temp_keys[ikT])
+            self._compute_elastic_with_thermal(ikT, kT, strT,
+                                               self.temp_keys[ikT])
             self._compute_chi(kT, strT, self.temp_keys[ikT])
 
     def _compute_inelastic(self):
@@ -452,8 +484,7 @@ class NdppMaterial(Ndpp):
             self.nu_inelastic = np.append(nu_inelastic, [nu_inelastic[-1]])
             self.inelastic = np.append(inelastic, [inelastic[-1]])
 
-            # And store the results on the grid
-            self.inelastic_energy = inelastic_energy
+            # And convert to a SparseScatters object
             self.inelastic = SparseScatters(inelastic)
             self.nu_inelastic = SparseScatters(nu_inelastic)
 
@@ -545,6 +576,111 @@ class NdppMaterial(Ndpp):
                                        [self.elastic[strT][-1]])
         self.elastic[strT] = SparseScatters(self.elastic[strT])
 
+    def _compute_elastic_with_thermal(self, ikT, kT, strT, micro_ndpp_strT):
+        """Computes the pre-processed energy-angle data from the elastic
+        scattering reactions of a material. This method, similar to
+        compute_chi, but unlike compute_inelastic, computes the material-wise
+        grid by using adaptive grid generation. This method is used because
+        the variability in the elastic cross section with energy is so large
+        that a combined grid would effectively be a unionized grid of the
+        constituent nuclide's cross section grids. This is likely overkill so
+        instead an adaptive approach is used instead.
+        """
+
+        # Get the elastic cross section functions and the min/max Energies on
+        # the grid
+        xs_funcs = []
+        sab_xs_funcs = []
+        minE = np.finfo('float64').max
+        maxE = np.finfo('float64').min
+        for n in range(len(self.micro_ndpps)):
+            if micro_ndpp_strT in self.micro_ndpps[n].library.reactions[2].xs:
+                xs_funcs.append(
+                    self.micro_ndpps[n].library.reactions[2].xs[
+                        micro_ndpp_strT])
+            if self.micro_ndpps[n].elastic_energy[strT][0] < minE:
+                minE = self.micro_ndpps[n].elastic_energy[strT][0]
+
+            # Get the maximum energy in the data; we will use index -2 since
+            # the final index is just an added point for interpolation purposes
+            if self.micro_ndpps[n].elastic_energy[strT][-2] > maxE:
+                maxE = self.micro_ndpps[n].elastic_energy[strT][-2]
+
+            if self.sabs[n]:
+                sab_strT = self.sabs[n][2][ikT]
+                try:
+                    sab_elastic_xs = \
+                        self.sabs[n][0].library.elastic_xs[sab_strT]
+                except KeyError:
+                    # Then there is no elastic data, return 0.
+                    def sab_elastic_xs(Ein):
+                        return 0.
+                sab_inelastic_xs = \
+                    self.sabs[n][0].library.inelastic_xs[sab_strT]
+                sab_xs_funcs.append(lambda Ein: sab_elastic_xs(Ein) +
+                                    sab_inelastic_xs(Ein))
+            else:
+                sab_xs_funcs.append(None)
+
+        # Set the arguments for our linearize function, except dont yet include
+        # the Ein grid points (the first argument), since that will be
+        # dependent upon the thread's work
+        func_args = (self.micro_ndpps, self.atom_densities, self.sabs,
+                     (self.num_groups, self.num_angle), xs_funcs,
+                     micro_ndpp_strT, sab_xs_funcs, ikT)
+        linearize_args = (_linearizer_function_elastic_with_thermal, func_args,
+                          self.tolerance, self.minimum_relative_threshold,
+                          self.scatter_format)
+
+        # Set the Ein grid
+        Ein_grid = np.array([minE, maxE])
+
+        inputs = [(Ein_grid[e: e + 2],) + linearize_args
+                  for e in range(len(Ein_grid) - 1)]
+
+        # Run in serial or parallel mode
+        grid = [None] * len(inputs)
+        results = [None] * len(inputs)
+        if self.num_threads < 1:
+            for e, in_data in enumerate(inputs):
+                grid[e], results[e] = linearizer_wrapper(in_data)
+        else:
+            p = Pool(self.num_threads)
+            output = p.map(linearizer_wrapper, inputs)
+            p.close()
+            # output contains a 2-tuple for every parallelized bin;
+            # the first entry in the tuple is the energy grid, and the second
+            # is the results array. We need to separate and combine these
+            for e in range(len(inputs)):
+                grid[e] = output[e][0]
+                results[e] = output[e][1]
+
+        # Now lets combine our grids together
+        Ein_grid = np.concatenate(grid)
+        results = np.concatenate(results)
+
+        # Remove the non-unique entries obtained since the linearizer
+        # includes the endpoints of each bracketed region
+        Ein_grid, unique_indices = np.unique(Ein_grid, return_index=True)
+        self.elastic[strT] = results[unique_indices]
+
+        # Normalize results to remove the cross section dependence and
+        # any numerical errors
+        for e in range(len(Ein_grid)):
+            if self.scatter_format == 'legendre':
+                divisor = np.sum(self.elastic[strT][e][:, 0])
+            else:
+                divisor = np.sum(self.elastic[strT][e][:, :])
+            if divisor > 0.:
+                self.elastic[strT][e] = self.elastic[strT][e] / divisor
+
+        # Finally add a top point to use as interpolation
+        Ein_grid = np.append(Ein_grid, Ein_grid[-1] + 1.e-1)
+        self.elastic_energy[strT] = Ein_grid
+        self.elastic[strT] = np.append(self.elastic[strT],
+                                       [self.elastic[strT][-1]])
+        self.elastic[strT] = SparseScatters(self.elastic[strT])
+
     def _compute_chi(self, kT, strT, micro_ndpp_strT):
         """Computes the pre-processed energy-angle data from the fission
         spectra reactions of a material. This method, similar to
@@ -581,6 +717,7 @@ class NdppMaterial(Ndpp):
                     self.micro_ndpps[n].num_delayed_groups
 
         if not self.fissionable:
+            self.num_delayed_groups = 0
             return
 
         # Set the arguments for our linearize function, except dont yet include
@@ -692,6 +829,74 @@ def _linearizer_function_elastic(Ein, micro_ndpps, atom_densities, array_shape,
         f = (Ein - grid[i]) / (grid[i + 1] - grid[i])
 
         combined += macro_xs * ((1. - f) * data[i] + f * data[i + 1]).toarray()
+
+    return combined
+
+
+def _linearizer_function_elastic_with_thermal(Ein, micro_ndpps, atom_densities,
+                                              sabs, array_shape, xs_funcs,
+                                              strT, sab_xs_funcs, ikT):
+    combined = np.zeros(array_shape)
+    for n in range(len(micro_ndpps)):
+        # First check/get the thermal data
+        if sabs[n]:
+            # Then the list is populated and there is info to apply for this
+            # nuclide; so now check the energy bounds
+            thermal_micro_ndpp = sabs[n][0]
+
+            sab_strT = sabs[n][2][ikT]
+            # Remember compare to the point at index -2 because -1 was added
+            # to help with downstream interpolation and is not physical
+            if Ein <= thermal_micro_ndpp.elastic_energy[sab_strT][-2]:
+                grid = thermal_micro_ndpp.elastic_energy[sab_strT]
+                data = thermal_micro_ndpp.elastic[sab_strT]
+                macro_xs = \
+                    sab_xs_funcs[n](Ein) * atom_densities[n] * sab_fraction
+
+                # Find the corresponding grid point
+                if Ein <= grid[0]:
+                    i = 0
+                elif Ein < grid[-2]:
+                    i = np.searchsorted(grid, Ein) - 1
+                else:
+                    i = len(grid) - 2
+
+                # Get the interpolant
+                f = (Ein - grid[i]) / (grid[i + 1] - grid[i])
+
+                combined += \
+                    macro_xs * ((1. - f) * data[i] + f * data[i + 1]).toarray()
+
+                # Set the sab_fraction so the nuclide info is applied as needed
+                sab_fraction = sabs[n][1]
+            else:
+                # Then we are above the range, set the fraction to 1 so the
+                # nuclidic info is applied in full.
+                sab_fraction = 0.
+        else:
+            # Then we have no S(a,b) data for this nuclide, set the fraction
+            # to 1 so the nuclidic info is applied in full.
+            sab_fraction = 0.
+
+        if sab_fraction < 1.:
+            grid = micro_ndpps[n].elastic_energy[strT]
+            data = micro_ndpps[n].elastic[strT]
+            macro_xs = \
+                xs_funcs[n](Ein) * atom_densities[n] * (1. - sab_fraction)
+
+            # Find the corresponding grid point
+            if Ein <= grid[0]:
+                i = 0
+            elif Ein < grid[-2]:
+                i = np.searchsorted(grid, Ein) - 1
+            else:
+                i = len(grid) - 2
+
+            # Get the interpolant
+            f = (Ein - grid[i]) / (grid[i + 1] - grid[i])
+
+            combined += \
+                macro_xs * ((1. - f) * data[i] + f * data[i + 1]).toarray()
 
     return combined
 
