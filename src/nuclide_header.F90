@@ -146,6 +146,7 @@ module nuclide_header
     real(8) :: absorption    ! macroscopic absorption xs
     real(8) :: fission       ! macroscopic fission xs
     real(8) :: nu_fission    ! macroscopic production xs
+    real(8) :: majorant      ! macroscopic majorant xs
   end type MaterialMacroXS
 
 !===============================================================================
