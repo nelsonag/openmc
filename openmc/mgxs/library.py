@@ -606,7 +606,7 @@ class Library(object):
 
         Parameters
         ----------
-        domain : Material or Cell or Universe or Integral
+        domain : openmc.Material or openmc.Cell or openmc.Universe or openmc.Mesh or Integral
             The material, cell, or universe object of interest (or its ID)
         mgxs_type : {'total', 'transport', 'nu-transport', 'absorption', 'capture', 'fission', 'nu-fission', 'kappa-fission', 'scatter', 'nu-scatter', 'scatter matrix', 'nu-scatter matrix', 'multiplicity matrix', 'nu-fission matrix', chi', 'chi-prompt', 'inverse-velocity', 'prompt-nu-fission', 'prompt-nu-fission matrix', 'delayed-nu-fission', 'delayed-nu-fission matrix', 'chi-delayed', 'beta'}
             The type of multi-group cross section object to return
@@ -668,7 +668,7 @@ class Library(object):
 
         Returns
         -------
-        Library
+        openmc.mgxs.Library
             A new multi-group cross section library condensed to the group
             structure of interest
 
@@ -760,7 +760,7 @@ class Library(object):
 
     def build_hdf5_store(self, filename='mgxs.h5', directory='mgxs',
                          subdomains='all', nuclides='all', xs_type='macro',
-                         row_column='inout'):
+                         row_column='inout', libver='earliest'):
         """Export the multi-group cross section library to an HDF5 binary file.
 
         This method constructs an HDF5 file which stores the library's
@@ -794,6 +794,9 @@ class Library(object):
             Store scattering matrices indexed first by incoming group and
             second by outgoing group ('inout'), or vice versa ('outin').
             Defaults to 'inout'.
+        libver : {'earliest', 'latest'}
+            Compatibility mode for the HDF5 file. 'latest' will produce files
+            that are less backwards compatible but have performance benefits.
 
         Raises
         ------
@@ -823,7 +826,7 @@ class Library(object):
         # Add an attribute for the number of energy groups to the HDF5 file
         full_filename = os.path.join(directory, filename)
         full_filename = full_filename.replace(' ', '-')
-        f = h5py.File(full_filename, 'w')
+        f = h5py.File(full_filename, 'w', libver=libver)
         f.attrs['# groups'] = self.num_groups
         f.close()
 
@@ -880,7 +883,7 @@ class Library(object):
 
         Returns
         -------
-        Library
+        openmc.mgxs.Library
             A Library object loaded from the pickle binary file
 
         See also

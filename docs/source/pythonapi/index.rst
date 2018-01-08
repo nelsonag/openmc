@@ -40,12 +40,13 @@ Modules
 -------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    base
-   stats
-   mgxs
    model
-   data
    examples
+   mgxs
+   stats
+   data
+   capi
    openmoc

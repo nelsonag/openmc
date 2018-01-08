@@ -1,13 +1,15 @@
 module ndpp_material_header
 
+  use, intrinsic :: ISO_FORTRAN_ENV
+  use, intrinsic :: ISO_C_BINDING
+
   use algorithm,      only: binary_search, sort, find
   use constants
   use error,          only: fatal_error
   use material_header, only: Material
-  use ndpp_header,    only: Ndpp
+  use ndpp_header
   use nuclide_header, only: Nuclide, NuclideMicroXS
   use sab_header,     only: SAlphaBeta
-  use tally_header,   only: TallyObject
 
   implicit none
 
@@ -46,6 +48,9 @@ module ndpp_material_header
     ! procedure :: tally_delayed_chi => ndppmat_tally_delayed_chi
   end type NdppMaterial
 
+  ! Storage for the NDPP materials
+  type(NdppMaterial), allocatable :: ndpp_materials(:)
+
   contains
 
 !===============================================================================
@@ -83,14 +88,14 @@ module ndpp_material_header
 ! NDPPMAT_TALLY_* scores the correct score type to the tally
 !===============================================================================
 
-  subroutine ndppmat_tally_scatter(this, Ein, kT, ndpp_outgoing, t, &
+  subroutine ndppmat_tally_scatter(this, Ein, kT, ndpp_outgoing, results, &
                                    i_score, i_filter, score_bin, order, wgt, &
                                    uvw, micro_xs)
     class(NdppMaterial), intent(in)    :: this
     real(8),             intent(in)    :: Ein
     real(8),             intent(in)    :: kT
     real(8),             intent(inout) :: ndpp_outgoing(:, :)
-    type(TallyObject),   intent(inout) :: t
+    real(C_DOUBLE), allocatable, intent(inout) :: results(:,:,:)
     integer,             intent(in)    :: i_score
     integer,             intent(in)    :: i_filter
     integer,             intent(in)    :: score_bin
@@ -114,11 +119,11 @@ module ndpp_material_header
       ! for this nuclide
       if (i_sab > 0) then
         call this % sabs(i_sab) % p % tally_scatter( &
-             Ein, kT, ndpp_outgoing, t, i_score, i_filter, score_bin, order, &
+             Ein, kT, ndpp_outgoing, results, i_score, i_filter, score_bin, order, &
              score, uvw, micro_xs(i_nuclide) % elastic)
       else
         call this % nuclides(mat_nuc) % p % tally_scatter( &
-             Ein, kT, ndpp_outgoing, t, i_score, i_filter, score_bin, order, &
+             Ein, kT, ndpp_outgoing, results, i_score, i_filter, score_bin, order, &
              score, uvw, micro_xs(i_nuclide) % elastic)
       end if
     end do

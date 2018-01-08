@@ -9,7 +9,7 @@ import numpy as np
 
 from openmc.clean_xml import clean_xml_indentation
 import openmc.checkvalue as cv
-from openmc import Nuclide, VolumeCalculation, Source, Mesh
+from openmc import VolumeCalculation, Source, Mesh
 
 _RUN_MODES = ['eigenvalue', 'fixed source', 'plot', 'volume', 'particle restart']
 _RES_SCAT_METHODS = ['dbrc', 'wcm', 'ares']
@@ -125,13 +125,16 @@ class Settings(object):
     temperature : dict
         Defines a default temperature and method for treating intermediate
         temperatures at which nuclear data doesn't exist. Accepted keys are
-        'default', 'method', 'tolerance', and 'multipole'. The value for
-        'default' should be a float representing the default temperature in
+        'default', 'method', 'range', 'tolerance', and 'multipole'. The value
+        for 'default' should be a float representing the default temperature in
         Kelvin. The value for 'method' should be 'nearest' or 'interpolation'.
         If the method is 'nearest', 'tolerance' indicates a range of temperature
-        within which cross sections may be used. 'multipole' is a boolean
-        indicating whether or not the windowed multipole method should be used
-        to evaluate resolved resonance cross sections.
+        within which cross sections may be used. The value for 'range' should be
+        a pair a minimum and maximum temperatures which are used to indicate
+        that cross sections be loaded at all temperatures within the
+        range. 'multipole' is a boolean indicating whether or not the windowed
+        multipole method should be used to evaluate resolved resonance cross
+        sections.
     threads : int
         Number of OpenMP threads
     trace : tuple or list
@@ -639,7 +642,8 @@ class Settings(object):
         cv.check_type('temperature settings', temperature, Mapping)
         for key, value in temperature.items():
             cv.check_value('temperature key', key,
-                           ['default', 'method', 'tolerance', 'multipole'])
+                           ['default', 'method', 'tolerance', 'multipole',
+                            'range'])
             if key == 'default':
                 cv.check_type('default temperature', value, Real)
             elif key == 'method':
@@ -649,6 +653,11 @@ class Settings(object):
                 cv.check_type('temperature tolerance', value, Real)
             elif key == 'multipole':
                 cv.check_type('temperature multipole', value, bool)
+            elif key == 'range':
+                cv.check_length('temperature range', value, 2)
+                for T in value:
+                    cv.check_type('temperature', T, Real)
+
         self._temperature = temperature
 
     @threads.setter
@@ -949,20 +958,15 @@ class Settings(object):
                 subelement = ET.SubElement(element, "energy")
                 subelement.text = str(self._cutoff['energy'])
 
-    def _create_entropy_subelement(self, root):
-        if self._entropy_mesh is not None:
-            element = ET.SubElement(root, "entropy")
+    def _create_entropy_mesh_subelement(self, root):
+        if self.entropy_mesh is not None:
+            # See if a <mesh> element already exists -- if not, add it
+            path = "./mesh[@id='{}']".format(self.entropy_mesh.id)
+            if root.find(path) is None:
+                root.append(self.entropy_mesh.to_xml_element())
 
-            if self._entropy_mesh.dimension is not None:
-                subelement = ET.SubElement(element, "dimension")
-                subelement.text = ' '.join(
-                    str(x) for x in self._entropy_mesh.dimension)
-            subelement = ET.SubElement(element, "lower_left")
-            subelement.text = ' '.join(
-                str(x) for x in self._entropy_mesh.lower_left)
-            subelement = ET.SubElement(element, "upper_right")
-            subelement.text = ' '.join(
-                str(x) for x in self._entropy_mesh.upper_right)
+            subelement = ET.SubElement(root, "entropy_mesh")
+            subelement.text = str(self.entropy_mesh.id)
 
     def _create_trigger_subelement(self, root):
         if self._trigger_active is not None:
@@ -999,6 +1003,8 @@ class Settings(object):
                                         "temperature_{}".format(key))
                 if isinstance(value, bool):
                     element.text = str(value).lower()
+                elif key == 'range':
+                    element.text = ' '.join(str(T) for T in value)
                 else:
                     element.text = str(value)
 
@@ -1017,18 +1023,15 @@ class Settings(object):
             element = ET.SubElement(root, "track")
             element.text = ' '.join(map(str, self._track))
 
-    def _create_ufs_subelement(self, root):
-        if self._ufs_mesh is not None:
-            element = ET.SubElement(root, "uniform_fs")
-            subelement = ET.SubElement(element, "dimension")
-            subelement.text = ' '.join(str(x) for x in
-                                       self._ufs_mesh.dimension)
-            subelement = ET.SubElement(element, "lower_left")
-            subelement.text = ' '.join(str(x) for x in
-                                       self._ufs_mesh.lower_left)
-            subelement = ET.SubElement(element, "upper_right")
-            subelement.text = ' '.join(str(x) for x in
-                                       self._ufs_mesh.upper_right)
+    def _create_ufs_mesh_subelement(self, root):
+        if self.ufs_mesh is not None:
+            # See if a <mesh> element already exists -- if not, add it
+            path = "./mesh[@id='{}']".format(self.ufs_mesh.id)
+            if root.find(path) is None:
+                root.append(self.ufs_mesh.to_xml_element())
+
+            subelement = ET.SubElement(root, "ufs_mesh")
+            subelement.text = str(self.ufs_mesh.id)
 
     def _create_dd_subelement(self, root):
         if self._dd_mesh_lower_left is not None and \
@@ -1115,7 +1118,7 @@ class Settings(object):
         self._create_seed_subelement(root_element)
         self._create_survival_biasing_subelement(root_element)
         self._create_cutoff_subelement(root_element)
-        self._create_entropy_subelement(root_element)
+        self._create_entropy_mesh_subelement(root_element)
         self._create_trigger_subelement(root_element)
         self._create_no_reduce_subelement(root_element)
         self._create_threads_subelement(root_element)
@@ -1124,7 +1127,7 @@ class Settings(object):
         self._create_temperature_subelements(root_element)
         self._create_trace_subelement(root_element)
         self._create_track_subelement(root_element)
-        self._create_ufs_subelement(root_element)
+        self._create_ufs_mesh_subelement(root_element)
         self._create_dd_subelement(root_element)
         self._create_resonance_scattering_subelement(root_element)
         self._create_volume_calcs_subelement(root_element)

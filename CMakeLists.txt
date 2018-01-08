@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 2.8.12 FATAL_ERROR)
 project(openmc Fortran C CXX)
 
 # Setup output directories
@@ -21,6 +21,11 @@ if (${UNIX})
   add_definitions(-DUNIX)
 endif()
 
+# Set MACOSX_RPATH
+if(POLICY CMP0042)
+  cmake_policy(SET CMP0042 NEW)
+endif()
+
 #===============================================================================
 # Command line options
 #===============================================================================
@@ -41,7 +46,7 @@ add_definitions(-DMAX_COORD=${maxcoord})
 #===============================================================================
 
 set(MPI_ENABLED FALSE)
-if($ENV{FC} MATCHES "mpi[^/]*$")
+if($ENV{FC} MATCHES "(mpi[^/]*|ftn)$")
   message("-- Detected MPI wrapper: $ENV{FC}")
   add_definitions(-DMPI)
   set(MPI_ENABLED TRUE)
@@ -100,6 +105,8 @@ endif()
 #  endif()
 #endif()
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if(CMAKE_Fortran_COMPILER_ID STREQUAL GNU)
   # Make sure version is sufficient
   execute_process(COMMAND ${CMAKE_Fortran_COMPILER} -dumpversion
@@ -109,60 +116,47 @@ if(CMAKE_Fortran_COMPILER_ID STREQUAL GNU)
   endif()
 
   # GCC compiler options
-  list(APPEND f90flags -cpp -std=f2008 -fbacktrace -O2)
-  list(APPEND cflags -cpp -std=c99 -O2)
+  list(APPEND f90flags -cpp -std=f2008ts -fbacktrace -O2)
   if(debug)
     list(REMOVE_ITEM f90flags -O2)
-    list(REMOVE_ITEM cflags -O2)
-    list(APPEND f90flags -g -Wall -pedantic -fbounds-check
-      -ffpe-trap=invalid,overflow,underflow)
-    list(APPEND cflags -g -Wall -pedantic -fbounds-check)
+    list(APPEND f90flags -g -Wall -Wno-unused-dummy-argument -pedantic
+      -fbounds-check -ffpe-trap=invalid,overflow,underflow)
     list(APPEND ldflags -g)
   endif()
   if(profile)
     list(APPEND f90flags -pg)
-    list(APPEND cflags -pg)
     list(APPEND ldflags -pg)
   endif()
   if(optimize)
     list(REMOVE_ITEM f90flags -O2)
-    list(REMOVE_ITEM cflags -O2)
     list(APPEND f90flags -O3)
-    list(APPEND cflags -O3)
   endif()
   if(openmp)
     list(APPEND f90flags -fopenmp)
-    list(APPEND cflags -fopenmp)
     list(APPEND ldflags -fopenmp)
   endif()
   if(coverage)
     list(APPEND f90flags -coverage)
-    list(APPEND cflags -coverage)
     list(APPEND ldflags -coverage)
   endif()
 
 elseif(CMAKE_Fortran_COMPILER_ID STREQUAL Intel)
   # Intel compiler options
   list(APPEND f90flags -fpp -std08 -assume byterecl -traceback)
-  list(APPEND cflags -std=c99)
   if(debug)
     list(APPEND f90flags -g -warn -ftrapuv -fp-stack-check
       "-check all" -fpe0 -O0)
-    list(APPEND cflags -g -w3 -ftrapuv -fp-stack-check -O0)
     list(APPEND ldflags -g)
   endif()
   if(profile)
     list(APPEND f90flags -pg)
-    list(APPEND cflags -pg)
     list(APPEND ldflags -pg)
   endif()
   if(optimize)
     list(APPEND f90flags -O3)
-    list(APPEND cflags -O3)
   endif()
   if(openmp)
     list(APPEND f90flags -qopenmp)
-    list(APPEND cflags -qopenmp)
     list(APPEND ldflags -qopenmp)
   endif()
 
@@ -214,9 +208,69 @@ elseif(CMAKE_Fortran_COMPILER_ID STREQUAL Cray)
 
 endif()
 
+if(CMAKE_C_COMPILER_ID STREQUAL GNU)
+  # GCC compiler options
+  list(APPEND cflags -std=c99 -O2)
+  if(debug)
+    list(REMOVE_ITEM cflags -O2)
+    list(APPEND cflags -g -Wall -pedantic -fbounds-check)
+  endif()
+  if(profile)
+    list(APPEND cflags -pg)
+  endif()
+  if(optimize)
+    list(REMOVE_ITEM cflags -O2)
+    list(APPEND cflags -O3)
+  endif()
+  if(coverage)
+    list(APPEND cflags -coverage)
+  endif()
+
+elseif(CMAKE_C_COMPILER_ID STREQUAL Intel)
+  # Intel compiler options
+  list(APPEND cflags -std=c99)
+  if(debug)
+    list(APPEND cflags -g -w3 -ftrapuv -fp-stack-check -O0)
+  endif()
+  if(profile)
+    list(APPEND cflags -pg)
+  endif()
+  if(optimize)
+    list(APPEND cflags -O3)
+  endif()
+
+elseif(CMAKE_C_COMPILER_ID MATCHES Clang)
+  # Clang options
+  list(APPEND cflags -std=c99)
+  if(debug)
+    list(APPEND cflags -g -O0 -ftrapv)
+  endif()
+  if(optimize)
+    list(APPEND cflags -O3)
+  endif()
+
+endif()
+
+list(APPEND cxxflags -std=c++11 -O2)
+if(debug)
+  list(REMOVE_ITEM cxxflags -O2)
+  list(APPEND cxxflags -g -O0)
+endif()
+if(profile)
+  list(APPEND cxxflags -pg)
+endif()
+if(optimize)
+  list(REMOVE_ITEM cxxflags -O2)
+  list(APPEND cxxflags -O3)
+endif()
+if(openmp)
+  list(APPEND cxxflags -fopenmp)
+endif()
+
 # Show flags being used
 message(STATUS "Fortran flags: ${f90flags}")
 message(STATUS "C flags: ${cflags}")
+message(STATUS "C++ flags: ${cxxflags}")
 message(STATUS "Linker flags: ${ldflags}")
 
 #===============================================================================
@@ -244,9 +298,29 @@ target_link_libraries(pugixml_fortran pugixml)
 # RPATH information
 #===============================================================================
 
+# This block of code ensures that dynamic libraries can be found via the RPATH
+# whether the executable is the original one from the build directory or the
+# installed one in CMAKE_INSTALL_PREFIX. Ref:
+# https://cmake.org/Wiki/CMake_RPATH_handling#Always_full_RPATH
+
+# use, i.e. don't skip the full RPATH for the build tree
+set(CMAKE_SKIP_BUILD_RPATH  FALSE)
+
+# when building, don't use the install RPATH already
+# (but later on when installing)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+
 # add the automatically determined parts of the RPATH
 # which point to directories outside the build tree to the install RPATH
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+# the RPATH to be used when installing, but only if it's not a system directory
+list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/lib" isSystemDir)
+if("${isSystemDir}" STREQUAL "-1")
+   set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+endif()
 
 #===============================================================================
 # Build faddeeva library
@@ -255,7 +329,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 add_library(faddeeva STATIC src/faddeeva/Faddeeva.c)
 
 #===============================================================================
-# Build OpenMC executable
+# List source files.  Define the libopenmc and the OpenMC executable
 #===============================================================================
 
 set(program "openmc")
@@ -264,6 +338,7 @@ set(LIBOPENMC_FORTRAN_SRC
   src/angle_distribution.F90
   src/angleenergy_header.F90
   src/bank_header.F90
+  src/api.F90
   src/cmfd_data.F90
   src/cmfd_execute.F90
   src/cmfd_header.F90
@@ -281,12 +356,9 @@ set(LIBOPENMC_FORTRAN_SRC
   src/endf.F90
   src/endf_header.F90
   src/energy_distribution.F90
-  src/energy_grid.F90
   src/error.F90
-  src/finalize.F90
   src/geometry.F90
   src/geometry_header.F90
-  src/global.F90
   src/hdf5_interface.F90
   src/initialize.F90
   src/input_xml.F90
@@ -308,7 +380,6 @@ set(LIBOPENMC_FORTRAN_SRC
   src/output.F90
   src/particle_header.F90
   src/particle_restart.F90
-  src/particle_restart_write.F90
   src/physics_common.F90
   src/physics.F90
   src/physics_mg.F90
@@ -326,6 +397,8 @@ set(LIBOPENMC_FORTRAN_SRC
   src/secondary_nbody.F90
   src/secondary_uncorrelated.F90
   src/set_header.F90
+  src/settings.F90
+  src/simulation_header.F90
   src/simulation.F90
   src/source.F90
   src/source_header.F90
@@ -334,49 +407,66 @@ set(LIBOPENMC_FORTRAN_SRC
   src/string.F90
   src/summary.F90
   src/surface_header.F90
-  src/tally.F90
-  src/tally_filter.F90
-  src/tally_filter_header.F90
-  src/tally_header.F90
-  src/tally_initialize.F90
   src/timer_header.F90
   src/tracking.F90
   src/track_output.F90
-  src/trigger.F90
-  src/trigger_header.F90
   src/urr_header.F90
   src/vector_header.F90
   src/volume_calc.F90
   src/volume_header.F90
-  src/xml_interface.F90)
-add_library(libopenmc STATIC ${LIBOPENMC_FORTRAN_SRC})
+  src/xml_interface.F90
+  src/tallies/tally.F90
+  src/tallies/tally_derivative_header.F90
+  src/tallies/tally_filter.F90
+  src/tallies/tally_filter_header.F90
+  src/tallies/tally_filter_azimuthal.F90
+  src/tallies/tally_filter_cell.F90
+  src/tallies/tally_filter_cellborn.F90
+  src/tallies/tally_filter_cellfrom.F90
+  src/tallies/tally_filter_delayedgroup.F90
+  src/tallies/tally_filter_distribcell.F90
+  src/tallies/tally_filter_energy.F90
+  src/tallies/tally_filter_energyfunc.F90
+  src/tallies/tally_filter_material.F90
+  src/tallies/tally_filter_mesh.F90
+  src/tallies/tally_filter_mu.F90
+  src/tallies/tally_filter_polar.F90
+  src/tallies/tally_filter_surface.F90
+  src/tallies/tally_filter_universe.F90
+  src/tallies/tally_header.F90
+  src/tallies/trigger.F90
+  src/tallies/trigger_header.F90
+)
+set(LIBOPENMC_CXX_SRC
+  src/random_lcg.h
+  src/random_lcg.cpp)
+add_library(libopenmc SHARED ${LIBOPENMC_FORTRAN_SRC} ${LIBOPENMC_CXX_SRC})
 set_target_properties(libopenmc PROPERTIES OUTPUT_NAME openmc)
 add_executable(${program} src/main.F90)
+
+#===============================================================================
+# Add compiler/linker flags
+#===============================================================================
+
 set_property(TARGET ${program} libopenmc pugixml_fortran
   PROPERTY LINKER_LANGUAGE Fortran)
 
-# target_include_directories was added in CMake 2.8.11 and is the recommended
-# way to set include directories. For lesser versions, we revert to set_property
-if(CMAKE_VERSION VERSION_LESS 2.8.11)
-  include_directories(${HDF5_INCLUDE_DIRS})
-else()
-  target_include_directories(libopenmc PUBLIC ${HDF5_INCLUDE_DIRS})
-endif()
+target_include_directories(libopenmc PUBLIC ${HDF5_INCLUDE_DIRS})
 
-# target_compile_options was added in CMake 2.8.12 and is the recommended way to
-# set compile flags. Note that this sets the COMPILE_OPTIONS property (also
-# available only in 2.8.12+) rather than the COMPILE_FLAGS property, which is
-# deprecated. The former can handle lists whereas the latter cannot.
-if (CMAKE_VERSION VERSION_LESS 2.8.12)
-  string(REPLACE ";" " " f90flags "${f90flags}")
-  string(REPLACE ";" " " cflags "${cflags}")
-  set_property(TARGET ${program} PROPERTY COMPILE_FLAGS "${f90flags}")
-  set_property(TARGET faddeeva PROPERTY COMPILE_FLAGS "${cflags}")
-else()
-  target_compile_options(${program} PUBLIC ${f90flags})
-  target_compile_options(libopenmc PUBLIC ${f90flags})
-  target_compile_options(faddeeva PRIVATE ${cflags})
-endif()
+# The executable and the faddeeva package use only one language.  They can be
+# set via target_compile_options which accepts a list.
+target_compile_options(${program} PUBLIC ${f90flags})
+target_compile_options(faddeeva PRIVATE ${cflags})
+
+# The libopenmc library has both F90 and C++ so the compile flags must be set
+# file-by-file via set_source_file_properties.  The compile flags must first be
+# converted from lists to strings.
+string(REPLACE ";" " " f90flags "${f90flags}")
+string(REPLACE ";" " " cxxflags "${cxxflags}")
+set_source_files_properties(${LIBOPENMC_FORTRAN_SRC} PROPERTIES COMPILE_FLAGS
+                            ${f90flags})
+set_source_files_properties(${LIBOPENMC_CXX_SRC} PROPERTIES COMPILE_FLAGS
+                            ${cxxflags})
 
 # Add HDF5 library directories to link line with -L
 foreach(LIBDIR ${HDF5_LIBRARY_DIRS})
@@ -385,14 +475,27 @@ endforeach()
 
 # target_link_libraries treats any arguments starting with - but not -l as
 # linker flags. Thus, we can pass both linker flags and libraries together.
-target_link_libraries(libopenmc ${ldflags} ${HDF5_LIBRARIES} pugixml_fortran faddeeva)
+target_link_libraries(libopenmc ${ldflags} ${HDF5_LIBRARIES} pugixml_fortran
+                      faddeeva)
 target_link_libraries(${program} ${ldflags} libopenmc)
+
+#===============================================================================
+# Python package
+#===============================================================================
+
+add_custom_command(TARGET libopenmc POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+  $<TARGET_FILE:libopenmc>
+  ${CMAKE_CURRENT_SOURCE_DIR}/openmc/capi/$<TARGET_FILE_NAME:libopenmc>
+  COMMENT "Copying libopenmc to Python module directory")
 
 #===============================================================================
 # Install executable, scripts, manpage, license
 #===============================================================================
 
-install(TARGETS ${program} RUNTIME DESTINATION bin)
+install(TARGETS ${program} libopenmc
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib)
 install(DIRECTORY src/relaxng DESTINATION share/openmc)
 install(FILES man/man1/openmc.1 DESTINATION share/man/man1)
 install(FILES LICENSE DESTINATION "share/doc/${program}" RENAME copyright)
@@ -425,6 +528,11 @@ file(GLOB_RECURSE TESTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.py)
 
 # Loop through all the tests
 foreach(test ${TESTS})
+  # Remove unit tests
+  if(test MATCHES ".*unit_tests.*")
+    continue()
+  endif()
+
   # Get test information
   get_filename_component(TEST_NAME ${test} NAME)
   get_filename_component(TEST_PATH ${test} PATH)

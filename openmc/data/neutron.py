@@ -478,7 +478,7 @@ class IncidentNeutron(EqualityMixin):
             mts = new_mts
         return mts
 
-    def export_to_hdf5(self, path, mode='a'):
+    def export_to_hdf5(self, path, mode='a', libver='earliest'):
         """Export incident neutron data to an HDF5 file.
 
         Parameters
@@ -488,6 +488,9 @@ class IncidentNeutron(EqualityMixin):
         mode : {'r', r+', 'w', 'x', 'a'}
             Mode that is used to open the HDF5 file. This is the second argument
             to the :class:`h5py.File` constructor.
+        libver : {'earliest', 'latest'}
+            Compatibility mode for the HDF5 file. 'latest' will produce files
+            that are less backwards compatible but have performance benefits.
 
         """
         # If data come from ENDF, don't allow exporting to HDF5
@@ -496,7 +499,7 @@ class IncidentNeutron(EqualityMixin):
                                       'originated from an ENDF file.')
 
         # Open file and write version
-        f = h5py.File(path, mode, libver='latest')
+        f = h5py.File(path, mode, libver=libver)
         f.attrs['version'] = np.array(HDF5_VERSION)
 
         # Write basic data
@@ -866,12 +869,13 @@ class IncidentNeutron(EqualityMixin):
                 data.fission_energy = FissionEnergyRelease.from_endf(ev, data)
 
             # Add 0K elastic scattering cross section
-            pendf = Evaluation(pendf_file)
-            file_obj = StringIO(pendf.section[3, 2])
-            get_head_record(file_obj)
-            params, xs = get_tab1_record(file_obj)
-            data.energy['0K'] = xs.x
-            data[2].xs['0K'] = xs
+            if '0K' not in data.energy:
+                pendf = Evaluation(pendf_file)
+                file_obj = StringIO(pendf.section[3, 2])
+                get_head_record(file_obj)
+                params, xs = get_tab1_record(file_obj)
+                data.energy['0K'] = xs.x
+                data[2].xs['0K'] = xs
 
         finally:
             # Get rid of temporary files

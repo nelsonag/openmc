@@ -4,19 +4,20 @@ module summary
 
   use constants
   use endf,            only: reaction_name
-  use geometry_header, only: root_universe, Cell, Universe, Lattice, &
-                             RectLattice, HexLattice
-  use global
+  use error,           only: write_message
+  use geometry_header
   use hdf5_interface
-  use material_header, only: Material
+  use material_header, only: Material, n_materials
   use mesh_header,     only: RegularMesh
   use message_passing
+  use mgxs_header,     only: nuclides_MG
   use nuclide_header
   use output,          only: time_stamp
+  use settings,        only: run_CE
   use surface_header
   use string,          only: to_str
   use tally_header,    only: TallyObject
-  use tally_filter,    only: find_offset
+  use tally_filter_distribcell, only: find_offset
 
   implicit none
   private
@@ -32,6 +33,9 @@ contains
   subroutine write_summary()
 
     integer(HID_T) :: file_id
+
+    ! Display output message
+    call write_message("Writing summary.h5 file...", 5)
 
     ! Create a new file using default properties.
     file_id = file_create("summary.h5")
@@ -79,12 +83,12 @@ contains
 
     ! Write useful data from nuclide objects
     nuclide_group = create_group(file_id, "nuclides")
-    call write_attribute(nuclide_group, "n_nuclides", n_nuclides_total)
+    call write_attribute(nuclide_group, "n_nuclides", n_nuclides)
 
     ! Build array of nuclide names and awrs
-    allocate(nucnames(n_nuclides_total))
-    allocate(awrs(n_nuclides_total))
-    do i = 1, n_nuclides_total
+    allocate(nucnames(n_nuclides))
+    allocate(awrs(n_nuclides))
+    do i = 1, n_nuclides
       if (run_CE) then
         nucnames(i) = nuclides(i) % name
         awrs(i)     = nuclides(i) % awr

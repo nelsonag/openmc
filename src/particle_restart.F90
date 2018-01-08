@@ -4,11 +4,16 @@ module particle_restart
 
   use bank_header,      only: Bank
   use constants
-  use global
+  use error,            only: write_message
   use hdf5_interface,   only: file_open, file_close, read_dataset
-  use output,           only: write_message, print_particle
+  use mgxs_header,      only: energy_bin_avg
+  use nuclide_header,   only: micro_xs, n_nuclides
+  use output,           only: print_particle
   use particle_header,  only: Particle
   use random_lcg,       only: set_particle_seed
+  use settings
+  use simulation_header
+  use tally_header,     only: n_tallies
   use tracking,         only: transport
 
   use hdf5, only: HID_T
@@ -32,6 +37,8 @@ contains
     ! Set verbosity high
     verbosity = 10
 
+    allocate(micro_xs(n_nuclides))
+
     ! Initialize the particle to be tracked
     call p % initialize()
 
@@ -44,8 +51,7 @@ contains
     ! Compute random number seed
     select case (previous_run_mode)
     case (MODE_EIGENVALUE)
-      particle_seed = ((current_batch - 1)*gen_per_batch + &
-           current_gen - 1)*n_particles + p % id
+      particle_seed = (total_gen + overall_generation() - 1)*n_particles + p % id
     case (MODE_FIXEDSOURCE)
       particle_seed = p % id
     end select
@@ -57,6 +63,8 @@ contains
 
     ! Write output if particle made it
     call print_particle(p)
+
+    deallocate(micro_xs)
 
   end subroutine run_particle_restart
 

@@ -91,18 +91,6 @@ Many of the above classes are derived from several abstract classes:
    openmc.Region
    openmc.Lattice
 
-Two helper function are also available to create rectangular and hexagonal
-prisms defined by the intersection of four and six surface half-spaces,
-respectively.
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-   :template: myfunction.rst
-
-   openmc.get_hexagonal_prism
-   openmc.get_rectangular_prism
-
 .. _pythonapi_tallies:
 
 Constructing Tallies
@@ -117,6 +105,7 @@ Constructing Tallies
    openmc.UniverseFilter
    openmc.MaterialFilter
    openmc.CellFilter
+   openmc.CellFromFilter
    openmc.CellbornFilter
    openmc.SurfaceFilter
    openmc.MeshFilter

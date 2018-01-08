@@ -4,21 +4,22 @@ module physics
   use constants
   use cross_section,          only: elastic_xs_0K
   use endf,                   only: reaction_name
-  use error,                  only: fatal_error, warning
-  use global
-  use material_header,        only: Material
+  use error,                  only: fatal_error, warning, write_message
+  use material_header,        only: Material, materials
   use math
-  use mesh,                   only: get_mesh_indices
+  use mesh_header,            only: meshes
   use message_passing
   use nuclide_header
-  use output,                 only: write_message
   use particle_header,        only: Particle
-  use particle_restart_write, only: write_particle_restart
   use physics_common
   use random_lcg,             only: prn, advance_prn_seed, prn_set_stream
   use reaction_header,        only: Reaction
+  use sab_header,             only: sab_tables
   use secondary_uncorrelated, only: UncorrelatedAngleEnergy
+  use settings
+  use simulation_header
   use string,                 only: to_str
+  use tally_header
 
   implicit none
 
@@ -32,11 +33,6 @@ contains
   subroutine collision(p)
 
     type(Particle), intent(inout) :: p
-
-    ! Store pre-collision particle properties
-    p % last_wgt = p % wgt
-    p % last_E   = p % E
-    p % last_uvw = p % coord(1) % uvw
 
     ! Add to collision counter for particle
     p % n_collision = p % n_collision + 1
@@ -174,7 +170,7 @@ contains
 
       ! Check to make sure that a nuclide was sampled
       if (i_nuc_mat > mat % n_nuclides) then
-        call write_particle_restart(p)
+        call p % write_restart()
         call fatal_error("Did not sample any nuclide during collision.")
       end if
 
@@ -386,7 +382,7 @@ contains
 
         ! Check to make sure inelastic scattering reaction sampled
         if (i > size(nuc % reactions)) then
-          call write_particle_restart(p)
+          call p % write_restart()
           call fatal_error("Did not sample any reaction for nuclide " &
                &// trim(nuc % name))
         end if
@@ -421,19 +417,22 @@ contains
     ! Set event component
     p % event = EVENT_SCATTER
 
-    ! Sample new outgoing angle for isotropic in lab scattering
-    if (materials(p % material) % p0(i_nuc_mat)) then
+    ! Sample new outgoing angle for isotropic-in-lab scattering
+    associate (mat => materials(p % material))
+      if (mat % has_isotropic_nuclides) then
+        if (materials(p % material) % p0(i_nuc_mat)) then
+          ! Sample isotropic-in-lab outgoing direction
+          uvw_new(1) = TWO * prn() - ONE
+          phi = TWO * PI * prn()
+          uvw_new(2) = cos(phi) * sqrt(ONE - uvw_new(1)*uvw_new(1))
+          uvw_new(3) = sin(phi) * sqrt(ONE - uvw_new(1)*uvw_new(1))
+          p % mu = dot_product(uvw_old, uvw_new)
 
-      ! Sample isotropic-in-lab outgoing direction
-      uvw_new(1) = TWO * prn() - ONE
-      phi = TWO * PI * prn()
-      uvw_new(2) = cos(phi) * sqrt(ONE - uvw_new(1)*uvw_new(1))
-      uvw_new(3) = sin(phi) * sqrt(ONE - uvw_new(1)*uvw_new(1))
-      p % mu = dot_product(uvw_old, uvw_new)
-
-      ! Change direction of particle
-      p % coord(1) % uvw = uvw_new
-    end if
+          ! Change direction of particle
+          p % coord(1) % uvw = uvw_new
+        end if
+      end if
+    end associate
 
   end subroutine scatter
 
@@ -1079,10 +1078,9 @@ contains
     integer :: nu_d(MAX_DELAYED_GROUPS) ! number of delayed neutrons born
     integer :: i                        ! loop index
     integer :: nu                       ! actual number of neutrons produced
-    integer :: ijk(3)                   ! indices in ufs mesh
+    integer :: mesh_bin                 ! mesh bin for source site
     real(8) :: nu_t                     ! total nu
     real(8) :: weight                   ! weight adjustment for ufs method
-    logical :: in_mesh                  ! source site in ufs mesh?
     type(Nuclide),  pointer :: nuc
 
     ! Get pointers
@@ -1094,18 +1092,20 @@ contains
     ! the expected number of fission sites produced
 
     if (ufs) then
-      ! Determine indices on ufs mesh for current location
-      call get_mesh_indices(ufs_mesh, p % coord(1) % xyz, ijk, in_mesh)
-      if (.not. in_mesh) then
-        call write_particle_restart(p)
-        call fatal_error("Source site outside UFS mesh!")
-      end if
+      associate (m => meshes(index_ufs_mesh))
+        ! Determine indices on ufs mesh for current location
+        call m % get_bin(p % coord(1) % xyz, mesh_bin)
+        if (mesh_bin == NO_BIN_FOUND) then
+          call p % write_restart()
+          call fatal_error("Source site outside UFS mesh!")
+        end if
 
-      if (source_frac(1,ijk(1),ijk(2),ijk(3)) /= ZERO) then
-        weight = ufs_mesh % volume_frac / source_frac(1,ijk(1),ijk(2),ijk(3))
-      else
-        weight = ONE
-      end if
+        if (source_frac(1, mesh_bin) /= ZERO) then
+          weight = m % volume_frac / source_frac(1, mesh_bin)
+        else
+          weight = ONE
+        end if
+      end associate
     else
       weight = ONE
     end if
@@ -1249,7 +1249,7 @@ contains
         ! check for large number of resamples
         n_sample = n_sample + 1
         if (n_sample == MAX_SAMPLE) then
-          ! call write_particle_restart(p)
+          ! call p % write_restart()
           call fatal_error("Resampled energy distribution maximum number of " &
                // "times for nuclide " // nuc % name)
         end if
@@ -1273,7 +1273,7 @@ contains
         ! check for large number of resamples
         n_sample = n_sample + 1
         if (n_sample == MAX_SAMPLE) then
-          ! call write_particle_restart(p)
+          ! call p % write_restart()
           call fatal_error("Resampled energy distribution maximum number of " &
                // "times for nuclide " // nuc % name)
         end if

@@ -1237,7 +1237,6 @@ class Ndpp(object):
 
         # Temperature independent data
         if self.inelastic_energy is not None:
-            import pdb; pdb.set_trace()
             g_out_bounds, flattened = _sparsify(self.inelastic_energy,
                                                 self.inelastic)
             g.create_dataset('inelastic_energy', data=self.inelastic_energy)

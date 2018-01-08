@@ -402,14 +402,6 @@ class StatePoint(object):
                     scores = group['score_bins'].value
                     n_score_bins = group['n_score_bins'].value
 
-                    # Compute and set the filter strides
-                    for i in range(n_filters):
-                        tally_filter = tally.filters[i]
-                        tally_filter.stride = n_score_bins * len(nuclide_names)
-
-                        for j in range(i+1, n_filters):
-                            tally_filter.stride *= tally.filters[j].num_bins
-
                     # Read scattering moment order strings (e.g., P3, Y1,2, etc.)
                     moments = group['moment_orders'].value
 

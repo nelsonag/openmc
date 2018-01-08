@@ -1,17 +1,14 @@
 module geometry
 
   use constants
-  use error,                  only: fatal_error, warning
-  use geometry_header,        only: Cell, Universe, Lattice, &
-                                    &RectLattice, HexLattice
-  use global
-  use output,                 only: write_message
+  use error,                  only: fatal_error, warning, write_message
+  use geometry_header
   use particle_header,        only: LocalCoord, Particle
-  use particle_restart_write, only: write_particle_restart
+  use simulation_header
+  use settings
   use surface_header
   use stl_vector,             only: VectorInt
   use string,                 only: to_str
-  use tally,                  only: score_surface_current
 
   implicit none
 
@@ -198,11 +195,9 @@ contains
     integer :: distribcell_index
     integer :: i_xyz(3)             ! indices in lattice
     integer :: n                    ! number of cells to search
-    integer :: index_cell           ! index in cells array
+    integer :: i_cell               ! index in cells array
+    integer :: i_universe           ! index in universes array
     logical :: use_search_cells     ! use cells provided as argument
-    type(Cell),     pointer :: c    ! pointer to cell
-    class(Lattice), pointer :: lat  ! pointer to lattice
-    type(Universe), pointer :: univ ! universe to search in
 
     do j = p % n_coord + 1, MAX_COORD
       call p % coord(j) % reset()
@@ -210,447 +205,176 @@ contains
     j = p % n_coord
 
     ! set size of list to search
+    i_universe = p % coord(j) % universe
     if (present(search_cells)) then
       use_search_cells = .true.
       n = size(search_cells)
     else
       use_search_cells = .false.
-      univ => universes(p % coord(j) % universe)
-      n = size(univ % cells)
+      n = size(universes(i_universe) % cells)
     end if
 
+    found = .false.
     CELL_LOOP: do i = 1, n
       ! select cells based on whether we are searching a universe or a provided
       ! list of cells (this would be for lists of neighbor cells)
       if (use_search_cells) then
-        index_cell = search_cells(i)
+        i_cell = search_cells(i)
         ! check to make sure search cell is in same universe
-        if (cells(index_cell) % universe /= p % coord(j) % universe) cycle
+        if (cells(i_cell) % universe /= i_universe) cycle
       else
-        index_cell = univ % cells(i)
+        i_cell = universes(i_universe) % cells(i)
       end if
-
-      ! get pointer to cell
-      c => cells(index_cell)
 
       ! Move on to the next cell if the particle is not inside this cell
-      if (.not. cell_contains(c, p)) cycle
+      if (cell_contains(cells(i_cell), p)) then
+        ! Set cell on this level
+        p % coord(j) % cell = i_cell
 
-      ! Set cell on this level
-      p % coord(j) % cell = index_cell
+        ! Show cell information on trace
+        if (verbosity >= 10 .or. trace) then
+          call write_message("    Entering cell " // trim(to_str(&
+               cells(i_cell) % id)))
+        end if
 
-      ! Show cell information on trace
-      if (verbosity >= 10 .or. trace) then
-        call write_message("    Entering cell " // trim(to_str(c % id)))
+        found = .true.
+        exit
       end if
-
-      CELL_TYPE: if (c % type == FILL_MATERIAL) then
-        ! ======================================================================
-        ! AT LOWEST UNIVERSE, TERMINATE SEARCH
-
-        ! Save previous material and temperature
-        p % last_material = p % material
-        p % last_sqrtkT = p % sqrtkT
-
-        ! Get distributed offset
-        if (size(c % material) > 1 .or. size(c % sqrtkT) > 1) then
-          ! Distributed instances of this cell have different
-          ! materials/temperatures. Determine which instance this is for
-          ! assigning the matching material/temperature.
-          distribcell_index = c % distribcell_index
-          offset = 0
-          do k = 1, p % n_coord
-            if (cells(p % coord(k) % cell) % type == FILL_UNIVERSE) then
-              offset = offset + cells(p % coord(k) % cell) % &
-                   offset(distribcell_index)
-            elseif (cells(p % coord(k) % cell) % type == FILL_LATTICE) then
-              if (lattices(p % coord(k + 1) % lattice) % obj &
-                   % are_valid_indices([&
-                   p % coord(k + 1) % lattice_x, &
-                   p % coord(k + 1) % lattice_y, &
-                   p % coord(k + 1) % lattice_z])) then
-                offset = offset + lattices(p % coord(k + 1) % lattice) % obj % &
-                     offset(distribcell_index, &
-                     p % coord(k + 1) % lattice_x, &
-                     p % coord(k + 1) % lattice_y, &
-                     p % coord(k + 1) % lattice_z)
-              end if
-            end if
-          end do
-        end if
-
-        ! Save the material
-        if (size(c % material) > 1) then
-          p % material = c % material(offset + 1)
-        else
-          p % material = c % material(1)
-        end if
-
-        ! Save the temperature
-        if (size(c % sqrtkT) > 1) then
-          p % sqrtkT = c % sqrtkT(offset + 1)
-        else
-          p % sqrtkT = c % sqrtkT(1)
-        end if
-
-      elseif (c % type == FILL_UNIVERSE) then CELL_TYPE
-        ! ======================================================================
-        ! CELL CONTAINS LOWER UNIVERSE, RECURSIVELY FIND CELL
-
-        ! Store lower level coordinates
-        p % coord(j + 1) % xyz = p % coord(j) % xyz
-        p % coord(j + 1) % uvw = p % coord(j) % uvw
-
-        ! Move particle to next level and set universe
-        j = j + 1
-        p % n_coord = j
-        p % coord(j) % universe = c % fill
-
-        ! Apply translation
-        if (allocated(c % translation)) then
-          p % coord(j) % xyz = p % coord(j) % xyz - c % translation
-        end if
-
-        ! Apply rotation
-        if (allocated(c % rotation_matrix)) then
-          p % coord(j) % xyz = matmul(c % rotation_matrix, p % coord(j) % xyz)
-          p % coord(j) % uvw = matmul(c % rotation_matrix, p % coord(j) % uvw)
-          p % coord(j) % rotated = .true.
-        end if
-
-        call find_cell(p, found)
-        j = p % n_coord
-        if (.not. found) exit
-
-      elseif (c % type == FILL_LATTICE) then CELL_TYPE
-        ! ======================================================================
-        ! CELL CONTAINS LATTICE, RECURSIVELY FIND CELL
-
-        ! Set current lattice
-        lat => lattices(c % fill) % obj
-
-        ! Determine lattice indices
-        i_xyz = lat % get_indices(p % coord(j) % xyz + TINY_BIT * p % coord(j) % uvw)
-
-        ! Store lower level coordinates
-        p % coord(j + 1) % xyz = lat % get_local_xyz(p % coord(j) % xyz, i_xyz)
-        p % coord(j + 1) % uvw = p % coord(j) % uvw
-
-        ! set particle lattice indices
-        p % coord(j + 1) % lattice   = c % fill
-        p % coord(j + 1) % lattice_x = i_xyz(1)
-        p % coord(j + 1) % lattice_y = i_xyz(2)
-        p % coord(j + 1) % lattice_z = i_xyz(3)
-
-        ! Set the next lowest coordinate level.
-        if (lat % are_valid_indices(i_xyz)) then
-          ! Particle is inside the lattice.
-          p % coord(j + 1) % universe = &
-               lat % universes(i_xyz(1), i_xyz(2), i_xyz(3))
-
-        else
-          ! Particle is outside the lattice.
-          if (lat % outer == NO_OUTER_UNIVERSE) then
-            call handle_lost_particle(p, "Particle " // trim(to_str(p %id)) &
-                 // " is outside lattice " // trim(to_str(lat % id)) &
-                 // " but the lattice has no defined outer universe.")
-            return
-          else
-            p % coord(j + 1) % universe = lat % outer
-          end if
-        end if
-
-        ! Move particle to next level and search for the lower cells.
-        j = j + 1
-        p % n_coord = j
-
-        call find_cell(p, found)
-        j = p % n_coord
-        if (.not. found) exit
-
-      end if CELL_TYPE
-
-      ! Found cell so we can return
-      found = .true.
-      return
     end do CELL_LOOP
 
-    found = .false.
+    if (found) then
+      associate(c => cells(i_cell))
+        CELL_TYPE: if (c % type == FILL_MATERIAL) then
+          ! ======================================================================
+          ! AT LOWEST UNIVERSE, TERMINATE SEARCH
+
+          ! Save previous material and temperature
+          p % last_material = p % material
+          p % last_sqrtkT = p % sqrtkT
+
+          ! Get distributed offset
+          if (size(c % material) > 1 .or. size(c % sqrtkT) > 1) then
+            ! Distributed instances of this cell have different
+            ! materials/temperatures. Determine which instance this is for
+            ! assigning the matching material/temperature.
+            distribcell_index = c % distribcell_index
+            offset = 0
+            do k = 1, p % n_coord
+              if (cells(p % coord(k) % cell) % type == FILL_UNIVERSE) then
+                offset = offset + cells(p % coord(k) % cell) % &
+                     offset(distribcell_index)
+              elseif (cells(p % coord(k) % cell) % type == FILL_LATTICE) then
+                if (lattices(p % coord(k + 1) % lattice) % obj &
+                     % are_valid_indices([&
+                     p % coord(k + 1) % lattice_x, &
+                     p % coord(k + 1) % lattice_y, &
+                     p % coord(k + 1) % lattice_z])) then
+                  offset = offset + lattices(p % coord(k + 1) % lattice) % obj % &
+                       offset(distribcell_index, &
+                       p % coord(k + 1) % lattice_x, &
+                       p % coord(k + 1) % lattice_y, &
+                       p % coord(k + 1) % lattice_z)
+                end if
+              end if
+            end do
+
+            ! Keep track of which instance of the cell the particle is in
+            p % cell_instance = offset + 1
+          else
+            p % cell_instance = 1
+          end if
+
+          ! Save the material
+          if (size(c % material) > 1) then
+            p % material = c % material(offset + 1)
+          else
+            p % material = c % material(1)
+          end if
+
+          ! Save the temperature
+          if (size(c % sqrtkT) > 1) then
+            p % sqrtkT = c % sqrtkT(offset + 1)
+          else
+            p % sqrtkT = c % sqrtkT(1)
+          end if
+
+        elseif (c % type == FILL_UNIVERSE) then CELL_TYPE
+          ! ======================================================================
+          ! CELL CONTAINS LOWER UNIVERSE, RECURSIVELY FIND CELL
+
+          ! Store lower level coordinates
+          p % coord(j + 1) % xyz = p % coord(j) % xyz
+          p % coord(j + 1) % uvw = p % coord(j) % uvw
+
+          ! Move particle to next level and set universe
+          j = j + 1
+          p % n_coord = j
+          p % coord(j) % universe = c % fill
+
+          ! Apply translation
+          if (allocated(c % translation)) then
+            p % coord(j) % xyz = p % coord(j) % xyz - c % translation
+          end if
+
+          ! Apply rotation
+          if (allocated(c % rotation_matrix)) then
+            p % coord(j) % xyz = matmul(c % rotation_matrix, p % coord(j) % xyz)
+            p % coord(j) % uvw = matmul(c % rotation_matrix, p % coord(j) % uvw)
+            p % coord(j) % rotated = .true.
+          end if
+
+          call find_cell(p, found)
+          j = p % n_coord
+
+        elseif (c % type == FILL_LATTICE) then CELL_TYPE
+          ! ======================================================================
+          ! CELL CONTAINS LATTICE, RECURSIVELY FIND CELL
+
+          associate (lat => lattices(c % fill) % obj)
+            ! Determine lattice indices
+            i_xyz = lat % get_indices(p % coord(j) % xyz + TINY_BIT * p % coord(j) % uvw)
+
+            ! Store lower level coordinates
+            p % coord(j + 1) % xyz = lat % get_local_xyz(p % coord(j) % xyz, i_xyz)
+            p % coord(j + 1) % uvw = p % coord(j) % uvw
+
+            ! set particle lattice indices
+            p % coord(j + 1) % lattice   = c % fill
+            p % coord(j + 1) % lattice_x = i_xyz(1)
+            p % coord(j + 1) % lattice_y = i_xyz(2)
+            p % coord(j + 1) % lattice_z = i_xyz(3)
+
+            ! Set the next lowest coordinate level.
+            if (lat % are_valid_indices(i_xyz)) then
+              ! Particle is inside the lattice.
+              p % coord(j + 1) % universe = &
+                   lat % universes(i_xyz(1), i_xyz(2), i_xyz(3))
+
+            else
+              ! Particle is outside the lattice.
+              if (lat % outer == NO_OUTER_UNIVERSE) then
+                call p % mark_as_lost("Particle " // trim(to_str(p %id)) &
+                     // " is outside lattice " // trim(to_str(lat % id)) &
+                     // " but the lattice has no defined outer universe.")
+                return
+              else
+                p % coord(j + 1) % universe = lat % outer
+              end if
+            end if
+          end associate
+
+          ! Move particle to next level and search for the lower cells.
+          j = j + 1
+          p % n_coord = j
+
+          call find_cell(p, found)
+          j = p % n_coord
+
+        end if CELL_TYPE
+      end associate
+    end if
 
   end subroutine find_cell
-
-!===============================================================================
-! CROSS_SURFACE handles all surface crossings, whether the particle leaks out of
-! the geometry, is reflected, or crosses into a new lattice or cell
-!===============================================================================
-
-  subroutine cross_surface(p, last_cell)
-    type(Particle), intent(inout) :: p
-    integer,        intent(in)    :: last_cell  ! last cell particle was in
-
-    real(8) :: u          ! x-component of direction
-    real(8) :: v          ! y-component of direction
-    real(8) :: w          ! z-component of direction
-    real(8) :: norm       ! "norm" of surface normal
-    real(8) :: d          ! distance between point and plane
-    real(8) :: xyz(3)     ! Saved global coordinate
-    integer :: i_surface  ! index in surfaces
-    logical :: rotational ! if rotational periodic BC applied
-    logical :: found      ! particle found in universe?
-    class(Surface), pointer :: surf
-
-    i_surface = abs(p % surface)
-    surf => surfaces(i_surface)%obj
-    if (verbosity >= 10 .or. trace) then
-      call write_message("    Crossing surface " // trim(to_str(surf % id)))
-    end if
-
-    if (surf % bc == BC_VACUUM .and. (run_mode /= MODE_PLOTTING)) then
-      ! =======================================================================
-      ! PARTICLE LEAKS OUT OF PROBLEM
-
-      ! Kill particle
-      p % alive = .false.
-
-      ! Score any surface current tallies -- note that the particle is moved
-      ! forward slightly so that if the mesh boundary is on the surface, it is
-      ! still processed
-
-      if (active_current_tallies % size() > 0) then
-        ! TODO: Find a better solution to score surface currents than
-        ! physically moving the particle forward slightly
-
-        p % coord(1) % xyz = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
-        call score_surface_current(p)
-      end if
-
-      ! Score to global leakage tally
-      if (tallies_on) then
-        global_tally_leakage = global_tally_leakage + p % wgt
-      end if
-
-      ! Display message
-      if (verbosity >= 10 .or. trace) then
-        call write_message("    Leaked out of surface " &
-             &// trim(to_str(surf % id)))
-      end if
-      return
-
-    elseif (surf % bc == BC_REFLECT .and. (run_mode /= MODE_PLOTTING)) then
-      ! =======================================================================
-      ! PARTICLE REFLECTS FROM SURFACE
-
-      ! Do not handle reflective boundary conditions on lower universes
-      if (p % n_coord /= 1) then
-        call handle_lost_particle(p, "Cannot reflect particle " &
-             &// trim(to_str(p % id)) // " off surface in a lower universe.")
-        return
-      end if
-
-      ! Score surface currents since reflection causes the direction of the
-      ! particle to change -- artificially move the particle slightly back in
-      ! case the surface crossing is coincident with a mesh boundary
-
-      if (active_current_tallies % size() > 0) then
-        xyz = p % coord(1) % xyz
-        p % coord(1) % xyz = p % coord(1) % xyz - TINY_BIT * p % coord(1) % uvw
-        call score_surface_current(p)
-        p % coord(1) % xyz = xyz
-      end if
-
-      ! Reflect particle off surface
-      call surf%reflect(p%coord(1)%xyz, p%coord(1)%uvw)
-
-      ! Make sure new particle direction is normalized
-      u = p%coord(1)%uvw(1)
-      v = p%coord(1)%uvw(2)
-      w = p%coord(1)%uvw(3)
-      norm = sqrt(u*u + v*v + w*w)
-      p%coord(1)%uvw(:) = [u, v, w] / norm
-
-      ! Reassign particle's cell and surface
-      p % coord(1) % cell = last_cell
-      p % surface = -p % surface
-
-      ! If a reflective surface is coincident with a lattice or universe
-      ! boundary, it is necessary to redetermine the particle's coordinates in
-      ! the lower universes.
-
-      p % n_coord = 1
-      call find_cell(p, found)
-      if (.not. found) then
-        call handle_lost_particle(p, "Couldn't find particle after reflecting&
-             & from surface " // trim(to_str(surf%id)) // ".")
-        return
-      end if
-
-      ! Set previous coordinate going slightly past surface crossing
-      p % last_xyz_current = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
-
-      ! Diagnostic message
-      if (verbosity >= 10 .or. trace) then
-        call write_message("    Reflected from surface " &
-             &// trim(to_str(surf%id)))
-      end if
-      return
-    elseif (surf % bc == BC_PERIODIC .and. run_mode /= MODE_PLOTTING) then
-      ! =======================================================================
-      ! PERIODIC BOUNDARY
-
-      ! Do not handle periodic boundary conditions on lower universes
-      if (p % n_coord /= 1) then
-        call handle_lost_particle(p, "Cannot transfer particle " &
-             // trim(to_str(p % id)) // " across surface in a lower universe.&
-             & Boundary conditions must be applied to universe 0.")
-        return
-      end if
-
-      ! Score surface currents since reflection causes the direction of the
-      ! particle to change -- artificially move the particle slightly back in
-      ! case the surface crossing is coincident with a mesh boundary
-
-      if (active_current_tallies % size() > 0) then
-        xyz = p % coord(1) % xyz
-        p % coord(1) % xyz = p % coord(1) % xyz - TINY_BIT * p % coord(1) % uvw
-        call score_surface_current(p)
-        p % coord(1) % xyz = xyz
-      end if
-
-      rotational = .false.
-      select type (surf)
-      type is (SurfaceXPlane)
-        select type (opposite => surfaces(surf % i_periodic) % obj)
-        type is (SurfaceXPlane)
-          p % coord(1) % xyz(1) = opposite % x0
-        type is (SurfaceYPlane)
-          rotational = .true.
-
-          ! Rotate direction
-          u = p % coord(1) % uvw(1)
-          v = p % coord(1) % uvw(2)
-          p % coord(1) % uvw(1) = v
-          p % coord(1) % uvw(2) = -u
-
-          ! Rotate position
-          p % coord(1) % xyz(1) = surf % x0 + p % coord(1) % xyz(2) - opposite % y0
-          p % coord(1) % xyz(2) = opposite % y0
-        end select
-
-      type is (SurfaceYPlane)
-        select type (opposite => surfaces(surf % i_periodic) % obj)
-        type is (SurfaceYPlane)
-          p % coord(1) % xyz(2) = opposite % y0
-        type is (SurfaceXPlane)
-          rotational = .true.
-
-          ! Rotate direction
-          u = p % coord(1) % uvw(1)
-          v = p % coord(1) % uvw(2)
-          p % coord(1) % uvw(1) = -v
-          p % coord(1) % uvw(2) = u
-
-          ! Rotate position
-          p % coord(1) % xyz(2) = surf % y0 + p % coord(1) % xyz(1) - opposite % x0
-          p % coord(1) % xyz(1) = opposite % x0
-        end select
-
-      type is (SurfaceZPlane)
-        select type (opposite => surfaces(surf % i_periodic) % obj)
-        type is (SurfaceZPlane)
-          p % coord(1) % xyz(3) = opposite % z0
-        end select
-
-      type is (SurfacePlane)
-        select type (opposite => surfaces(surf % i_periodic) % obj)
-        type is (SurfacePlane)
-          ! Get surface normal for opposite plane
-          xyz(:) = opposite % normal(p % coord(1) % xyz)
-
-          ! Determine distance to plane
-          norm = xyz(1)*xyz(1) + xyz(2)*xyz(2) + xyz(3)*xyz(3)
-          d = opposite % evaluate(p % coord(1) % xyz) / norm
-
-          ! Move particle along normal vector based on distance
-          p % coord(1) % xyz(:) = p % coord(1) % xyz(:) - d*xyz
-        end select
-      end select
-
-      ! Reassign particle's surface
-      if (rotational) then
-        p % surface = surf % i_periodic
-      else
-        p % surface = sign(surf % i_periodic, p % surface)
-      end if
-
-      ! Figure out what cell particle is in now
-      p % n_coord = 1
-      call find_cell(p, found)
-      if (.not. found) then
-        call handle_lost_particle(p, "Couldn't find particle after hitting &
-             &periodic boundary on surface " // trim(to_str(surf%id)) // ".")
-        return
-      end if
-
-      ! Set previous coordinate going slightly past surface crossing
-      p % last_xyz_current = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
-
-      ! Diagnostic message
-      if (verbosity >= 10 .or. trace) then
-        call write_message("    Hit periodic boundary on surface " &
-             // trim(to_str(surf%id)))
-      end if
-      return
-    end if
-
-    ! ==========================================================================
-    ! SEARCH NEIGHBOR LISTS FOR NEXT CELL
-
-    if (p % surface > 0 .and. allocated(surf%neighbor_pos)) then
-      ! If coming from negative side of surface, search all the neighboring
-      ! cells on the positive side
-
-      call find_cell(p, found, surf%neighbor_pos)
-      if (found) return
-
-    elseif (p % surface < 0  .and. allocated(surf%neighbor_neg)) then
-      ! If coming from positive side of surface, search all the neighboring
-      ! cells on the negative side
-
-      call find_cell(p, found, surf%neighbor_neg)
-      if (found) return
-
-    end if
-
-    ! ==========================================================================
-    ! COULDN'T FIND PARTICLE IN NEIGHBORING CELLS, SEARCH ALL CELLS
-
-    ! Remove lower coordinate levels and assignment of surface
-    p % surface = NONE
-    p % n_coord = 1
-    call find_cell(p, found)
-
-    if (run_mode /= MODE_PLOTTING .and. (.not. found)) then
-      ! If a cell is still not found, there are two possible causes: 1) there is
-      ! a void in the model, and 2) the particle hit a surface at a tangent. If
-      ! the particle is really traveling tangent to a surface, if we move it
-      ! forward a tiny bit it should fix the problem.
-
-      p % n_coord = 1
-      p % coord(1) % xyz = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
-      call find_cell(p, found)
-
-      ! Couldn't find next cell anywhere! This probably means there is an actual
-      ! undefined region in the geometry.
-
-      if (.not. found) then
-        call handle_lost_particle(p, "After particle " // trim(to_str(p % id)) &
-             // " crossed surface " // trim(to_str(surf%id)) &
-             // " it could not be located in any cell and it did not leak.")
-        return
-      end if
-    end if
-
-  end subroutine cross_surface
 
 !===============================================================================
 ! CROSS_LATTICE moves a particle into a new lattice element
@@ -692,7 +416,7 @@ contains
       call find_cell(p, found)
       if (.not. found) then
         if (p % alive) then ! Particle may have been killed in find_cell
-          call handle_lost_particle(p, "Could not locate particle " &
+          call p % mark_as_lost("Could not locate particle " &
                // trim(to_str(p % id)) // " after crossing a lattice boundary.")
           return
         end if
@@ -715,9 +439,8 @@ contains
         ! Search for particle
         call find_cell(p, found)
         if (.not. found) then
-          call handle_lost_particle(p, "Could not locate particle " &
-               // trim(to_str(p % id)) &
-               // " after crossing a lattice boundary.")
+          call p % mark_as_lost("Could not locate particle " // &
+               trim(to_str(p % id)) // " after crossing a lattice boundary.")
           return
         end if
       end if
@@ -994,7 +717,7 @@ contains
         end select LAT_TYPE
 
         if (d_lat < ZERO) then
-          call handle_lost_particle(p, "Particle " // trim(to_str(p % id)) &
+          call p % mark_as_lost("Particle " // trim(to_str(p % id)) &
                //" had a negative distance to a lattice boundary. d = " &
                //trim(to_str(d_lat)))
         end if
@@ -1094,38 +817,6 @@ contains
     end do
 
   end subroutine neighbor_lists
-
-!===============================================================================
-! HANDLE_LOST_PARTICLE
-!===============================================================================
-
-  subroutine handle_lost_particle(p, message)
-
-    type(Particle), intent(inout) :: p
-    character(*)                  :: message
-
-    integer(8) :: tot_n_particles
-
-    ! Print warning and write lost particle file
-    call warning(message)
-    call write_particle_restart(p)
-
-    ! Increment number of lost particles
-    p % alive = .false.
-!$omp atomic
-    n_lost_particles = n_lost_particles + 1
-
-    ! Count the total number of simulated particles (on this processor)
-    tot_n_particles = n_batches * gen_per_batch * work
-
-    ! Abort the simulation if the maximum number of lost particles has been
-    ! reached
-    if (n_lost_particles >= MAX_LOST_PARTICLES .and. &
-         n_lost_particles >= REL_MAX_LOST_PARTICLES * tot_n_particles) then
-      call fatal_error("Maximum number of lost particles has been reached.")
-    end if
-
-  end subroutine handle_lost_particle
 
 !===============================================================================
 ! CALC_OFFSETS calculates and stores the offsets in all fill cells. This
@@ -1251,8 +942,8 @@ contains
     class(Lattice), pointer :: lat         ! pointer to current lattice
 
     ! Don't research places already checked
-    if (found(universe_dict % get_key(univ % id), map)) then
-      count = counts(universe_dict % get_key(univ % id), map)
+    if (found(universe_dict % get(univ % id), map)) then
+      count = counts(universe_dict % get(univ % id), map)
       return
     end if
 
@@ -1260,8 +951,8 @@ contains
     ! Count = 1, then quit
     if (univ % id == univ_id) then
       count = 1
-      counts(universe_dict % get_key(univ % id), map) = 1
-      found(universe_dict % get_key(univ % id), map) = .true.
+      counts(universe_dict % get(univ % id), map) = 1
+      found(universe_dict % get(univ % id), map) = .true.
       return
     end if
 
@@ -1357,8 +1048,8 @@ contains
       end if
     end do
 
-    counts(universe_dict % get_key(univ % id), map) = count
-    found(universe_dict % get_key(univ % id), map) = .true.
+    counts(universe_dict % get(univ % id), map) = count
+    found(universe_dict % get(univ % id), map) = .true.
 
   end function count_target
 

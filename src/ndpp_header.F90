@@ -1,24 +1,37 @@
 module ndpp_header
 
+  use, intrinsic :: ISO_FORTRAN_ENV
+  use, intrinsic :: ISO_C_BINDING
+
   use hdf5,           only: HID_T, HSIZE_T, SIZE_T
 
   use algorithm,      only: binary_search, sort, find
   use constants
   use error,          only: fatal_error
-  use hdf5_interface, only: read_attribute, open_group, close_group, &
-       open_dataset, read_dataset, close_dataset, get_shape, get_datasets, &
-       object_exists, get_name, get_groups
+  use hdf5_interface
   use jagged_header
   use math,           only: calc_rn
   use random_lcg,     only: prn
   use stl_vector,     only: VectorInt, VectorReal
   use string
-  use tally_header,   only: TallyObject
 
   implicit none
 
+! ==============================================================================
+! Global VARIABLES
+! ==============================================================================
+
+  logical :: use_ndpp_data = .false.  ! Should we get pre-processed data library
+  character(MAX_FILE_LEN) :: ndpp_lib ! File which stores ndpp library data
+  ! Storage for the combined elastic & inelastic data to be tallied for the
+  ! case of NDPP scattering.
+  ! Dimensions are: (Scattering Order, Incoming Energy)
+  real(8), allocatable :: ndpp_outgoing(:, :)
+!$omp threadprivate(ndpp_outgoing)
+
+
 !===============================================================================
-! Module constants
+! Module Constants
 !===============================================================================
 
   ! Flags to denote which type of tally to process in get_tally_data
@@ -319,14 +332,14 @@ module ndpp_header
 ! NDPP_TALLY_SCATTER scores the tally data using the NDPP data
 !===============================================================================
 
-  subroutine ndpp_tally_scatter(this, Ein, kT, ndpp_outgoing, t, &
+  subroutine ndpp_tally_scatter(this, Ein, kT, ndpp_outgoing, results, &
                                 i_score, i_filter, score_bin, order, wgt, uvw, &
                                 elastic_xs)
     class(Ndpp),       intent(inout) :: this
     real(8),           intent(in)    :: Ein
     real(8),           intent(in)    :: kT
     real(8),           intent(inout) :: ndpp_outgoing(:, :)
-    type(TallyObject), intent(inout) :: t
+    real(C_DOUBLE), allocatable, intent(inout) :: results(:,:,:)
     integer,           intent(in)    :: i_score
     integer,           intent(in)    :: i_filter
     integer,           intent(in)    :: score_bin
@@ -356,8 +369,8 @@ module ndpp_header
 
     case (SCORE_NDPP_SCATTER_N, SCORE_NDPP_NU_SCATTER_N)
 !$omp critical(case_nu_scatt_n)
-      t % results(RESULT_VALUE, i_score, f_lo: f_hi) = &
-           t % results(RESULT_VALUE, i_score, f_lo: f_hi) + &
+      results(RESULT_VALUE, i_score, f_lo: f_hi) = &
+           results(RESULT_VALUE, i_score, f_lo: f_hi) + &
            ndpp_outgoing(1, gmin: gmax)
 !$omp end critical(case_nu_scatt_n)
 
@@ -366,8 +379,8 @@ module ndpp_header
       s_hi = i_score + order
 
 !$omp critical(case_nu_scatt_pn)
-    t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) = &
-         t % results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) + &
+    results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) = &
+         results(RESULT_VALUE, s_lo: s_hi, f_lo: f_hi) + &
          ndpp_outgoing(1: order + 1, gmin: gmax)
 !$omp end critical(case_nu_scatt_pn)
 
@@ -387,8 +400,8 @@ module ndpp_header
         do f = f_lo, f_hi
           ! multiply score by the angular flux moments and store
 !$omp critical (case_nu_scatt_yn)
-          t % results(RESULT_VALUE, s_lo: s_hi, f) = &
-               t % results(RESULT_VALUE, s_lo: s_hi, f) + &
+          results(RESULT_VALUE, s_lo: s_hi, f) = &
+               results(RESULT_VALUE, s_lo: s_hi, f) + &
                ndpp_outgoing(n, f + 1 - i_filter) * moments
 !$omp end critical (case_nu_scatt_yn)
         end do

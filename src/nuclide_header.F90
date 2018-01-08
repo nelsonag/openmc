@@ -7,20 +7,20 @@ module nuclide_header
 
   use algorithm, only: sort, find
   use constants
-  use dict_header, only: DictIntInt
+  use dict_header, only: DictIntInt, DictCharInt
   use endf,        only: reaction_name, is_fission, is_disappearance
   use endf_header, only: Function1D, Polynomial, Tabulated1D
-  use error,       only: fatal_error, warning
-  use hdf5_interface, only: read_attribute, open_group, close_group, &
-       open_dataset, read_dataset, close_dataset, get_shape, get_datasets, &
-       object_exists, get_name, get_groups
+  use error
+  use hdf5_interface
   use list_header, only: ListInt
   use math,        only: evaluate_legendre
+  use message_passing
   use multipole_header, only: MultipoleArray
   use ndpp_header, only: Ndpp, EnergyGrid
   use product_header, only: AngleEnergyContainer
   use reaction_header, only: Reaction
   use secondary_uncorrelated, only: UncorrelatedAngleEnergy
+  use settings
   use stl_vector,  only: VectorInt, VectorReal
   use string
   use urr_header, only: UrrData
@@ -83,8 +83,10 @@ module nuclide_header
 
     ! Reactions
     type(Reaction), allocatable :: reactions(:)
-    type(DictIntInt) :: reaction_index ! map MT values to index in reactions
-                                       ! array; used at tally-time
+
+    ! Array that maps MT values to index in reactions; used at tally-time. Note
+    ! that ENDF-102 does not assign any MT values above 891.
+    integer :: reaction_index(891)
 
     ! Fission energy release
     class(Function1D), allocatable :: fission_q_prompt ! prompt neutrons, gammas
@@ -94,8 +96,10 @@ module nuclide_header
     type(Ndpp) :: ndpp_data
 
   contains
+    procedure :: assign_0K_elastic_scattering
     procedure :: clear => nuclide_clear
     procedure :: from_hdf5 => nuclide_from_hdf5
+    procedure :: init_grid => nuclide_init_grid
     procedure :: nu    => nuclide_nu
     procedure, private :: create_derived => nuclide_create_derived
   end type Nuclide
@@ -110,11 +114,15 @@ module nuclide_header
     real(8) :: total
     real(8) :: elastic          ! If sab_frac is not 1 or 0, then this value is
                                 !   averaged over bound and non-bound nuclei
-    real(8) :: absorption
-    real(8) :: fission
-    real(8) :: nu_fission
+    real(8) :: absorption       ! absorption (disappearance)
+    real(8) :: fission          ! fission
+    real(8) :: nu_fission       ! neutron production from fission
     real(8) :: thermal          ! Bound thermal elastic & inelastic scattering
     real(8) :: thermal_elastic  ! Bound thermal elastic scattering
+
+    ! Cross sections for depletion reactions (note that these are not stored in
+    ! macroscopic cache)
+    real(8) :: reaction(size(DEPLETION_RX))
 
     ! Indicies and factors needed to compute cross sections from the data tables
     integer :: index_grid        ! Index on nuclide energy grid
@@ -155,7 +163,79 @@ module nuclide_header
     character(MAX_FILE_LEN) :: path
   end type Library
 
-  contains
+  ! Cross section libraries
+  type(Library), allocatable :: libraries(:)
+  type(DictCharInt) :: library_dict
+
+  ! Nuclear data for each nuclide
+  type(Nuclide), allocatable, target :: nuclides(:)
+  integer(C_INT), bind(C) :: n_nuclides
+  type(DictCharInt) :: nuclide_dict
+
+  ! Cross section caches
+  type(NuclideMicroXS), allocatable :: micro_xs(:)  ! Cache for each nuclide
+  type(MaterialMacroXS)             :: material_xs  ! Cache for current material
+!$omp threadprivate(micro_xs, material_xs)
+
+  ! Minimum/maximum energies
+  real(8) :: energy_min_neutron = ZERO
+  real(8) :: energy_max_neutron = INFINITY
+
+contains
+
+!===============================================================================
+! ASSIGN_0K_ELASTIC_SCATTERING
+!===============================================================================
+
+  subroutine assign_0K_elastic_scattering(this)
+    class(Nuclide), intent(inout) :: this
+
+    integer :: i
+    real(8) :: xs_cdf_sum
+
+    this % resonant = .false.
+    if (allocated(res_scat_nuclides)) then
+      ! If resonant nuclides were specified, check the list explicitly
+      do i = 1, size(res_scat_nuclides)
+        if (this % name == res_scat_nuclides(i)) then
+          this % resonant = .true.
+
+          ! Make sure nuclide has 0K data
+          if (.not. allocated(this % energy_0K)) then
+            call fatal_error("Cannot treat " // trim(this % name) // " as a &
+                 &resonant scatterer because 0 K elastic scattering data is &
+                 &not present.")
+          end if
+
+          exit
+        end if
+      end do
+    else
+      ! Otherwise, assume that any that have 0 K elastic scattering data are
+      ! resonant
+      this % resonant = allocated(this % energy_0K)
+    end if
+
+    if (this % resonant) then
+      ! Build CDF for 0K elastic scattering
+      xs_cdf_sum = ZERO
+      allocate(this % xs_cdf(0:size(this % energy_0K)))
+      this % xs_cdf(0) = ZERO
+
+      associate (E => this % energy_0K, xs => this % elastic_0K)
+        do i = 1, size(E) - 1
+          ! Negative cross sections result in a CDF that is not monotonically
+          ! increasing. Set all negative xs values to zero.
+          if (xs(i) < ZERO) xs(i) = ZERO
+
+          ! build xs cdf
+          xs_cdf_sum = xs_cdf_sum + (sqrt(E(i))*xs(i) + sqrt(E(i+1))*xs(i+1))&
+               / TWO * (E(i+1) - E(i))
+          this % xs_cdf(i) = xs_cdf_sum
+        end do
+      end associate
+    end if
+  end subroutine assign_0K_elastic_scattering
 
 !===============================================================================
 ! NUCLIDE_CLEAR resets and deallocates data in Nuclide
@@ -169,12 +249,13 @@ module nuclide_header
   end subroutine nuclide_clear
 
   subroutine nuclide_from_hdf5(this, group_id, temperature, method, tolerance, &
-                               master)
+                               minmax, master)
     class(Nuclide),   intent(inout) :: this
     integer(HID_T),   intent(in)    :: group_id
-    type(VectorReal), intent(in)   :: temperature ! list of desired temperatures
+    type(VectorReal), intent(in)    :: temperature ! list of desired temperatures
     integer,          intent(inout) :: method
     real(8),          intent(in)    :: tolerance
+    real(8),          intent(in)    :: minmax(2)  ! range of temperatures
     logical,          intent(in)    :: master     ! if this is the master proc
 
     integer :: i
@@ -234,7 +315,18 @@ module nuclide_header
       method = TEMPERATURE_NEAREST
     end if
 
-    ! Determine actual temperatures to read
+    ! Determine actual temperatures to read -- start by checking whether a
+    ! temperature range was given, in which case all temperatures in the range
+    ! are loaded irrespective of what temperatures actually appear in the model
+    if (minmax(2) > ZERO) then
+      do i = 1, size(temps_available)
+        temp_actual = temps_available(i)
+        if (minmax(1) <= temp_actual .and. temp_actual <= minmax(2)) then
+          call temps_to_read % push_back(nint(temp_actual))
+        end if
+      end do
+    end if
+
     select case (method)
     case (TEMPERATURE_NEAREST)
       ! Find nearest temperatures
@@ -474,7 +566,7 @@ module nuclide_header
 
     n_temperature = size(this % kTs)
     allocate(this % sum_xs(n_temperature))
-
+    this % reaction_index(:) = 0
     do i = 1, n_temperature
       ! Allocate and initialize derived cross sections
       n_grid = size(this % grid(i) % energy)
@@ -494,7 +586,7 @@ module nuclide_header
 
     do i = 1, size(this % reactions)
       call MTs % push_back(this % reactions(i) % MT)
-      call this % reaction_index % add_key(this % reactions(i) % MT, i)
+      this % reaction_index(this % reactions(i) % MT) = i
 
       associate (rx => this % reactions(i))
         ! Skip total inelastic level scattering, gas production cross sections
@@ -671,5 +763,208 @@ module nuclide_header
     end select
 
   end function nuclide_nu
+
+  subroutine nuclide_init_grid(this, E_min, E_max, M)
+    class(Nuclide), intent(inout) :: this
+    real(8), intent(in) :: E_min           ! Minimum energy in MeV
+    real(8), intent(in) :: E_max           ! Maximum energy in MeV
+    integer, intent(in) :: M               ! Number of equally log-spaced bins
+
+    integer :: i, j, k               ! Loop indices
+    integer :: t                     ! temperature index
+    real(8) :: spacing
+    real(8), allocatable :: umesh(:) ! Equally log-spaced energy grid
+
+    ! Determine equal-logarithmic energy spacing
+    spacing = log(E_max/E_min)/M
+
+    ! Create equally log-spaced energy grid
+    allocate(umesh(0:M))
+    umesh(:) = [(i*spacing, i=0, M)]
+
+    do t = 1, size(this % grid)
+      ! Allocate logarithmic mapping for nuclide
+      allocate(this % grid(t) % grid_index(0:M))
+
+      ! Determine corresponding indices in nuclide grid to energies on
+      ! equal-logarithmic grid
+      j = 1
+      do k = 0, M
+        do while (log(this % grid(t) % energy(j + 1)/E_min) <= umesh(k))
+          ! Ensure that for isotopes where maxval(this % energy) << E_max
+          ! that there are no out-of-bounds issues.
+          if (j + 1 == size(this % grid(t) % energy)) exit
+          j = j + 1
+        end do
+        this % grid(t) % grid_index(k) = j
+      end do
+    end do
+
+  end subroutine nuclide_init_grid
+
+!===============================================================================
+! CHECK_DATA_VERSION checks for the right version of nuclear data within HDF5
+! files
+!===============================================================================
+
+  subroutine check_data_version(file_id)
+    integer(HID_T), intent(in) :: file_id
+
+    integer, allocatable :: version(:)
+
+    if (attribute_exists(file_id, 'version')) then
+      call read_attribute(version, file_id, 'version')
+      if (version(1) /= HDF5_VERSION(1)) then
+        call fatal_error("HDF5 data format uses version " // trim(to_str(&
+             version(1))) // "." // trim(to_str(version(2))) // " whereas &
+             &your installation of OpenMC expects version " // trim(to_str(&
+             HDF5_VERSION(1))) // ".x data.")
+      end if
+    else
+      call fatal_error("HDF5 data does not indicate a version. Your &
+           &installation of OpenMC expects version " // trim(to_str(&
+           HDF5_VERSION(1))) // ".x data.")
+    end if
+  end subroutine check_data_version
+
+!===============================================================================
+! FREE_MEMORY_NUCLIDE deallocates global arrays defined in this module
+!===============================================================================
+
+  subroutine free_memory_nuclide()
+    integer :: i
+
+    ! Deallocate cross section data, listings, and cache
+    if (allocated(nuclides)) then
+      ! First call the clear routines
+      do i = 1, size(nuclides)
+        call nuclides(i) % clear()
+      end do
+      deallocate(nuclides)
+    end if
+    n_nuclides = 0
+
+    if (allocated(libraries)) deallocate(libraries)
+
+    call nuclide_dict % clear()
+    call library_dict % clear()
+
+  end subroutine free_memory_nuclide
+
+!===============================================================================
+!                               C API FUNCTIONS
+!===============================================================================
+
+  function openmc_get_nuclide_index(name, index) result(err) bind(C)
+    ! Return the index in the nuclides array of a nuclide with a given name
+    character(kind=C_CHAR), intent(in) :: name(*)
+    integer(C_INT), intent(out) :: index
+    integer(C_INT) :: err
+
+    character(:), allocatable :: name_
+
+    ! Copy array of C_CHARs to normal Fortran string
+    name_ = to_f_string(name)
+
+    if (allocated(nuclides)) then
+      if (nuclide_dict % has(to_lower(name_))) then
+        index = nuclide_dict % get(to_lower(name_))
+        err = 0
+      else
+        err = E_DATA
+        call set_errmsg("No nuclide named '" // trim(name_) // &
+             "' has been loaded.")
+      end if
+    else
+      err = E_ALLOCATE
+      call set_errmsg("Memory for nuclides has not been allocated.")
+    end if
+  end function openmc_get_nuclide_index
+
+
+  function openmc_load_nuclide(name) result(err) bind(C)
+    ! Load a nuclide from the cross section library
+    character(kind=C_CHAR), intent(in) :: name(*)
+    integer(C_INT) :: err
+
+    integer :: i_library
+    integer :: n
+    integer(HID_T) :: file_id
+    integer(HID_T) :: group_id
+    character(:), allocatable :: name_
+    real(8) :: minmax(2) = [ZERO, INFINITY]
+    type(VectorReal) :: temperature
+    type(Nuclide), allocatable :: new_nuclides(:)
+
+    ! Copy array of C_CHARs to normal Fortran string
+    name_ = to_f_string(name)
+
+    err = 0
+    if (.not. nuclide_dict % has(to_lower(name_))) then
+      if (library_dict % has(to_lower(name_))) then
+        ! allocate extra space in nuclides array
+        n = n_nuclides
+        allocate(new_nuclides(n + 1))
+        new_nuclides(1:n) = nuclides(:)
+        call move_alloc(FROM=new_nuclides, TO=nuclides)
+        n = n + 1
+
+        i_library = library_dict % get(to_lower(name_))
+
+        ! Open file and make sure version is sufficient
+        file_id = file_open(libraries(i_library) % path, 'r')
+        call check_data_version(file_id)
+
+        ! Read nuclide data from HDF5
+        group_id = open_group(file_id, name_)
+        call nuclides(n) % from_hdf5(group_id, temperature, &
+             temperature_method, temperature_tolerance, minmax, &
+             master)
+        call close_group(group_id)
+        call file_close(file_id)
+
+        ! Add entry to nuclide dictionary
+        call nuclide_dict % set(to_lower(name_), n)
+        n_nuclides = n
+
+        ! Assign resonant scattering data
+        if (res_scat_on) call nuclides(n) % assign_0K_elastic_scattering()
+
+        ! Initialize nuclide grid
+        call nuclides(n) % init_grid(energy_min_neutron, &
+             energy_max_neutron, n_log_bins)
+      else
+        err = E_DATA
+        call set_errmsg("Nuclide '" // trim(name_) // "' is not present &
+             &in library.")
+      end if
+    end if
+
+  end function openmc_load_nuclide
+
+
+  function openmc_nuclide_name(index, name) result(err) bind(C)
+    ! Return the name of a nuclide with a given index
+    integer(C_INT), value, intent(in) :: index
+    type(c_ptr), intent(out) :: name
+    integer(C_INT) :: err
+
+    character(C_CHAR), pointer :: name_
+
+    err = E_UNASSIGNED
+    if (allocated(nuclides)) then
+      if (index >= 1 .and. index <= size(nuclides)) then
+        name_ => nuclides(index) % name(1:1)
+        name = C_LOC(name_)
+        err = 0
+      else
+        err = E_OUT_OF_BOUNDS
+        call set_errmsg("Index in nuclides array is out of bounds.")
+      end if
+    else
+      err = E_ALLOCATE
+      call set_errmsg("Memory for nuclides has not been allocated yet.")
+    end if
+  end function openmc_nuclide_name
 
 end module nuclide_header

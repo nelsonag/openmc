@@ -297,10 +297,9 @@ class NdppMaterial(Ndpp):
             self.atom_densities.append(nuclides[nuclide][1])
 
             # Get & save the nuclidic NDPP libraries
-            micro_ndpp = nuclide_ndpp_lib.get_by_name(nuclide.name)
+            micro_ndpp = nuclide_ndpp_lib.get_by_name(nuclide)
             if micro_ndpp is None:
-                raise ValueError("Nuclidic library does not contain " +
-                                 nuclide.name)
+                raise ValueError("Nuclidic library does not contain " + nuclide)
 
             self.micro_ndpps.append(micro_ndpp)
 
