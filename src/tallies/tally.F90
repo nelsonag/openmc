@@ -385,10 +385,17 @@ contains
                    micro_xs(i_nuclide) % elastic)
             end if
           else
-            call ndpp_materials(p % material) % tally_scatter( &
-                 E, kT, ndpp_outgoing, t % results, &
-                 score_index, ndpp_filter_index, score_bin, &
-                 t % moment_order(i), flux, uvw, micro_xs)
+            if (use_ndpp_material_data) then
+              call ndpp_prepro_materials(p % material) % tally_scatter( &
+                   E, kT, ndpp_outgoing, t % results, &
+                   score_index, ndpp_filter_index, score_bin, &
+                   t % moment_order(i), flux, uvw, material_xs % elastic)
+            else
+              call ndpp_otf_materials(p % material) % tally_scatter( &
+                   E, kT, ndpp_outgoing, t % results, &
+                   score_index, ndpp_filter_index, score_bin, &
+                   t % moment_order(i), flux, uvw, micro_xs)
+            end if
           end if
         end if
 

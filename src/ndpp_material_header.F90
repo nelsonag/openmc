@@ -49,7 +49,7 @@ module ndpp_material_header
   end type NdppMaterial
 
   ! Storage for the NDPP materials
-  type(NdppMaterial), allocatable :: ndpp_materials(:)
+  type(NdppMaterial), allocatable :: ndpp_otf_materials(:)
 
   contains
 

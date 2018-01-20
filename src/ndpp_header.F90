@@ -23,12 +23,16 @@ module ndpp_header
 
   logical :: use_ndpp_data = .false.  ! Should we get pre-processed data library
   character(MAX_FILE_LEN) :: ndpp_lib ! File which stores ndpp library data
+
+  logical :: use_ndpp_material_data = .false. ! Should we use the ndpp data
+  ! that has already been created for materials, saving tally time?
+  character(MAX_FILE_LEN) :: ndpp_material_lib ! File with NDPP material data
+
   ! Storage for the combined elastic & inelastic data to be tallied for the
   ! case of NDPP scattering.
   ! Dimensions are: (Scattering Order, Incoming Energy)
   real(8), allocatable :: ndpp_outgoing(:, :)
 !$omp threadprivate(ndpp_outgoing)
-
 
 !===============================================================================
 ! Module Constants
@@ -109,9 +113,12 @@ module ndpp_header
   contains
     procedure :: from_hdf5 => ndpp_from_hdf5
     procedure :: tally_scatter => ndpp_tally_scatter
-    procedure :: tally_chi => ndpp_tally_chi
-    procedure :: tally_delayed_chi => ndpp_tally_delayed_chi
+    ! procedure :: tally_chi => ndpp_tally_chi
+    ! procedure :: tally_delayed_chi => ndpp_tally_delayed_chi
   end type Ndpp
+
+! Storage for the NDPP pre-processed materials
+  type(Ndpp), allocatable :: ndpp_prepro_materials(:)
 
   contains
 
