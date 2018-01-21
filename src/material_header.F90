@@ -6,6 +6,7 @@ module material_header
   use dict_header, only: DictIntInt
   use error
   use nuclide_header
+  use ndpp_header, only: Ndpp
   use sab_header
   use stl_vector, only: VectorReal, VectorInt
   use string, only: to_str
@@ -60,10 +61,18 @@ module material_header
     logical :: has_isotropic_nuclides = .false.
     logical, allocatable :: p0(:)
 
+    ! NDPP data
+    type(Ndpp), pointer :: ndpp_prepro_data
+    ! Flag to set if using pre-combined material NDPP data, or do it on-the-fly
+    logical :: use_ndpp_material_data = .false.
+
   contains
     procedure :: set_density => material_set_density
     procedure :: init_nuclide_index => material_init_nuclide_index
     procedure :: assign_sab_tables => material_assign_sab_tables
+    procedure :: tally_scatter => material_tally_scatter
+    procedure :: clear => material_clear
+    procedure :: init_ndpp => material_init_ndpp
   end type Material
 
   integer(C_INT32_T), public, bind(C) :: n_materials ! # of materials
@@ -74,6 +83,17 @@ module material_header
   type(DictIntInt), public :: material_dict
 
 contains
+
+!===============================================================================
+! MATERIAL_CLEAR clears the material object
+!===============================================================================
+  subroutine material_clear(this)
+    class(Material), intent(inout) :: this
+
+    if (associated(this % ndpp_prepro_data)) deallocate(this % ndpp_prepro_data)
+    this % use_ndpp_material_data = .false.
+
+  end subroutine material_clear
 
 !===============================================================================
 ! MATERIAL_SET_DENSITY sets the total density of a material in atom/b-cm.
@@ -249,12 +269,127 @@ contains
   end subroutine material_assign_sab_tables
 
 !===============================================================================
+! MATERIAL_INIT_NDPP initializes the NDPP data for this material
+!===============================================================================
+
+  subroutine material_init_ndpp(this, temperature, temperature_default, &
+                                h5_file_id, ndpp_material_lib, &
+                                temperature_method, temperature_tolerance, &
+                                master, num_groups, scatter_format, order)
+    class(Material), intent(inout) :: this
+    real(8),         intent(in)    :: temperature
+    real(8),         intent(in)    :: temperature_default
+    integer(HID_T),  intent(in)    :: h5_file_id
+    character(len=MAX_FILE_LEN), intent(in) :: ndpp_material_lib
+    integer,         intent(inout) :: temperature_method
+    real(8),         intent(in)    :: temperature_tolerance
+    logical,         intent(in)    :: master
+    integer,         intent(in)    :: num_groups
+    character(len=20), intent(in)  :: scatter_format
+    integer,         intent(in)    :: order
+
+    integer(HID_T) :: data_group
+    type(VectorReal) :: mat_temp_vec
+
+    ! Check to make sure data exists in the library
+    if (object_exists(h5_file_id, trim(this % name))) then
+      ! The Ndpp % from_hdf5 routine needs material temperatures to be in
+      ! an stl_vector, but we only have a real for each material,
+      ! so lets make it so.
+      if (temperature == ERROR_REAL) then
+        call mat_temp_vec % initialize(1, temperature_default)
+      else
+        call mat_temp_vec % initialize(1, temperature)
+      end if
+      data_group = open_group(h5_file_id, trim(this % name))
+
+      ! Get the data itself
+      allocate(this % ndpp_prepro_data)
+      call this % ndpp_prepro_data % from_hdf5(data_group, mat_temp_vec, &
+           temperature_method, temperature_tolerance, master, &
+           num_groups, scatter_format, order)
+      this % use_ndpp_material_data = .true.
+      call close_group(data_group)
+      call mat_temp_vec % clear()
+    else
+      call warning("Data for '" // trim(this % name) // &
+           "' does not exist in " // trim(ndpp_material_lib) // &
+           "; tallying of events for of this material using NDPP" // &
+           " data will be slower than expected.")
+      this % use_ndpp_material_data = .false.
+    end if
+
+  end subroutine material_init_ndpp
+
+!===============================================================================
+! MATERIAL_TALLY_SCATTER tallies a scattering event from this material using
+! NDPP pre-processed data
+!===============================================================================
+
+  subroutine material_tally_scatter(this, Ein, kT, ndpp_outgoing, results, &
+                                   i_score, i_filter, score_bin, order, wgt, &
+                                   uvw, micro_xs, macro_elastic_xs)
+    class(Material),             intent(inout) :: this
+    real(8),                     intent(in)    :: Ein
+    real(8),                     intent(in)    :: kT
+    real(8),                     intent(inout) :: ndpp_outgoing(:, :)
+    real(C_DOUBLE), allocatable, intent(inout) :: results(:,:,:)
+    integer,                     intent(in)    :: i_score
+    integer,                     intent(in)    :: i_filter
+    integer,                     intent(in)    :: score_bin
+    integer,                     intent(in)    :: order
+    real(8),                     intent(in)    :: wgt
+    real(8),                     intent(in)    :: uvw(3)
+    type(NuclideMicroXS),        intent(in)    :: micro_xs(:)
+    real(8),                     intent(in)    :: macro_elastic_xs
+
+    integer :: mat_nuc, i_nuclide, i_sab
+    real(8) :: score
+
+    if (this % use_ndpp_material_data) then
+      ! Just score the already combined data
+      call this % ndpp_prepro_data % tally_scatter(Ein, kT, ndpp_outgoing, &
+           results, i_score, i_filter, score_bin, order, wgt, uvw, &
+           macro_elastic_xs)
+    else
+      ! We are doing it on the fly
+      do mat_nuc = 1, this % n_nuclides
+        ! Get the indices of the nuclides and sabs
+        i_nuclide = this % nuclide(mat_nuc)
+        i_sab = micro_xs(i_nuclide) % index_sab
+
+        ! Set the weighting function
+        score = wgt * this % atom_density(mat_nuc)
+
+        ! See if we have already determined if there is S(a,b) scattering or not
+        ! for this nuclide
+        if (i_sab > 0) then
+          call sab_tables(i_sab) % ndpp_data % tally_scatter( &
+               Ein, kT, ndpp_outgoing, results, i_score, i_filter, score_bin, order, &
+               score, uvw, micro_xs(i_nuclide) % elastic)
+        else
+          call nuclides(mat_nuc) % ndpp_data % tally_scatter(Ein, kT, ndpp_outgoing, &
+               results, i_score, i_filter, score_bin, order, score, uvw, &
+               micro_xs(i_nuclide) % elastic)
+        end if
+      end do
+    end if
+
+  end subroutine material_tally_scatter
+
+!===============================================================================
 ! FREE_MEMORY_MATERIAL deallocates global arrays defined in this module
 !===============================================================================
 
   subroutine free_memory_material()
+    integer :: i
     n_materials = 0
-    if (allocated(materials)) deallocate(materials)
+    if (allocated(materials)) then
+      do i = 1, size(materials)
+        call materials(i) % clear()
+      end do
+      deallocate(materials)
+    end if
     call material_dict % clear()
   end subroutine free_memory_material
 

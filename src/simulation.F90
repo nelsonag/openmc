@@ -617,15 +617,14 @@ contains
       if (thread_id == 0) then
         allocate(fission_bank(3*work))
       else
-write(*,*) 'have to allocate', 3*work / n_threads
+
         allocate(fission_bank(3*work/n_threads))
       end if
 write(*,*) 'allocations complete', thread_id
 !$omp end parallel
-write(*,*) 'end parallel'
+
       if (allocated(master_fission_bank)) deallocate(master_fission_bank)
       allocate(master_fission_bank(3*work), STAT=alloc_err)
-write(*,*) 'master complete'
 #else
       if (allocated(fission_bank)) deallocate(fission_bank)
       allocate(fission_bank(3*work), STAT=alloc_err)

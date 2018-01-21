@@ -13,7 +13,6 @@ module tally
   use message_passing
   use mgxs_header
   use ndpp_header
-  use ndpp_material_header
   use nuclide_header
   use output,           only: header
   use particle_header,  only: LocalCoord, Particle
@@ -385,17 +384,10 @@ contains
                    micro_xs(i_nuclide) % elastic)
             end if
           else
-            if (use_ndpp_material_data) then
-              call ndpp_prepro_materials(p % material) % tally_scatter( &
-                   E, kT, ndpp_outgoing, t % results, &
-                   score_index, ndpp_filter_index, score_bin, &
-                   t % moment_order(i), flux, uvw, material_xs % elastic)
-            else
-              call ndpp_otf_materials(p % material) % tally_scatter( &
-                   E, kT, ndpp_outgoing, t % results, &
-                   score_index, ndpp_filter_index, score_bin, &
-                   t % moment_order(i), flux, uvw, micro_xs)
-            end if
+            call materials(p % material) % tally_scatter( &
+                 E, kT, ndpp_outgoing, t % results, score_index, &
+                 ndpp_filter_index, score_bin, t % moment_order(i), flux, &
+                 uvw, micro_xs, material_xs % elastic)
           end if
         end if
 

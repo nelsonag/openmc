@@ -23,7 +23,6 @@ module input_xml
   use mgxs_header
   use multipole,        only: multipole_read
   use ndpp_header
-  use ndpp_material_header
   use nuclide_header
   use output,           only: title, header, print_plot
   use plot_header
@@ -2517,6 +2516,8 @@ contains
     real(8), allocatable :: ndpp_group_edges(:)
     character(len=20) :: ndpp_scatter_format
     real(8), allocatable :: ndpp_histogram_bins(:)
+    logical :: use_ndpp_material_data
+    character(MAX_FILE_LEN) :: ndpp_material_lib
 
     ! Check if tallies.xml exists
     filename = trim(path_input) // "tallies.xml"
@@ -3793,19 +3794,22 @@ contains
         ndpp_lib = 'ndpp_lib.h5'
       end if
 
-      ! Load the NDPP data
-      call read_ndpp(nuc_temps, sab_temps, ndpp_group_edges, &
-                     ndpp_scatter_format)
-
-      ! Now repeat for a material library
+      ! Now check to see if there is an NDPP material library
       if (check_for_node(root, "ndpp_material_library")) then
         call get_node_value(root, "ndpp_material_library", ndpp_material_lib)
         use_ndpp_material_data = .true.
       else
         use_ndpp_material_data = .false.
       end if
+
+      ! Load the NDPP data
+      call read_ndpp(nuc_temps, sab_temps, ndpp_group_edges, &
+                     ndpp_scatter_format)
+
       call read_ndpp_materials(material_temps, ndpp_group_edges, &
-                               ndpp_scatter_format)
+                               ndpp_scatter_format, use_ndpp_material_data, &
+                               ndpp_material_lib)
+
     end if
 
     ! Close XML document
@@ -5294,23 +5298,24 @@ contains
 ! NDPP libraries
 !===============================================================================
 
-  subroutine read_ndpp_materials(material_temps, group_edges, scatter_format)
+  subroutine read_ndpp_materials(material_temps, group_edges, scatter_format, &
+                                 use_ndpp_material_data, ndpp_material_lib)
     real(8), allocatable, intent(in) :: material_temps(:)
     real(8), allocatable, intent(in) :: group_edges(:) ! Group structure
     character(len=*),     intent(in) :: scatter_format ! Legendre or histogram
+    logical,              intent(in) :: use_ndpp_material_data
+    character(len=MAX_FILE_LEN), intent(in) :: ndpp_material_lib
 
     logical                 :: file_exists
     integer                 :: i
     integer(HID_T)          :: file_id
-    integer(HID_T)          :: data_group
     character(MAX_WORD_LEN) :: word
     integer, allocatable    :: array(:)
     integer(HID_T) :: energy_dset
     integer(HSIZE_T) :: dims(1)
     integer :: order, num_groups, order_dim
     real(8), allocatable :: lib_group_edges(:)
-    character(10) :: lib_scatter_format
-    type(VectorReal) :: mat_temp_vec
+    character(len=20) :: lib_scatter_format
 
     if (use_ndpp_material_data) then
       call write_message("Reading Material NDPP HDF5 Library...", 5)
@@ -5371,38 +5376,14 @@ contains
       end if
 
       ! Read the nuclide data
-      allocate(ndpp_prepro_materials(n_materials))
-      do i = 1, size(materials)
-        if (material_temps(i) == ERROR_REAL) then
-          call mat_temp_vec % initialize(1, temperature_default)
-        else
-          call mat_temp_vec % initialize(1, material_temps(i))
-        end if
-        associate(mat => materials(i))
-          ! Check to make sure data exists in the library
-          if (object_exists(file_id, trim(mat % name))) then
-            data_group = open_group(file_id, trim(mat % name))
-          else
-            call fatal_error("Data for '" // trim(mat % name) // &
-                 "' does not exist in " // trim(ndpp_material_lib))
-          end if
-          call ndpp_prepro_materials(i) % from_hdf5(data_group, mat_temp_vec, &
-               temperature_method, temperature_tolerance, master, num_groups, &
-               scatter_format, order)
-          call close_group(data_group)
-        end associate ! mat
-        call mat_temp_vec % clear()
+      do i = 1, n_materials
+        call materials(i) % init_ndpp(material_temps(i), temperature_default, &
+             file_id, ndpp_material_lib, temperature_method, &
+             temperature_tolerance, master, num_groups, scatter_format, order)
       end do
 
       ! Close NDPP HDF5 file
       call file_close(file_id)
-
-    else
-      ! Create the NdppMaterials objects that we are going to need
-      allocate(ndpp_otf_materials(n_materials))
-      do i = 1, n_materials
-        call ndpp_otf_materials(i) % init(materials(i), nuclides, sab_tables)
-      end do
     end if
 
   end subroutine read_ndpp_materials

@@ -375,7 +375,6 @@ set(LIBOPENMC_FORTRAN_SRC
   src/multipole.F90
   src/multipole_header.F90
   src/ndpp_header.F90
-  src/ndpp_material_header.F90
   src/nuclide_header.F90
   src/output.F90
   src/particle_header.F90
