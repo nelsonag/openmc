@@ -38,7 +38,7 @@ module simulation
   use tally_derivative_header, only: tally_derivs
   use timer_header
   use trigger,         only: check_triggers
-  use tracking,        only: transport
+  use tracking,        only: transport, delta_transport
 
   implicit none
   private
@@ -107,7 +107,7 @@ contains
         call initialize_history(p, current_work)
 
         ! transport particle
-        call transport(p)
+        call delta_transport(p)
 
       end do PARTICLE_LOOP
 !$omp end parallel do

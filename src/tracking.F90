@@ -291,14 +291,13 @@ contains
     type(Particle), intent(inout) :: p
 
     integer :: j                      ! coordinate level
-    integer :: next_level             ! next coordinate level to check
     integer :: surface_crossed        ! surface which particle is on
     integer :: lattice_translation(3) ! in-lattice translation vector
     integer :: n_event                ! number of collisions/crossings
-    real(8) :: d_boundary             ! distance to nearest boundary
-    real(8) :: d_collision            ! sampled distance to collision
     real(8) :: distance               ! distance particle travels
     logical :: found_cell             ! found cell which particle is in?
+    real(8) :: majorant_xs            ! macroscopic majorant xs
+    type(Particle) :: virtual_p       ! Virtual particle for transport
 
     ! Display message if high verbosity or trace is on
     if (verbosity >= 9 .or. trace) then
@@ -324,6 +323,9 @@ contains
 
     ! Every particle starts with no accumulated flux derivative.
     if (active_tallies % size() > 0) call zero_flux_derivs()
+if (p % id == 9) then
+write(*,*) p % id
+end if
 
     EVENT_LOOP: do
       ! Store pre-collision particle properties
@@ -331,110 +333,119 @@ contains
       p % last_E   = p % E
       p % last_uvw = p % coord(1) % uvw
       p % last_xyz = p % coord(1) % xyz
+      if (.not. run_CE) p % g = p % last_g
 
-      ! If the cell hasn't been determined based on the particle's location,
-      ! initiate a search for the current cell. This generally happens at the
-      ! beginning of the history and again for any secondary particles
-      if (p % coord(p % n_coord) % cell == NONE) then
-        call find_cell(p, found_cell)
+      virtual_p % E = p % E
+      virtual_p % g = p % g
+      virtual_p % cell_instance = p % cell_instance
+      virtual_p % alive = p % alive
+      virtual_p % cell_born = p % cell_born
+      virtual_p % material = p % material
+      virtual_p % sqrtkT = p % sqrtkT
+
+      ! Calculate the majorant cross section
+      majorant_xs = get_majorant(p % E, p % g)
+
+      ! Find the collision site
+      TRANSPORT_LOOP: do
+        ! Reset Virtual Particle Position
+        virtual_p % n_coord = p % n_coord
+        do j = 1, p % n_coord
+          virtual_p % coord(j) % cell = p % coord(j) % cell
+          virtual_p % coord(j) % universe = p % coord(j) % universe
+          virtual_p % coord(j) % lattice = p % coord(j) % lattice
+          virtual_p % coord(j) % lattice_x = p % coord(j) % lattice_x
+          virtual_p % coord(j) % lattice_y = p % coord(j) % lattice_y
+          virtual_p % coord(j) % lattice_z = p % coord(j) % lattice_z
+          virtual_p % coord(j) % xyz = p % coord(j) % xyz
+          virtual_p % coord(j) % uvw = p % coord(j) % uvw
+          virtual_p % coord(j) % rotated = p % coord(j) % rotated
+        end do
+
+        ! Sample the distance to the next collision
+        if (majorant_xs == ZERO) then
+          distance = INFINITY
+        else
+          distance = -log(prn()) / majorant_xs
+        end if
+
+        ! Advance particle
+        do j = 1, virtual_p % n_coord
+          virtual_p % coord(j) % xyz = &
+               virtual_p % coord(j) % xyz + distance * &
+               virtual_p % coord(j) % uvw
+        end do
+
+        ! Initiate a search for the sampled cell. This generally happens at the
+        ! beginning of the history and again for any secondary particles
+        virtual_p % last_material = virtual_p % material
+        virtual_p % last_sqrtkT = virtual_p % sqrtkT
+        call find_cell(virtual_p, found_cell)
         if (.not. found_cell) then
           call fatal_error("Could not locate particle " // trim(to_str(p % id)))
         end if
 
-        ! set birth cell attribute
-        if (p % cell_born == NONE) p % cell_born = p % coord(p % n_coord) % cell
-      end if
+        ! Update the calculated cross sections
+!!! This could be optimized by only getting the macroscopic total, which is all
+!!! we care about for this step
+        if (run_CE) then
+          ! If the material is the same as the last material and the temperature
+          ! hasn't changed, we don't need to lookup cross sections again.
+          if (virtual_p % material /= virtual_p % last_material .or. &
+               virtual_p % sqrtkT /= virtual_p % last_sqrtkT) then
+            call calculate_xs(virtual_p)
+          end if
+        else
+          ! Since the MGXS can be angle dependent, this needs to be done
+          ! After every collision for the MGXS mode
+          if (virtual_p % material /= MATERIAL_VOID) then
+            ! Update the temperature index
+            call macro_xs(virtual_p % material) % &
+                 obj % find_temperature(virtual_p % sqrtkT)
+            ! Get the data
+            call macro_xs(virtual_p % material) % obj % calculate_xs( &
+                 virtual_p % g, virtual_p % coord(p % n_coord) % uvw, &
+                 material_xs)
+          else
+            material_xs % total      = ZERO
+            material_xs % absorption = ZERO
+            material_xs % nu_fission = ZERO
+          end if
+        end if
+
+        ! Use the material's total cross section to sample if this collision
+        ! occured
+        if (prn() * majorant_xs < material_xs % total) then
+          ! Then we are keeping this collision
+          exit TRANSPORT_LOOP
+        end if
+      end do TRANSPORT_LOOP
+
+      ! Store information from the collision
+      p % n_coord = virtual_p % n_coord
+      do j = 1, virtual_p % n_coord
+        p % coord(j) % cell = virtual_p % coord(j) % cell
+        p % coord(j) % universe = virtual_p % coord(j) % universe
+        p % coord(j) % lattice = virtual_p % coord(j) % lattice
+        p % coord(j) % lattice_x = virtual_p % coord(j) % lattice_x
+        p % coord(j) % lattice_y = virtual_p % coord(j) % lattice_y
+        p % coord(j) % lattice_z = virtual_p % coord(j) % lattice_z
+        p % coord(j) % xyz = virtual_p % coord(j) % xyz
+        p % coord(j) % uvw = virtual_p % coord(j) % uvw
+        p % coord(j) % rotated = virtual_p % coord(j) % rotated
+      end do
+      p % material = virtual_p % material
+      p % sqrtkT = virtual_p % sqrtkT
+
+      ! Set birth cell attribute
+      if (p % cell_born == NONE) p % cell_born = p % coord(p % n_coord) % cell
 
       ! Write particle track.
       if (p % write_track) call write_particle_track(p)
 
       if (check_overlaps) call check_cell_overlap(p)
 
-      ! Calculate microscopic and macroscopic cross sections
-      if (run_CE) then
-        ! If the material is the same as the last material and the temperature
-        ! hasn't changed, we don't need to lookup cross sections again.
-        if (p % material /= p % last_material .or. &
-             p % sqrtkT /= p % last_sqrtkT) call calculate_xs(p)
-      else
-        ! Since the MGXS can be angle dependent, this needs to be done
-        ! After every collision for the MGXS mode
-        if (p % material /= MATERIAL_VOID) then
-          ! Update the temperature index
-          call macro_xs(p % material) % obj % find_temperature(p % sqrtkT)
-          ! Get the data
-          call macro_xs(p % material) % obj % calculate_xs(p % g, &
-               p % coord(p % n_coord) % uvw, material_xs)
-        else
-          material_xs % total      = ZERO
-          material_xs % absorption = ZERO
-          material_xs % nu_fission = ZERO
-        end if
-
-        ! Finally, update the particle group while we have already checked for
-        ! if multi-group
-        p % last_g = p % g
-      end if
-
-      ! Sample a distance to collision
-      LOCATION_LOOP: do
-        if (material_xs % majorant == ZERO) then
-          d_collision = INFINITY
-        else
-          d_collision = -log(prn()) / material_xs % majorant
-        end if
-
-        ! Advance particle
-        !!! We dont want to actually move the particle; instead , I think, we
-        !!! want to just find what cell it would be in had it moved, and then
-        !!! figure out if that happened for real or not.  If it did happen,
-        !!! then we actually move the particle and all of that.
-        do j = 1, p % n_coord
-          p % coord(j) % xyz = p % coord(j) % xyz + distance * p % coord(j) % uvw
-        end do
-
-        ! Find the location of this particle
-        call find_cell(p, found_cell)
-        if (.not. found_cell) then
-          call fatal_error("Could not locate particle " // trim(to_str(p % id)))
-        end if
-
-        ! The collision certainly didnt happen in a void, so move on if we
-        ! are in a void
-        if (p % material == MATERIAL_VOID) then
-          cycle LOCATION_LOOP
-        end if
-
-        ! Calculate microscopic and macroscopic cross sections
-        if (run_CE) then
-          ! If the material is the same as the last material and the temperature
-          ! hasn't changed, we don't need to lookup cross sections again.
-          if (p % material /= p % last_material .or. &
-               p % sqrtkT /= p % last_sqrtkT) call calculate_xs(p)
-        else
-          ! Update the temperature index
-          call macro_xs(p % material) % obj % find_temperature(p % sqrtkT)
-          ! Get the data
-          call macro_xs(p % material) % obj % calculate_xs(p % g, &
-               p % coord(p % n_coord) % uvw, material_xs)
-          end if
-
-          ! Finally, update the particle group while we have already checked for
-          ! if multi-group
-          p % last_g = p % g
-        end if
-
-        ! Now perform rejection sampling on the collision event
-        if (prn() <= material_xs % total / material_xs % majorant) then
-          ! It counts!
-          exit LOCATION_LOOP
-        end if
-        ! Otherwise we will repeat this process
-        p % xyz = p % last_xyz
-
-      end do LOCATION_LOOP
-
-
+!!! ???
       ! Score track-length tallies
       if (active_tracklength_tallies % size() > 0) then
         call score_tracklength_tally(p, distance)
@@ -448,96 +459,69 @@ contains
 
       ! Score flux derivative accumulators for differential tallies.
       if (active_tallies % size() > 0) call score_track_derivative(p, distance)
+!!! END???
 
-      if (d_collision > d_boundary) then
-        ! ====================================================================
-        ! PARTICLE CROSSES SURFACE
+      ! ====================================================================
+      ! PARTICLE HAS COLLISION
 
-        if (next_level > 0) p % n_coord = next_level
-
-        ! Saving previous cell data
-        do j = 1, p % n_coord
-          p % last_cell(j) = p % coord(j) % cell
-        end do
-        p % last_n_coord = p % n_coord
-
-        p % coord(p % n_coord) % cell = NONE
-        if (any(lattice_translation /= 0)) then
-          ! Particle crosses lattice boundary
-          p % surface = NONE
-          call cross_lattice(p, lattice_translation)
-          p % event = EVENT_LATTICE
-        else
-          ! Particle crosses surface
-          p % surface = surface_crossed
-
-          call cross_surface(p)
-          p % event = EVENT_SURFACE
-        end if
-        ! Score cell to cell partial currents
-        if(active_surface_tallies % size() > 0) call score_surface_tally(p)
-      else
-        ! ====================================================================
-        ! PARTICLE HAS COLLISION
-
-        ! Score collision estimate of keff
-        if (run_mode == MODE_EIGENVALUE) then
-          global_tally_collision = global_tally_collision + p % wgt * &
-               material_xs % nu_fission / material_xs % total
-        end if
-
-        ! score surface current tallies -- this has to be done before the collision
-        ! since the direction of the particle will change and we need to use the
-        ! pre-collision direction to figure out what mesh surfaces were crossed
-
-        if (active_current_tallies % size() > 0) call score_surface_current(p)
-
-        ! Clear surface component
-        p % surface = NONE
-
-        if (run_CE) then
-          call collision(p)
-        else
-          call collision_mg(p)
-        end if
-
-        ! Score collision estimator tallies -- this is done after a collision
-        ! has occurred rather than before because we need information on the
-        ! outgoing energy for any tallies with an outgoing energy filter
-        if (active_collision_tallies % size() > 0) call score_collision_tally(p)
-        if (active_analog_tallies % size() > 0) call score_analog_tally(p)
-
-        ! Reset banked weight during collision
-        p % n_bank   = 0
-        p % wgt_bank = ZERO
-        p % n_delayed_bank(:) = 0
-
-        ! Reset fission logical
-        p % fission = .false.
-
-        ! Save coordinates for tallying purposes
-        p % last_xyz_current = p % coord(1) % xyz
-
-        ! Set last material to none since cross sections will need to be
-        ! re-evaluated
-        p % last_material = NONE
-
-        ! Set all uvws to base level -- right now, after a collision, only the
-        ! base level uvws are changed
-        do j = 1, p % n_coord - 1
-          if (p % coord(j + 1) % rotated) then
-            ! If next level is rotated, apply rotation matrix
-            p % coord(j + 1) % uvw = matmul(cells(p % coord(j) % cell) % &
-                 rotation_matrix, p % coord(j) % uvw)
-          else
-            ! Otherwise, copy this level's direction
-            p % coord(j + 1) % uvw = p % coord(j) % uvw
-          end if
-        end do
-
-        ! Score flux derivative accumulators for differential tallies.
-        if (active_tallies % size() > 0) call score_collision_derivative(p)
+      ! Score collision estimate of keff
+      if (run_mode == MODE_EIGENVALUE) then
+        global_tally_collision = global_tally_collision + p % wgt * &
+             material_xs % nu_fission / material_xs % total
       end if
+
+!!! ???
+      ! score surface current tallies -- this has to be done before the collision
+      ! since the direction of the particle will change and we need to use the
+      ! pre-collision direction to figure out what mesh surfaces were crossed
+
+      if (active_current_tallies % size() > 0) call score_surface_current(p)
+
+      ! Clear surface component
+      p % surface = NONE
+!!! END???
+      if (run_CE) then
+        call collision(p)
+      else
+        call collision_mg(p)
+      end if
+
+      ! Score collision estimator tallies -- this is done after a collision
+      ! has occurred rather than before because we need information on the
+      ! outgoing energy for any tallies with an outgoing energy filter
+      if (active_collision_tallies % size() > 0) call score_collision_tally(p)
+      if (active_analog_tallies % size() > 0) call score_analog_tally(p)
+
+      ! Reset banked weight during collision
+      p % n_bank   = 0
+      p % wgt_bank = ZERO
+      p % n_delayed_bank(:) = 0
+
+      ! Reset fission logical
+      p % fission = .false.
+!!! ???
+      ! Save coordinates for tallying purposes
+      p % last_xyz_current = p % coord(1) % xyz
+!!! ???
+      ! Set last material to none since cross sections will need to be
+      ! re-evaluated
+      p % last_material = NONE
+
+      ! Set all uvws to base level -- right now, after a collision, only the
+      ! base level uvws are changed
+      do j = 1, p % n_coord - 1
+        if (p % coord(j + 1) % rotated) then
+          ! If next level is rotated, apply rotation matrix
+          p % coord(j + 1) % uvw = matmul(cells(p % coord(j) % cell) % &
+               rotation_matrix, p % coord(j) % uvw)
+        else
+          ! Otherwise, copy this level's direction
+          p % coord(j + 1) % uvw = p % coord(j) % uvw
+        end if
+      end do
+
+      ! Score flux derivative accumulators for differential tallies.
+      if (active_tallies % size() > 0) call score_collision_derivative(p)
 
       ! If particle has too many events, display warning and kill it
       n_event = n_event + 1
@@ -561,6 +545,7 @@ contains
           exit EVENT_LOOP
         end if
       end if
+
     end do EVENT_LOOP
 
     ! Finish particle track output.
@@ -570,5 +555,19 @@ contains
     endif
 
   end subroutine delta_transport
+
+  function get_majorant(Ein, gin) result(majorant_xs)
+    real(8), intent(in) :: Ein
+    integer, intent(in) :: gin
+    real(8) :: majorant_xs
+
+    if (run_CE) then
+      majorant_xs = ONE
+    else
+      majorant_xs = ONE
+    end if
+
+
+  end function get_majorant
 
 end module tracking
