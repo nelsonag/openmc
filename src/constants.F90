@@ -9,7 +9,7 @@ module constants
 
   ! OpenMC major, minor, and release numbers
   integer, parameter :: VERSION_MAJOR   = 0
-  integer, parameter :: VERSION_MINOR   = 9
+  integer, parameter :: VERSION_MINOR   = 10
   integer, parameter :: VERSION_RELEASE = 0
   integer, parameter :: &
        VERSION(3) = [VERSION_MAJOR, VERSION_MINOR, VERSION_RELEASE]
@@ -43,9 +43,9 @@ module constants
   real(8), parameter :: TINY_BIT = 1e-8_8
 
   ! User for precision in geometry
-  real(8), parameter :: FP_PRECISION = 1e-14_8
-  real(8), parameter :: FP_REL_PRECISION = 1e-5_8
-  real(8), parameter :: FP_COINCIDENT = 1e-12_8
+  real(C_DOUBLE), bind(C, name='FP_PRECISION') :: FP_PRECISION = 1e-14_8
+  real(C_DOUBLE), bind(C, name='FP_REL_PRECISION') :: FP_REL_PRECISION = 1e-5_8
+  real(C_DOUBLE), bind(C, name='FP_COINCIDENT') :: FP_COINCIDENT = 1e-12_8
 
   ! Maximum number of collisions/crossings
   integer, parameter :: MAX_EVENTS = 1000000
@@ -95,11 +95,10 @@ module constants
   ! GEOMETRY-RELATED CONSTANTS
 
   ! Boundary conditions
-  integer, parameter ::  &
-       BC_TRANSMIT = 0,  & ! Transmission boundary condition (default)
-       BC_VACUUM   = 1,  & ! Vacuum boundary condition
-       BC_REFLECT  = 2,  & ! Reflecting boundary condition
-       BC_PERIODIC = 3     ! Periodic boundary condition
+  integer(C_INT), bind(C, name="BC_TRANSMIT") :: BC_TRANSMIT
+  integer(C_INT), bind(C, name="BC_VACUUM") :: BC_VACUUM
+  integer(C_INT), bind(C, name="BC_REFLECT") :: BC_REFLECT
+  integer(C_INT), bind(C, name="BC_PERIODIC") :: BC_PERIODIC
 
   ! Logical operators for cell definitions
   integer, parameter ::              &
@@ -218,6 +217,9 @@ module constants
        N_N3P   = 198, N_3N2PA = 199, N_5N2P = 200, N_P0    = 600, N_PC    = 649, &
        N_D0    = 650, N_DC    = 699, N_T0   = 700, N_TC    = 749, N_3HE0  = 750, &
        N_3HEC  = 799, N_A0    = 800, N_AC   = 849, N_2N0   = 875, N_2NC   = 891
+
+  ! Depletion reactions
+  integer, parameter :: DEPLETION_RX(6) = [N_2N, N_3N, N_4N, N_GAMMA, N_P, N_A]
 
   ! ACE table types
   integer, parameter :: &

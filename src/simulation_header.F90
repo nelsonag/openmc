@@ -13,17 +13,18 @@ module simulation_header
   ! GEOMETRY-RELATED VARIABLES
 
   ! Number of lost particles
-  integer :: n_lost_particles
+  integer :: n_lost_particles = 0
 
   real(8) :: log_spacing ! spacing on logarithmic grid
 
   ! ============================================================================
   ! SIMULATION VARIABLES
 
-  integer    :: current_batch     ! current batch
-  integer    :: current_gen       ! current generation within a batch
-  integer    :: total_gen     = 0 ! total number of generations simulated
+  integer :: current_batch     ! current batch
+  integer :: current_gen       ! current generation within a batch
+  integer :: total_gen     = 0 ! total number of generations simulated
   logical(C_BOOL), bind(C) :: simulation_initialized = .false.
+  logical :: need_depletion_rx ! need to calculate depletion reaction rx?
 
   ! ============================================================================
   ! TALLY PRECISION TRIGGER VARIABLES

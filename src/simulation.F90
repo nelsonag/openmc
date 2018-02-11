@@ -16,12 +16,13 @@ module simulation
 #ifdef _OPENMP
   use eigenvalue,      only: join_bank_from_threads
 #endif
-  use error,           only: fatal_error
+  use error,           only: fatal_error, write_message
   use geometry_header, only: n_cells
+  use material_header, only: n_materials, materials
   use message_passing
   use mgxs_header,     only: energy_bins, energy_bin_avg
   use nuclide_header,  only: micro_xs, n_nuclides
-  use output,          only: write_message, header, print_columns, &
+  use output,          only: header, print_columns, &
                              print_batch_keff, print_generation, print_runtime, &
                              print_results, print_overlap_check, write_tallies
   use particle_header, only: Particle
@@ -42,6 +43,7 @@ module simulation
 
   implicit none
   private
+  public :: openmc_next_batch
   public :: openmc_run
   public :: openmc_simulation_init
   public :: openmc_simulation_finalize
@@ -99,7 +101,7 @@ contains
 
       ! ====================================================================
       ! LOOP OVER PARTICLES
-!$omp parallel do schedule(static) firstprivate(p) copyin(tally_derivs)
+!$omp parallel do schedule(runtime) firstprivate(p) copyin(tally_derivs)
       PARTICLE_LOOP: do i_work = 1, work
         current_work = i_work
 
@@ -318,7 +320,7 @@ contains
 
   subroutine finalize_batch()
 
-#ifdef MPI
+#ifdef OPENMC_MPI
     integer :: mpi_err ! MPI error code
 #endif
 
@@ -340,7 +342,7 @@ contains
 
     ! Check_triggers
     if (master) call check_triggers()
-#ifdef MPI
+#ifdef OPENMC_MPI
     call MPI_BCAST(satisfy_triggers, 1, MPI_LOGICAL, 0, &
          mpi_intracomm, mpi_err)
 #endif
@@ -401,6 +403,7 @@ contains
 !===============================================================================
 
   subroutine openmc_simulation_init() bind(C)
+    integer :: i
 
     ! Skip if simulation has already been initialized
     if (simulation_initialized) return
@@ -418,6 +421,11 @@ contains
     ! Allocate tally results arrays if they're not allocated yet
     call configure_tallies()
 
+    ! Set up material nuclide index mapping
+    do i = 1, n_materials
+      call materials(i) % init_nuclide_index()
+    end do
+
 !$omp parallel
     ! Allocate array for microscopic cross section cache
     allocate(micro_xs(n_nuclides))
@@ -425,6 +433,13 @@ contains
     ! Allocate array for matching filter bins
     allocate(filter_matches(n_filters))
 !$omp end parallel
+
+    ! Reset global variables -- this is done before loading state point (as that
+    ! will potentially populate k_generation and entropy)
+    current_batch = 0
+    call k_generation % clear()
+    call entropy % clear()
+    need_depletion_rx = .false.
 
     ! If this is a restart run, load the state point data and binary source
     ! file
@@ -444,9 +459,6 @@ contains
       end if
     end if
 
-    ! Reset current batch
-    current_batch = 0
-
     ! Set flag indicating initialization is done
     simulation_initialized = .true.
 
@@ -459,20 +471,31 @@ contains
 
   subroutine openmc_simulation_finalize() bind(C)
 
-#ifdef MPI
-    integer    :: i       ! loop index for tallies
+    integer    :: i       ! loop index
+#ifdef OPENMC_MPI
     integer    :: n       ! size of arrays
     integer    :: mpi_err  ! MPI error code
+    integer    :: count_per_filter ! number of result values for one filter bin
     integer(8) :: temp
     real(8)    :: tempr(3) ! temporary array for communication
+#ifdef OPENMC_MPIF08
+    type(MPI_Datatype) :: result_block
+#else
+    integer :: result_block
+#endif
 #endif
 
     ! Skip if simulation was never run
     if (.not. simulation_initialized) return
 
-    ! Stop active batch timer
+    ! Stop active batch timer and start finalization timer
     call time_active % stop()
+    call time_finalize % start()
 
+    ! Free up simulation-specific memory
+    do i = 1, n_materials
+      deallocate(materials(i) % mat_nuclide_index)
+    end do
 !$omp parallel
     deallocate(micro_xs, filter_matches)
 !$omp end parallel
@@ -480,16 +503,22 @@ contains
     ! Increment total number of generations
     total_gen = total_gen + current_batch*gen_per_batch
 
-    ! Start finalization timer
-    call time_finalize % start()
-
-#ifdef MPI
+#ifdef OPENMC_MPI
     ! Broadcast tally results so that each process has access to results
     if (allocated(tallies)) then
       do i = 1, size(tallies)
-        n = size(tallies(i) % obj % results)
-        call MPI_BCAST(tallies(i) % obj % results, n, MPI_DOUBLE, 0, &
-             mpi_intracomm, mpi_err)
+        associate (results => tallies(i) % obj % results)
+          ! Create a new datatype that consists of all values for a given filter
+          ! bin and then use that to broadcast. This is done to minimize the
+          ! chance of the 'count' argument of MPI_BCAST exceeding 2**31
+          n = size(results, 3)
+          count_per_filter = size(results, 1) * size(results, 2)
+          call MPI_TYPE_CONTIGUOUS(count_per_filter, MPI_DOUBLE, &
+               result_block, mpi_err)
+          call MPI_TYPE_COMMIT(result_block, mpi_err)
+          call MPI_BCAST(results, n, result_block, 0, mpi_intracomm, mpi_err)
+          call MPI_TYPE_FREE(result_block, mpi_err)
+        end associate
       end do
     end if
 
@@ -526,7 +555,8 @@ contains
       if (check_overlaps) call print_overlap_check()
     end if
 
-    ! Reset initialization flag
+    ! Reset flags
+    need_depletion_rx = .false.
     simulation_initialized = .false.
 
   end subroutine openmc_simulation_finalize

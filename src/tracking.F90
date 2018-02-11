@@ -2,11 +2,10 @@ module tracking
 
   use constants
   use cross_section,      only: calculate_xs
-  use error,              only: fatal_error, warning
+  use error,              only: warning, write_message
   use geometry_header,    only: cells
-  use geometry,           only: find_cell, distance_to_boundary, cross_surface, &
-                                cross_lattice, check_cell_overlap
-  use output,             only: write_message
+  use geometry,           only: find_cell, distance_to_boundary, cross_lattice,&
+                                check_cell_overlap
   use message_passing
   use mgxs_header
   use nuclide_header
@@ -17,6 +16,7 @@ module tracking
   use settings
   use simulation_header
   use string,             only: to_str
+  use surface_header
   use tally_header
   use tally,              only: score_analog_tally, score_tracklength_tally, &
                                 score_collision_tally, score_surface_current, &
@@ -85,7 +85,9 @@ contains
       if (p % coord(p % n_coord) % cell == NONE) then
         call find_cell(p, found_cell)
         if (.not. found_cell) then
-          call fatal_error("Could not locate particle " // trim(to_str(p % id)))
+          call p % mark_as_lost("Could not find the cell containing" &
+                     // " particle " // trim(to_str(p %id)))
+          return
         end if
 
         ! set birth cell attribute
