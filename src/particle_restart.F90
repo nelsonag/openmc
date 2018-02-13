@@ -12,9 +12,9 @@ module particle_restart
   use particle_header,  only: Particle
   use random_lcg,       only: set_particle_seed
   use settings
+  use simulation,       only: init_transport, transport
   use simulation_header
   use tally_header,     only: n_tallies
-  use tracking,         only: transport
 
   use hdf5, only: HID_T
 
@@ -57,6 +57,8 @@ contains
     end select
 
     call set_particle_seed(particle_seed)
+
+    call init_transport(use_delta_tracking)
 
     ! Transport neutron
     call transport(p)

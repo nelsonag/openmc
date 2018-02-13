@@ -471,6 +471,18 @@ contains
       track_identifiers = reshape(temp_int_array, [3, n_tracks/3])
     end if
 
+    ! Tracking method
+    ! Find if a multi-group or continuous-energy simulation is desired
+    if (check_for_node(root, "tracking_method")) then
+      call get_node_value(root, "tracking_method", temp_str)
+      temp_str = trim(to_lower(temp_str))
+      if (temp_str == "standard") then
+        use_delta_tracking = .false.
+      else if (temp_str == "delta") then
+        use_delta_tracking = .true.
+      end if
+    end if
+
     ! Read meshes
     call get_node_list(root, "mesh", node_mesh_list)
 

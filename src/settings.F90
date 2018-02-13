@@ -12,9 +12,14 @@ module settings
   logical :: run_CE = .true.  ! Run in CE mode?
 
   ! ============================================================================
+  ! TRACKING METHOD INFORMATION
+  ! Whether delta or standard tracking is used
+  logical :: use_delta_tracking = .false.
+
+  ! ============================================================================
   ! CONTINUOUS-ENERGY CROSS SECTION RELATED VARIABLES
 
-  ! Unreoslved resonance probablity tables
+  ! Unresolved resonance probablity tables
   logical :: urr_ptables_on = .true.
 
   ! Default temperature and method for choosing temperatures

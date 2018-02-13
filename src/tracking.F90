@@ -30,10 +30,11 @@ module tracking
 contains
 
 !===============================================================================
-! TRANSPORT encompasses the main logic for moving a particle through geometry.
+! STANDARD_TRANSPORT encompasses the main logic for moving a particle through
+! geometry.
 !===============================================================================
 
-  subroutine transport(p)
+  subroutine standard_transport(p)
 
     type(Particle), intent(inout) :: p
 
@@ -279,7 +280,7 @@ contains
       call finalize_particle_track(p)
     endif
 
-  end subroutine transport
+  end subroutine standard_transport
 
 !===============================================================================
 ! DELTA_TRANSPORT encompasses the main logic for moving a particle through
@@ -326,9 +327,6 @@ contains
 
     ! Every particle starts with no accumulated flux derivative.
     if (active_tallies % size() > 0) call zero_flux_derivs()
-if (p % id == 9) then
-write(*,*) p % id
-end if
 
     EVENT_LOOP: do
       ! Store pre-collision particle properties
@@ -347,7 +345,8 @@ end if
       virtual_p % sqrtkT = p % sqrtkT
 
       ! Calculate the majorant cross section
-      majorant_xs = get_majorant(p % E, p % g)
+write(*,*) virtual_p % sqrtkT
+      majorant_xs = get_majorant(virtual_p)
 
       ! Find the collision site
       TRANSPORT_LOOP: do
@@ -391,29 +390,32 @@ end if
         ! Update the calculated cross sections
 !!! This could be optimized by only getting the macroscopic total, which is all
 !!! we care about for this step
-        if (run_CE) then
-          ! If the material is the same as the last material and the temperature
-          ! hasn't changed, we don't need to lookup cross sections again.
-          if (virtual_p % material /= virtual_p % last_material .or. &
-               virtual_p % sqrtkT /= virtual_p % last_sqrtkT) then
-            call calculate_xs(virtual_p)
+        if (virtual_p % material /= MATERIAL_VOID) then
+          if (run_CE) then
+            if (virtual_p % material /= virtual_p % last_material .or. &
+                 virtual_p % sqrtkT /= virtual_p % last_sqrtkT) then
+              ! If the material is the same as the last material and the
+              ! temperature hasn't changed, we don't need to lookup cross
+              ! sections again.
+              call materials(virtual_p % material) % calculate_xs( &
+                   virtual_p % E, virtual_p % sqrtkT, micro_xs, nuclides, &
+                   material_xs)
+            end if
+          else
+            ! Get the MG data
+            call macro_xs(virtual_p % material) % obj % calculate_xs( &
+                 virtual_p % g, virtual_p % sqrtkT, &
+                 virtual_p % coord(virtual_p % n_coord) % uvw, material_xs)
+
+            ! Finally, update the particle group while we have already checked
+            ! for if multi-group
+            virtual_p % last_g = virtual_p % g
           end if
         else
-          ! Since the MGXS can be angle dependent, this needs to be done
-          ! After every collision for the MGXS mode
-          if (virtual_p % material /= MATERIAL_VOID) then
-            ! Update the temperature index
-            call macro_xs(virtual_p % material) % &
-                 obj % find_temperature(virtual_p % sqrtkT)
-            ! Get the data
-            call macro_xs(virtual_p % material) % obj % calculate_xs( &
-                 virtual_p % g, virtual_p % coord(p % n_coord) % uvw, &
-                 material_xs)
-          else
-            material_xs % total      = ZERO
-            material_xs % absorption = ZERO
-            material_xs % nu_fission = ZERO
-          end if
+          material_xs % total      = ZERO
+          material_xs % absorption = ZERO
+          material_xs % fission    = ZERO
+          material_xs % nu_fission = ZERO
         end if
 
         ! Use the material's total cross section to sample if this collision
@@ -559,18 +561,251 @@ end if
 
   end subroutine delta_transport
 
-  function get_majorant(Ein, gin) result(majorant_xs)
-    real(8), intent(in) :: Ein
-    integer, intent(in) :: gin
-    real(8) :: majorant_xs
+  ! subroutine generate_majorant(E_grid, majorant_xs)
 
-    if (run_CE) then
-      majorant_xs = ONE
-    else
-      majorant_xs = ONE
-    end if
+  ! end subroutine generate_majorant
 
+  function get_majorant(p) result(xs)
+    type(Particle), intent(in) :: p
+
+    real(8) :: xs ! Majorant xs
+    integer :: i
+
+    ! Brute force find the maximum total cross section
+    xs = ZERO
+    do i = 1, size(materials)
+      if (run_CE) then
+        call materials(i) % calculate_xs( &
+             p % E, p % sqrtkT, micro_xs, nuclides, material_xs)
+      else
+        call macro_xs(i) % obj % calculate_xs( &
+             p % g, p % sqrtkT, p % coord(p % n_coord) % uvw, material_xs)
+      end if
+      xs = xs + material_xs % total
+    end do
 
   end function get_majorant
+
+
+!===============================================================================
+! CROSS_SURFACE handles all surface crossings, whether the particle leaks out of
+! the geometry, is reflected, or crosses into a new lattice or cell
+!===============================================================================
+
+  subroutine cross_surface(p)
+    type(Particle), intent(inout) :: p
+
+    real(8) :: u          ! x-component of direction
+    real(8) :: v          ! y-component of direction
+    real(8) :: w          ! z-component of direction
+    real(8) :: norm       ! "norm" of surface normal
+    real(8) :: xyz(3)     ! Saved global coordinate
+    integer :: i_surface  ! index in surfaces
+    logical :: rotational ! if rotational periodic BC applied
+    logical :: found      ! particle found in universe?
+    class(Surface), pointer :: surf
+    class(Surface), pointer :: surf2 ! periodic partner surface
+
+    i_surface = abs(p % surface)
+    surf => surfaces(i_surface)
+    if (verbosity >= 10 .or. trace) then
+      call write_message("    Crossing surface " // trim(to_str(surf % id())))
+    end if
+
+    if (surf % bc() == BC_VACUUM .and. (run_mode /= MODE_PLOTTING)) then
+      ! =======================================================================
+      ! PARTICLE LEAKS OUT OF PROBLEM
+
+      ! Kill particle
+      p % alive = .false.
+
+      ! Score any surface current tallies -- note that the particle is moved
+      ! forward slightly so that if the mesh boundary is on the surface, it is
+      ! still processed
+
+      if (active_current_tallies % size() > 0) then
+        ! TODO: Find a better solution to score surface currents than
+        ! physically moving the particle forward slightly
+
+        p % coord(1) % xyz = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
+        call score_surface_current(p)
+      end if
+
+      ! Score to global leakage tally
+      global_tally_leakage = global_tally_leakage + p % wgt
+
+      ! Display message
+      if (verbosity >= 10 .or. trace) then
+        call write_message("    Leaked out of surface " &
+             &// trim(to_str(surf % id())))
+      end if
+      return
+
+    elseif (surf % bc() == BC_REFLECT .and. (run_mode /= MODE_PLOTTING)) then
+      ! =======================================================================
+      ! PARTICLE REFLECTS FROM SURFACE
+
+      ! Do not handle reflective boundary conditions on lower universes
+      if (p % n_coord /= 1) then
+        call p % mark_as_lost("Cannot reflect particle " &
+             // trim(to_str(p % id)) // " off surface in a lower universe.")
+        return
+      end if
+
+      ! Score surface currents since reflection causes the direction of the
+      ! particle to change -- artificially move the particle slightly back in
+      ! case the surface crossing is coincident with a mesh boundary
+
+      if (active_current_tallies % size() > 0) then
+        xyz = p % coord(1) % xyz
+        p % coord(1) % xyz = p % coord(1) % xyz - TINY_BIT * p % coord(1) % uvw
+        call score_surface_current(p)
+        p % coord(1) % xyz = xyz
+      end if
+
+      ! Reflect particle off surface
+      call surf % reflect(p%coord(1)%xyz, p%coord(1)%uvw)
+
+      ! Make sure new particle direction is normalized
+      u = p%coord(1)%uvw(1)
+      v = p%coord(1)%uvw(2)
+      w = p%coord(1)%uvw(3)
+      norm = sqrt(u*u + v*v + w*w)
+      p%coord(1)%uvw(:) = [u, v, w] / norm
+
+      ! Reassign particle's cell and surface
+      p % coord(1) % cell = p % last_cell(p % last_n_coord)
+      p % surface = -p % surface
+
+      ! If a reflective surface is coincident with a lattice or universe
+      ! boundary, it is necessary to redetermine the particle's coordinates in
+      ! the lower universes.
+
+      p % n_coord = 1
+      call find_cell(p, found)
+      if (.not. found) then
+        call p % mark_as_lost("Couldn't find particle after reflecting&
+             & from surface " // trim(to_str(surf % id())) // ".")
+        return
+      end if
+
+      ! Set previous coordinate going slightly past surface crossing
+      p % last_xyz_current = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
+
+      ! Diagnostic message
+      if (verbosity >= 10 .or. trace) then
+        call write_message("    Reflected from surface " &
+             &// trim(to_str(surf%id())))
+      end if
+      return
+    elseif (surf % bc() == BC_PERIODIC .and. run_mode /= MODE_PLOTTING) then
+      ! =======================================================================
+      ! PERIODIC BOUNDARY
+
+      ! Do not handle periodic boundary conditions on lower universes
+      if (p % n_coord /= 1) then
+        call p % mark_as_lost("Cannot transfer particle " &
+             // trim(to_str(p % id)) // " across surface in a lower universe.&
+             & Boundary conditions must be applied to universe 0.")
+        return
+      end if
+
+      ! Score surface currents since reflection causes the direction of the
+      ! particle to change -- artificially move the particle slightly back in
+      ! case the surface crossing is coincident with a mesh boundary
+      if (active_current_tallies % size() > 0) then
+        xyz = p % coord(1) % xyz
+        p % coord(1) % xyz = p % coord(1) % xyz - TINY_BIT * p % coord(1) % uvw
+        call score_surface_current(p)
+        p % coord(1) % xyz = xyz
+      end if
+
+      ! Get a pointer to the partner periodic surface.  Offset the index to
+      ! correct for C vs. Fortran indexing.
+      surf2 => surfaces(surf % i_periodic() + 1)
+
+      ! Adjust the particle's location and direction.
+      rotational = surf2 % periodic_translate(surf, p % coord(1) % xyz, &
+                                              p % coord(1) % uvw)
+
+      ! Reassign particle's surface
+      if (rotational) then
+        p % surface = surf % i_periodic() + 1
+      else
+        p % surface = sign(surf % i_periodic() + 1, p % surface)
+      end if
+
+      ! Figure out what cell particle is in now
+      p % n_coord = 1
+      call find_cell(p, found)
+      if (.not. found) then
+        call p % mark_as_lost("Couldn't find particle after hitting &
+             &periodic boundary on surface " // trim(to_str(surf % id())) &
+             // ".")
+        return
+      end if
+
+      ! Set previous coordinate going slightly past surface crossing
+      p % last_xyz_current = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
+
+      ! Diagnostic message
+      if (verbosity >= 10 .or. trace) then
+        call write_message("    Hit periodic boundary on surface " &
+             // trim(to_str(surf%id())))
+      end if
+      return
+    end if
+
+    ! ==========================================================================
+    ! SEARCH NEIGHBOR LISTS FOR NEXT CELL
+
+    if (p % surface > 0 .and. allocated(surf%neighbor_pos)) then
+      ! If coming from negative side of surface, search all the neighboring
+      ! cells on the positive side
+
+      call find_cell(p, found, surf%neighbor_pos)
+      if (found) return
+
+    elseif (p % surface < 0  .and. allocated(surf%neighbor_neg)) then
+      ! If coming from positive side of surface, search all the neighboring
+      ! cells on the negative side
+
+      call find_cell(p, found, surf%neighbor_neg)
+      if (found) return
+
+    end if
+
+    ! ==========================================================================
+    ! COULDN'T FIND PARTICLE IN NEIGHBORING CELLS, SEARCH ALL CELLS
+
+    ! Remove lower coordinate levels and assignment of surface
+    p % surface = NONE
+    p % n_coord = 1
+    call find_cell(p, found)
+
+    if (run_mode /= MODE_PLOTTING .and. (.not. found)) then
+      ! If a cell is still not found, there are two possible causes: 1) there is
+      ! a void in the model, and 2) the particle hit a surface at a tangent. If
+      ! the particle is really traveling tangent to a surface, if we move it
+      ! forward a tiny bit it should fix the problem.
+
+      p % n_coord = 1
+      p % coord(1) % xyz = p % coord(1) % xyz + TINY_BIT * p % coord(1) % uvw
+      call find_cell(p, found)
+
+      ! Couldn't find next cell anywhere! This probably means there is an actual
+      ! undefined region in the geometry.
+
+      if (.not. found) then
+        call p % mark_as_lost("After particle " // trim(to_str(p % id)) &
+             // " crossed surface " // trim(to_str(surf % id())) &
+             // " it could not be located in any cell and it did not leak.")
+        return
+      end if
+    end if
+
+  end subroutine cross_surface
+
+
 
 end module tracking

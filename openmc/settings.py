@@ -12,6 +12,7 @@ from openmc import VolumeCalculation, Source, Mesh
 
 _RUN_MODES = ['eigenvalue', 'fixed source', 'plot', 'volume', 'particle restart']
 _RES_SCAT_METHODS = ['dbrc', 'wcm', 'ares']
+_TRACKING_METHODS = ['standard', 'delta']
 
 
 class Settings(object):
@@ -133,6 +134,9 @@ class Settings(object):
         Specify particles for which track files should be written. Each particle
         is identified by a triplet with the batch number, generation number, and
         particle number.
+    tracking_method : {'standard', or 'delta'}
+        Whether to use standard tracking, or the delta/Woodcock/hole tracking
+        methodology
     trigger_active : bool
         Indicate whether tally triggers are used
     trigger_batch_interval : int
@@ -198,6 +202,8 @@ class Settings(object):
 
         self._trace = None
         self._track = None
+
+        self._tracking_method = None
 
         self._tabular_legendre = {}
 
@@ -327,6 +333,10 @@ class Settings(object):
     @property
     def track(self):
         return self._track
+
+    @property
+    def tracking_method(self):
+        return self._tracking_method
 
     @property
     def cutoff(self):
@@ -625,6 +635,11 @@ class Settings(object):
             cv.check_greater_than('track particle', t[0], 0)
         self._track = track
 
+    @tracking_method.setter
+    def tracking_method(self, tracking_method):
+        cv.check_value('tracking method', tracking_method, _TRACKING_METHODS)
+        self._tracking_method = tracking_method
+
     @ufs_mesh.setter
     def ufs_mesh(self, ufs_mesh):
         cv.check_type('UFS mesh', ufs_mesh, Mesh)
@@ -877,6 +892,11 @@ class Settings(object):
             element = ET.SubElement(root, "track")
             element.text = ' '.join(map(str, self._track))
 
+    def _create_tracking_method_subelement(self, root):
+        if self._tracking_method is not None:
+            element = ET.SubElement(root, "tracking_method")
+            element.text = str(self._tracking_method)
+
     def _create_ufs_mesh_subelement(self, root):
         if self.ufs_mesh is not None:
             # See if a <mesh> element already exists -- if not, add it
@@ -957,6 +977,7 @@ class Settings(object):
         self._create_temperature_subelements(root_element)
         self._create_trace_subelement(root_element)
         self._create_track_subelement(root_element)
+        self._create_tracking_method_subelement(root_element)
         self._create_ufs_mesh_subelement(root_element)
         self._create_resonance_scattering_subelement(root_element)
         self._create_volume_calcs_subelement(root_element)

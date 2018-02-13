@@ -401,7 +401,7 @@ contains
                + f*(xs % value(i_grid - xs % threshold + 2)))
         end associate
       end do
-write(*,*) p % material, p % E, p % mu
+
       ! Perform collision physics for inelastic scattering
       call inelastic_scatter(nuc, nuc%reactions(i), p)
       p % event_MT = nuc % reactions(i) % MT

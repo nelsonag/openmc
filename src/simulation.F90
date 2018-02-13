@@ -39,7 +39,7 @@ module simulation
   use tally_derivative_header, only: tally_derivs
   use timer_header
   use trigger,         only: check_triggers
-  use tracking,        only: transport, delta_transport
+  use tracking,        only: standard_transport, delta_transport
 
   implicit none
   private
@@ -47,6 +47,17 @@ module simulation
   public :: openmc_run
   public :: openmc_simulation_init
   public :: openmc_simulation_finalize
+  public :: init_transport
+  public :: transport
+
+  procedure(init_transport_), pointer :: transport => null()
+
+  abstract interface
+    subroutine init_transport_(p)
+      import Particle
+      type(Particle), intent(inout) :: p
+    end subroutine init_transport_
+  end interface
 
 contains
 
@@ -109,7 +120,7 @@ contains
         call initialize_history(p, current_work)
 
         ! transport particle
-        call delta_transport(p)
+        call transport(p)
 
       end do PARTICLE_LOOP
 !$omp end parallel do
@@ -459,6 +470,8 @@ contains
       end if
     end if
 
+    call init_transport(use_delta_tracking)
+
     ! Set flag indicating initialization is done
     simulation_initialized = .true.
 
@@ -652,5 +665,21 @@ contains
     end if
 
   end subroutine allocate_banks
+
+
+!===============================================================================
+! INIT_TRANSPORT selects the use of delta or standard transport methods based
+! on the user's input
+!===============================================================================
+
+  subroutine init_transport(use_delta_tracking)
+    logical, intent(in) :: use_delta_tracking
+
+    if (use_delta_tracking) then
+      transport => delta_transport
+    else
+      transport => standard_transport
+    end if
+  end subroutine init_transport
 
 end module simulation
