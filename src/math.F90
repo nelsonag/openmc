@@ -17,31 +17,31 @@ module math
          result(z)
       use ISO_C_BINDING
       implicit none
-      real(C_DOUBLE), intent(in) :: p
-      real(C_DOUBLE)             :: z
+      real(C_DOUBLE), value, intent(in) :: p
+      real(C_DOUBLE) :: z
     end function normal_percentile_cc
 
     pure function t_percentile_cc(p, df) bind(C, name='t_percentile_c') &
          result(t)
       use ISO_C_BINDING
       implicit none
-      real(C_DOUBLE), intent(in) :: p
-      integer(C_INT), intent(in) :: df
-      real(C_DOUBLE)             :: t
+      real(C_DOUBLE), value, intent(in) :: p
+      integer(C_INT), value, intent(in) :: df
+      real(C_DOUBLE) :: t
     end function t_percentile_cc
 
     pure function calc_pn_cc(n, x) bind(C, name='calc_pn_c') result(pnx)
       use ISO_C_BINDING
       implicit none
-      integer(C_INT), intent(in) :: n
-      real(C_DOUBLE), intent(in) :: x
-      real(C_DOUBLE)             :: pnx
+      integer(C_INT), value, intent(in) :: n
+      real(C_DOUBLE), value, intent(in) :: x
+      real(C_DOUBLE) :: pnx
     end function calc_pn_cc
 
     subroutine calc_rn_cc(n, uvw, rn) bind(C, name='calc_rn_c')
       use ISO_C_BINDING
       implicit none
-      integer(C_INT), intent(in) :: n
+      integer(C_INT), value, intent(in) :: n
       real(C_DOUBLE), intent(in) :: uvw(3)
       real(C_DOUBLE), intent(in) :: rn(2 * n + 1)
     end subroutine calc_rn_cc
@@ -50,17 +50,17 @@ module math
          bind(C, name='evaluate_legendre_c') result(val)
       use ISO_C_BINDING
       implicit none
-      integer(C_INT), intent(in) :: n
+      integer(C_INT), value, intent(in) :: n
       real(C_DOUBLE), intent(in) :: data(n)
-      real(C_DOUBLE), intent(in) :: x
-      real(C_DOUBLE)             :: val
+      real(C_DOUBLE), value, intent(in) :: x
+      real(C_DOUBLE) :: val
     end function evaluate_legendre_cc
 
     subroutine rotate_angle_cc(uvw, mu, phi) bind(C, name='rotate_angle_c')
       use ISO_C_BINDING
       implicit none
       real(C_DOUBLE), intent(inout) :: uvw(3)
-      real(C_DOUBLE), intent(in)    :: mu
+      real(C_DOUBLE), value, intent(in)    :: mu
       real(C_DOUBLE), optional, intent(in) :: phi
     end subroutine rotate_angle_cc
 
@@ -68,23 +68,23 @@ module math
          result(E_out)
       use ISO_C_BINDING
       implicit none
-      real(C_DOUBLE), intent(in) :: T
-      real(C_DOUBLE)             :: E_out
+      real(C_DOUBLE), value, intent(in) :: T
+      real(C_DOUBLE) :: E_out
     end function maxwell_spectrum_cc
 
     function watt_spectrum_cc(a, b) bind(C, name='watt_spectrum_c') &
          result(E_out)
       use ISO_C_BINDING
       implicit none
-      real(C_DOUBLE), intent(in) :: a
-      real(C_DOUBLE), intent(in) :: b
-      real(C_DOUBLE)             :: E_out
+      real(C_DOUBLE), value, intent(in) :: a
+      real(C_DOUBLE), value, intent(in) :: b
+      real(C_DOUBLE) :: E_out
     end function watt_spectrum_cc
 
     function faddeeva_cc(z) bind(C, name='faddeeva_c') result(wv)
       use ISO_C_BINDING
       implicit none
-      complex(C_DOUBLE_COMPLEX), intent(in) :: z
+      complex(C_DOUBLE_COMPLEX), value, intent(in) :: z
       complex(C_DOUBLE_COMPLEX) :: wv
     end function faddeeva_cc
 
@@ -93,8 +93,8 @@ module math
            result(wv)
       use ISO_C_BINDING
       implicit none
-      complex(C_DOUBLE_COMPLEX), intent(in) :: z
-      integer(C_INT),            intent(in) :: order
+      complex(C_DOUBLE_COMPLEX), value, intent(in) :: z
+      integer(C_INT), value,            intent(in) :: order
       complex(C_DOUBLE_COMPLEX) :: wv
     end function w_derivative_cc
 
@@ -102,9 +102,9 @@ module math
            bind(C, name='broaden_wmp_polynomials_c')
       use ISO_C_BINDING
       implicit none
-      real(C_DOUBLE), intent(in) :: E
-      real(C_DOUBLE), intent(in) :: dopp
-      integer(C_INT), intent(in) :: n
+      real(C_DOUBLE), value, intent(in) :: E
+      real(C_DOUBLE), value, intent(in) :: dopp
+      integer(C_INT), value, intent(in) :: n
       real(C_DOUBLE), intent(inout) :: factors(n)
     end subroutine broaden_wmp_polynomials_cc
 

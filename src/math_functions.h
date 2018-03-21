@@ -5,9 +5,6 @@
 #include <complex>
 #include <vector>
 
-// #include <gsl/gsl_sf_legendre.h>
-// #include <gsl/gsl_cdf.h>
-
 #include "random_lcg.h"
 #include "faddeeva/Faddeeva.hh"
 
