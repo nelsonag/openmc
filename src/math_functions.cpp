@@ -1,13 +1,5 @@
 #include "math_functions.h"
 
-// #include <cmath>
-// #include <complex>
-// #include <vector>
-
-// #include "random_lcg.h"
-// #include "faddeeva/Faddeeva.hh"
-
-
 namespace openmc {
 
 
@@ -119,7 +111,7 @@ double __attribute__ ((const)) t_percentile_c(double p, int df){
 // CALC_PN calculates the n-th order Legendre polynomial at the value of x.
 //==============================================================================
 
-double __attribute__ ((const)) calc_pn_c(int n, double x){
+double __attribute__ ((const)) calc_pn_c(int n, double x) {
 
   // return gsl_sf_legendre_Pl(l, x);
 

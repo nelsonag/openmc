@@ -2,9 +2,6 @@ module math
 
   use, intrinsic :: ISO_C_BINDING
 
-  use constants
-  use random_lcg, only: prn
-
   implicit none
 
 !===============================================================================
@@ -13,13 +10,6 @@ module math
 !===============================================================================
 
   interface
-    pure function normal_percentile_cc(p) bind(C, name='normal_percentile_c') &
-         result(z)
-      use ISO_C_BINDING
-      implicit none
-      real(C_DOUBLE), value, intent(in) :: p
-      real(C_DOUBLE) :: z
-    end function normal_percentile_cc
 
     pure function t_percentile_cc(p, df) bind(C, name='t_percentile_c') &
          result(t)
@@ -113,20 +103,6 @@ module math
 contains
 
 !===============================================================================
-! NORMAL_PERCENTILE calculates the percentile of the standard normal
-! distribution with a specified probability level
-!===============================================================================
-
-  elemental function normal_percentile(p) result(z)
-
-    real(8), intent(in) :: p ! probability level
-    real(8)             :: z ! corresponding z-value
-
-    z = normal_percentile_cc(p)
-
-  end function normal_percentile
-
-!===============================================================================
 ! T_PERCENTILE calculates the percentile of the Student's t distribution with a
 ! specified probability level and number of degrees of freedom
 !===============================================================================
@@ -146,9 +122,8 @@ contains
 ! Since this function is called repeatedly during the neutron transport process,
 ! neither n or x is checked to see if they are in the applicable range.
 ! This is left to the client developer to use where applicable. x is to be in
-! the domain of [-1,1], and 0<=n<=5. If x is outside of the range, the return
-! value will be outside the expected range; if n is outside the stated range,
-! the return value will be 1.0.
+! the domain of [-1,1], and 0<=n<=10. If x is outside of the range, the return
+! value will be outside the expected range.
 !===============================================================================
 
   elemental function calc_pn(n,x) result(pnx)

@@ -3,7 +3,6 @@
 
 #include <cmath>
 #include <complex>
-#include <vector>
 
 #include "random_lcg.h"
 #include "faddeeva/Faddeeva.hh"
