@@ -608,7 +608,7 @@ void rotate_angle_c(double uvw[3], double mu, double phi) {
   w0 = uvw[2];
 
   // Sample azimuthal angle in [0,2pi) if none provided
-  if (phi != -2.) {
+  if (phi != -10.) {
     phi_ = phi;
   } else {
     phi_ = 2. * M_PI * prn();

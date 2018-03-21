@@ -53,7 +53,7 @@ extern "C" double evaluate_legendre_c(int n, double data[], double x)
 // with direct sampling rather than rejection as is done in MCNP and SERPENT.
 //==============================================================================
 
-extern "C" void rotate_angle_c(double uvw[3], double mu, double phi = -2.);
+extern "C" void rotate_angle_c(double uvw[3], double mu, double phi = -10.);
 
 //==============================================================================
 // MAXWELL_SPECTRUM samples an energy from the Maxwell fission distribution

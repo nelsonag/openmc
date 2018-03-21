@@ -61,7 +61,7 @@ module math
       implicit none
       real(C_DOUBLE), intent(inout) :: uvw(3)
       real(C_DOUBLE), value, intent(in)    :: mu
-      real(C_DOUBLE), optional, intent(in) :: phi
+      real(C_DOUBLE), value, intent(in) :: phi
     end subroutine rotate_angle_cc
 
     function maxwell_spectrum_cc(T) bind(C, name='maxwell_spectrum_c') &
@@ -206,7 +206,7 @@ contains
     if (present(phi)) then
       call rotate_angle_cc(uvw, mu, phi)
     else
-      call rotate_angle_cc(uvw, mu)
+      call rotate_angle_cc(uvw, mu, -10._8)
     end if
 
   end function rotate_angle
