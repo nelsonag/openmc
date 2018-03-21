@@ -324,7 +324,7 @@ endif()
 # Build faddeeva library
 #===============================================================================
 
-add_library(faddeeva STATIC src/faddeeva/Faddeeva.c)
+add_library(faddeeva STATIC src/faddeeva/Faddeeva.hh src/faddeeva/Faddeeva.cc)
 
 #===============================================================================
 # List source files.  Define the libopenmc and the OpenMC executable
@@ -434,6 +434,8 @@ set(LIBOPENMC_FORTRAN_SRC
 set(LIBOPENMC_CXX_SRC
   src/error.h
   src/hdf5_interface.h
+  src/math_functions.cpp
+  src/math_functions.h
   src/random_lcg.cpp
   src/random_lcg.h
   src/surface.cpp

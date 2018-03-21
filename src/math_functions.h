@@ -1,9 +1,16 @@
 #ifndef MATH_FUNCTIONS_H
 #define MATH_FUNCTIONS_H
 
+#include <cmath>
 #include <complex>
+#include <vector>
 
-#include <faddeeva/Faddeeva.h>
+// #include <gsl/gsl_sf_legendre.h>
+// #include <gsl/gsl_cdf.h>
+
+#include "random_lcg.h"
+#include "faddeeva/Faddeeva.hh"
+
 
 namespace openmc {
 
@@ -13,34 +20,34 @@ namespace openmc {
 // distribution with a specified probability level
 //==============================================================================
 
-double normal_percentile_c(double p) __attribute__ ((const));
+extern "C" double normal_percentile_c(double p) __attribute__ ((const));
 
 //==============================================================================
 // T_PERCENTILE calculates the percentile of the Student's t distribution with
 // a specified probability level and number of degrees of freedom
 //==============================================================================
 
-double t_percentile_c(double p, int df) __attribute__ ((const));
+extern "C" double t_percentile_c(double p, int df) __attribute__ ((const));
 
 //==============================================================================
 // CALC_PN calculates the n-th order Legendre polynomial at the value of x.
 //==============================================================================
 
-double calc_pn_c(int n, double x) __attribute__ ((const));
+extern "C" double calc_pn_c(int n, double x) __attribute__ ((const));
 
 //==============================================================================
 // CALC_RN calculates the n-th order spherical harmonics for a given angle
 // (in terms of (u,v,w)).  All Rn,m values are provided (where -n<=m<=n)
 //==============================================================================
 
-void calc_rn_c(int n, double uvw[3], double rn[]);
+extern "C" void calc_rn_c(int n, double uvw[3], double rn[]);
 
 //==============================================================================
 // EVALUATE_LEGENDRE Find the value of f(x) given a set of Legendre coefficients
 // and the value of x
 //==============================================================================
 
-double evaluate_legendre_c(int n, double data[], double x)
+extern "C" double evaluate_legendre_c(int n, double data[], double x)
      __attribute__ ((const));
 
 //==============================================================================
@@ -49,7 +56,7 @@ double evaluate_legendre_c(int n, double data[], double x)
 // with direct sampling rather than rejection as is done in MCNP and SERPENT.
 //==============================================================================
 
-double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.);
+extern "C" void rotate_angle_c(double uvw[3], double mu, double phi = -2.);
 
 //==============================================================================
 // MAXWELL_SPECTRUM samples an energy from the Maxwell fission distribution
@@ -58,7 +65,7 @@ double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.);
 // This PDF can be sampled using rule C64 in the Monte Carlo Sampler LA-9721-MS.
 //==============================================================================
 
-double maxwell_spectrum_c(double T);
+extern "C" double maxwell_spectrum_c(double T);
 
 //==============================================================================
 // WATT_SPECTRUM samples the outgoing energy from a Watt energy-dependent
@@ -69,22 +76,22 @@ double maxwell_spectrum_c(double T);
 // MC lectures).
 //==============================================================================
 
-double watt_spectrum_c(double a, double b);
+extern "C" double watt_spectrum_c(double a, double b);
 
 //==============================================================================
 // FADDEEVA the Faddeeva function, using Stephen Johnson's implementation
 //==============================================================================
 
-complex<double> faddeeva_c(complex<double> z);
+extern "C" std::complex<double> faddeeva_c(std::complex<double> z);
 
-complex<double> w_derivative_c(complex<double> z, int order);
+extern "C" std::complex<double> w_derivative_c(std::complex<double> z, int order);
 
 //==============================================================================
 // BROADEN_WMP_POLYNOMIALS Doppler broadens the windowed multipole curvefit.
 // The curvefit is a polynomial of the form a/E + b/sqrt(E) + c + d sqrt(E) ...
 //==============================================================================
 
-void broaden_wmp_polynomials_c(double E, double dopp, int n, double factors[]);
+extern "C" void broaden_wmp_polynomials_c(double E, double dopp, int n, double factors[]);
 
 } // namespace openmc
 #endif // MATH_FUNCTIONS_H

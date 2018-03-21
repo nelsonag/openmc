@@ -4,10 +4,11 @@
 #include <complex>
 #include <vector>
 
-#include <gsl/gsl_sf_legendre.h>
-#include <gsl/gsl_cdf.h>
+// #include <gsl/gsl_sf_legendre.h>
+// #include <gsl/gsl_cdf.h>
 
-#include "faddeeva/Faddeeva.h"
+#include "random_lcg.h"
+#include "faddeeva/Faddeeva.hh"
 
 
 namespace openmc {
@@ -26,17 +27,17 @@ double __attribute__ ((const)) normal_percentile_c(double p) {
   double q;
   double r;
   const double p_low = 0.02425;
-  const double a[6] = [-3.969683028665376e1, 2.209460984245205e2,
+  const double a[6] = {-3.969683028665376e1, 2.209460984245205e2,
                        -2.759285104469687e2, 1.383577518672690e2,
-                       -3.066479806614716e1, 2.506628277459239e0];
-  const double b[5] = [-5.447609879822406e1, 1.615858368580409e2,
+                       -3.066479806614716e1, 2.506628277459239e0};
+  const double b[5] = {-5.447609879822406e1, 1.615858368580409e2,
                        -1.556989798598866e2, 6.680131188771972e1,
-                       -1.328068155288572e1];
-  const double c[6] = [-7.784894002430293e-3, -3.223964580411365e-1,
+                       -1.328068155288572e1};
+  const double c[6] = {-7.784894002430293e-3, -3.223964580411365e-1,
                        -2.400758277161838, -2.549732539343734,
-                       4.374664141464968, 2.938163982698783];
-  const double d[4] = [7.784695709041462e-3, 3.224671290700398e-1,
-                       2.445134137142996, 3.754408661907416];
+                       4.374664141464968, 2.938163982698783};
+  const double d[4] = {7.784695709041462e-3, 3.224671290700398e-1,
+                       2.445134137142996, 3.754408661907416};
 
   // The rational approximation used here is from an unpublished work at
   // http://home.online.no/~pjacklam/notes/invnorm/
@@ -44,22 +45,22 @@ double __attribute__ ((const)) normal_percentile_c(double p) {
   if (p < p_low) {
     // Rational approximation for lower region.
 
-    q = std::sqrt(-2.0 * std::log(p))
+    q = std::sqrt(-2.0 * std::log(p));
     z = (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0);
 
   } else if (p <= 1.0 - p_low) {
     // Rational approximation for central region
 
-    q = p - 0.5
-    r = q*q
+    q = p - 0.5;
+    r = q*q;
     z = (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5])*q /
          (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1.0);
 
   } else {
     // Rational approximation for upper region
 
-    q = std::sqrt(-2.0*std::log(1.0 - p))
+    q = std::sqrt(-2.0*std::log(1.0 - p));
     z = -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0);
   }
@@ -178,13 +179,10 @@ double __attribute__ ((const)) calc_pn_c(int n, double x){
 //==============================================================================
 
 void calc_rn_c(int n, double uvw[3], double rn[]){
-  int 2np1;
   double phi;
   double w;
   double w2m1;
 
-  // Set the size of the return array given n
-  2np1 = 2 * n + 1
   // rn[] is assumed to have already been allocated to the correct size
 
   // Store the cosine of the polar angle and the azimuthal angle
@@ -586,7 +584,7 @@ double __attribute__ ((const)) evaluate_legendre_c(int n, double data[],
 
   val = 0.5 * data[0];
   for (int l = 1; l < n; l++) {
-    val += (static_cast<double>(l) + 0.5) * data[l] * calc_pn(l, x);
+    val += (static_cast<double>(l) + 0.5) * data[l] * calc_pn_c(l, x);
   }
 
 }
@@ -597,25 +595,23 @@ double __attribute__ ((const)) evaluate_legendre_c(int n, double data[],
 // with direct sampling rather than rejection as is done in MCNP and SERPENT.
 //==============================================================================
 
-double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.) {
+void rotate_angle_c(double uvw[3], double mu, double phi) {
   double phi_;   // azimuthal angle
   double sinphi; // sine of azimuthal angle
-  double std::cosphi; // std::cosine of azimuthal angle
+  double cosphi; // cosine of azimuthal angle
   double a;      // sqrt(1 - mu^2)
   double b;      // sqrt(1 - w^2)
   double u0;     // original std::cosine in x direction
   double v0;     // original std::cosine in y direction
   double w0;     // original std::cosine in z direction
 
-  double uvw[3]; // return value
-
   // Copy original directional std::cosines
-  u0 = uvw0[0];
-  v0 = uvw0[1];
-  w0 = uvw0[2];
+  u0 = uvw[0];
+  v0 = uvw[1];
+  w0 = uvw[2];
 
   // Sample azimuthal angle in [0,2pi) if none provided
-  if (phi /= -2.) {
+  if (phi != -2.) {
     phi_ = phi;
   } else {
     phi_ = 2. * M_PI * prn();
@@ -623,9 +619,9 @@ double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.) {
 
   // Precompute factors to save flops
   sinphi = std::sin(phi_);
-  std::cosphi = std::cos(phi_);
-  a = std::sqrt(max(0., 1. - mu * mu));
-  b = std::sqrt(max(0., 1. - w0 * w0));
+  cosphi = std::cos(phi_);
+  a = std::sqrt(std::max(0., 1. - mu * mu));
+  b = std::sqrt(std::max(0., 1. - w0 * w0));
 
   // Need to treat special case where sqrt(1 - w**2) is close to zero by
   // expanding about the v component rather than the w component
@@ -634,13 +630,11 @@ double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.) {
     uvw[1] = mu * v0 + a * (v0 * w0 * cosphi + u0 * sinphi) / b;
     uvw[2] = mu * w0 - a * b * cosphi;
   } else {
-    b = std::sqrt(ONE - v0 * v0);
+    b = std::sqrt(1. - v0 * v0);
     uvw[0] = mu * u0 + a * (u0 * v0 * cosphi + w0 * sinphi) / b;
     uvw[1] = mu * v0 - a * b * cosphi;
     uvw[2] = mu * w0 + a * (v0 * w0 * cosphi - u0 * sinphi) / b;
   }
-
-  return uvw;
 }
 
 //==============================================================================
@@ -653,8 +647,10 @@ double* rotate_angle_c(double uvw0[3], double mu, double phi = -2.) {
 double maxwell_spectrum_c(double T) {
   double E_out; // Sampled Energy
 
-  double r1, r2, r2;  // random numbers
-  double c;           // cosine of pi/2*r3
+  double r1;
+  double r2;
+  double r3;  // random numbers
+  double c;   // cosine of pi/2*r3
 
   r1 = prn();
   r2 = prn();
@@ -713,9 +709,9 @@ std::complex<double> faddeeva_c(std::complex<double> z) {
 
   relerr = 0.;
   if (z.imag() > 0.) {
-      wv = faddeeva_w(z, relerr);
+      wv = Faddeeva::w(z, relerr);
   } else {
-    wv = -std::conj(faddeeva_w(std::conj(z), relerr));
+    wv = -std::conj(Faddeeva::w(std::conj(z), relerr));
   }
 
   return wv;
@@ -733,7 +729,7 @@ std::complex<double> w_derivative_c(std::complex<double> z, int order){
     case 1:
       wv = -2. * z * faddeeva_c(z) + twoi_sqrtpi;
       break;
-    case default:
+    default:
       wv = -2. * z * w_derivative_c(z, order - 1) - 2. * (order - 1) *
            w_derivative_c(z, order - 2);
   }
@@ -755,32 +751,33 @@ void broaden_wmp_polynomials_c(double E, double dopp, int n, double factors[]) {
   double quarter_inv_dopp4;   // 0.25 / dopp**4
   double erf_beta;            // error function of beta
   double exp_m_beta2;         // exp(-beta**2)
+  int i;
 
   sqrtE = std::sqrt(E);
   beta = sqrtE * dopp;
   half_inv_dopp2 = 0.5 / (dopp * dopp);
   quarter_inv_dopp4 = half_inv_dopp2 * half_inv_dopp2;
 
-  if (beta > 6.0_8) then
+  if (beta > 6.0) {
     // Save time, ERF(6) is 1 to machine precision.
     // beta/sqrtpi*exp(-beta**2) is also approximately 1 machine epsilon.
-    erf_beta = 1.
-    exp_m_beta2 = 0.
-  else
-    erf_beta = std::erf(beta)
-    exp_m_beta2 = std::exp(-beta * beta)
-  end if
+    erf_beta = 1.;
+    exp_m_beta2 = 0.;
+  } else {
+    erf_beta = std::erf(beta);
+    exp_m_beta2 = std::exp(-beta * beta);
+  }
 
   // Assume that, for sure, we'll use a second order (1/E, 1/V, const)
   // fit, and no less.
 
-  factors[0] = erf_beta / E
-  factors[1] = 1. / sqrtE
-  factors[2] = factors[0] * (half_inv_dopp2 + E) &
-       + exp_m_beta2 / (beta * std::sqrt(M_PI))
+  factors[0] = erf_beta / E;
+  factors[1] = 1. / sqrtE;
+  factors[2] = factors[0] * (half_inv_dopp2 + E) + exp_m_beta2 /
+       (beta * std::sqrt(M_PI));
 
   // Perform recursive broadening of high order components
-  for (int i = 0; i < n - 3; i++) {
+  for (i = 0; i < n - 3; i++) {
     if (i != 0) {
       factors[i + 3] = -factors[i - 1] * (i - 1.) * i * quarter_inv_dopp4 +
            factors[i + 1] * (E + (1. + 2. * i) * half_inv_dopp2);
