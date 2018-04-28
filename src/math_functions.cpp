@@ -134,7 +134,7 @@ double __attribute__ ((const)) calc_pn_c(int n, double x) {
       pnx = 4.375 * std::pow(x, 4.) - 3.75 * x * x + 0.375;
       break;
     case 5:
-      pnx = 7.875 * std::pow(x, .5) - 8.75 * x * x * x + 1.875 * x;
+      pnx = 7.875 * std::pow(x, 5.) - 8.75 * x * x * x + 1.875 * x;
       break;
     case 6:
       pnx = 14.4375 * std::pow(x, 6.) - 19.6875 * std::pow(x, 4.) +

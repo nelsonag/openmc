@@ -75,10 +75,6 @@ module math
       complex(C_DOUBLE_COMPLEX) :: wv
     end function faddeeva_cc
 
-      q = sqrt(-TWO*log(p))
-      z = (((((c(1)*q + c(2))*q + c(3))*q + c(4))*q + c(5))*q + c(6)) / &
-           ((((d(1)*q + d(2))*q + d(3))*q + d(4))*q + ONE)
-
     function w_derivative_cc(z, order) bind(C, name='w_derivative_c') &
            result(wv)
       use ISO_C_BINDING
