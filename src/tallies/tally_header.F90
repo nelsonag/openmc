@@ -24,12 +24,14 @@ module tally_header
   public :: openmc_extend_tallies
   public :: openmc_get_tally_index
   public :: openmc_global_tallies
+  public :: openmc_tally_get_active
   public :: openmc_tally_get_id
   public :: openmc_tally_get_filters
   public :: openmc_tally_get_n_realizations
   public :: openmc_tally_get_nuclides
   public :: openmc_tally_get_scores
   public :: openmc_tally_results
+  public :: openmc_tally_set_active
   public :: openmc_tally_set_filters
   public :: openmc_tally_set_id
   public :: openmc_tally_set_nuclides
@@ -144,7 +146,7 @@ module tally_header
   ! Active tally lists
   type(VectorInt), public :: active_analog_tallies
   type(VectorInt), public :: active_tracklength_tallies
-  type(VectorInt), public :: active_current_tallies
+  type(VectorInt), public :: active_meshsurf_tallies
   type(VectorInt), public :: active_collision_tallies
   type(VectorInt), public :: active_tallies
   type(VectorInt), public :: active_surface_tallies
@@ -336,6 +338,8 @@ contains
         j = FILTER_SURFACE
       type is (MeshFilter)
         j = FILTER_MESH
+      type is (MeshSurfaceFilter)
+        j = FILTER_MESHSURFACE
       type is (EnergyFilter)
         j = FILTER_ENERGYIN
       type is (EnergyoutFilter)
@@ -352,6 +356,20 @@ contains
         j = FILTER_AZIMUTHAL
       type is (EnergyFunctionFilter)
         j = FILTER_ENERGYFUNCTION
+      type is (LegendreFilter)
+        j = FILTER_LEGENDRE
+        this % estimator = ESTIMATOR_ANALOG
+      type is (SphericalHarmonicsFilter)
+        j = FILTER_SPH_HARMONICS
+        if (filt % cosine == COSINE_SCATTER) then
+          this % estimator = ESTIMATOR_ANALOG
+        end if
+      type is (SpatialLegendreFilter)
+        j = FILTER_SPTL_LEGENDRE
+        this % estimator = ESTIMATOR_COLLISION
+      type is (ZernikeFilter)
+        j = FILTER_ZERNIKE
+        this % estimator = ESTIMATOR_COLLISION
       end select
       this % find_filter(j) = i
     end do
@@ -416,7 +434,7 @@ contains
     ! Deallocate tally node lists
     call active_analog_tallies % clear()
     call active_tracklength_tallies % clear()
-    call active_current_tallies % clear()
+    call active_meshsurf_tallies % clear()
     call active_collision_tallies % clear()
     call active_surface_tallies % clear()
     call active_tallies % clear()
@@ -494,6 +512,22 @@ contains
       ptr = C_LOC(global_tallies)
     end if
   end function openmc_global_tallies
+
+
+  function openmc_tally_get_active(index, active) result(err) bind(C)
+    ! Return whether a tally is active
+    integer(C_INT32_T), value    :: index
+    logical(C_BOOL), intent(out) :: active
+    integer(C_INT) :: err
+
+    if (index >= 1 .and. index <= size(tallies)) then
+      active = tallies(index) % obj % active
+      err = 0
+    else
+      err = E_OUT_OF_BOUNDS
+      call set_errmsg('Index in tallies array is out of bounds.')
+    end if
+  end function openmc_tally_get_active
 
 
   function openmc_tally_get_id(index, id) result(err) bind(C)
@@ -651,6 +685,27 @@ contains
   end function openmc_tally_set_filters
 
 
+  function openmc_tally_set_active(index, active) result(err) bind(C)
+    ! Set the ID of a tally
+    integer(C_INT32_T), value, intent(in) :: index
+    logical(C_BOOL),    value, intent(in) :: active
+    integer(C_INT) :: err
+
+    if (index >= 1 .and. index <= n_tallies) then
+      if (allocated(tallies(index) % obj)) then
+        tallies(index) % obj % active = active
+        err = 0
+      else
+        err = E_ALLOCATE
+        call set_errmsg("Tally type has not been set yet.")
+      end if
+    else
+      err = E_OUT_OF_BOUNDS
+      call set_errmsg('Index in tallies array is out of bounds.')
+    end if
+  end function openmc_tally_set_active
+
+
   function openmc_tally_set_id(index, id) result(err) bind(C)
     ! Set the ID of a tally
     integer(C_INT32_T), value, intent(in) :: index
@@ -732,8 +787,10 @@ contains
     integer :: MT
     character(C_CHAR), pointer :: string(:)
     character(len=:, kind=C_CHAR), allocatable :: score_
+    logical :: depletion_rx
 
     err = E_UNASSIGNED
+    depletion_rx = .false.
     if (index >= 1 .and. index <= size(tallies)) then
       associate (t => tallies(index) % obj)
         if (allocated(t % score_bins)) deallocate(t % score_bins)
@@ -757,10 +814,13 @@ contains
             t % score_bins(i) = SCORE_NU_SCATTER
           case ('(n,2n)')
             t % score_bins(i) = N_2N
+            depletion_rx = .true.
           case ('(n,3n)')
             t % score_bins(i) = N_3N
+            depletion_rx = .true.
           case ('(n,4n)')
             t % score_bins(i) = N_4N
+            depletion_rx = .true.
           case ('absorption')
             t % score_bins(i) = SCORE_ABSORPTION
           case ('fission', '18')
@@ -829,8 +889,10 @@ contains
             t % score_bins(i) = N_NC
           case ('(n,gamma)')
             t % score_bins(i) = N_GAMMA
+            depletion_rx = .true.
           case ('(n,p)')
             t % score_bins(i) = N_P
+            depletion_rx = .true.
           case ('(n,d)')
             t % score_bins(i) = N_D
           case ('(n,t)')
@@ -839,6 +901,7 @@ contains
             t % score_bins(i) = N_3HE
           case ('(n,a)')
             t % score_bins(i) = N_A
+            depletion_rx = .true.
           case ('(n,2a)')
             t % score_bins(i) = N_2A
           case ('(n,3a)')
@@ -879,6 +942,7 @@ contains
         end do
 
         err = 0
+        t % depletion_rx = depletion_rx
       end associate
     else
       err = E_OUT_OF_BOUNDS

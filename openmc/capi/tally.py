@@ -1,15 +1,16 @@
 from collections.abc import Mapping
-from ctypes import c_int, c_int32, c_double, c_char_p, POINTER
+from ctypes import c_int, c_int32, c_double, c_char_p, c_bool, POINTER
 from weakref import WeakValueDictionary
 
 import numpy as np
 from numpy.ctypeslib import as_array
 import scipy.stats
 
+from openmc.exceptions import AllocationError, InvalidIDError
 from openmc.data.reaction import REACTION_NAME
 from . import _dll, Nuclide
 from .core import _FortranObjectWithID
-from .error import _error_handler, AllocationError, InvalidIDError
+from .error import _error_handler
 from .filter import _get_filter
 
 
@@ -25,6 +26,9 @@ _dll.openmc_get_tally_index.errcheck = _error_handler
 _dll.openmc_global_tallies.argtypes = [POINTER(POINTER(c_double))]
 _dll.openmc_global_tallies.restype = c_int
 _dll.openmc_global_tallies.errcheck = _error_handler
+_dll.openmc_tally_get_active.argtypes = [c_int32, POINTER(c_bool)]
+_dll.openmc_tally_get_active.restype = c_int
+_dll.openmc_tally_get_active.errcheck = _error_handler
 _dll.openmc_tally_get_id.argtypes = [c_int32, POINTER(c_int32)]
 _dll.openmc_tally_get_id.restype = c_int
 _dll.openmc_tally_get_id.errcheck = _error_handler
@@ -47,6 +51,9 @@ _dll.openmc_tally_results.argtypes = [
     c_int32, POINTER(POINTER(c_double)), POINTER(c_int*3)]
 _dll.openmc_tally_results.restype = c_int
 _dll.openmc_tally_results.errcheck = _error_handler
+_dll.openmc_tally_set_active.argtypes = [c_int32, c_bool]
+_dll.openmc_tally_set_active.restype = c_int
+_dll.openmc_tally_set_active.errcheck = _error_handler
 _dll.openmc_tally_set_filters.argtypes = [c_int32, c_int, POINTER(c_int32)]
 _dll.openmc_tally_set_filters.restype = c_int
 _dll.openmc_tally_set_filters.errcheck = _error_handler
@@ -176,6 +183,16 @@ class Tally(_FortranObjectWithID):
             cls.__instances[index] = instance
 
         return cls.__instances[index]
+
+    @property
+    def active(self):
+        active = c_bool()
+        _dll.openmc_tally_get_active(self._index, active)
+        return active.value
+
+    @active.setter
+    def active(self, active):
+        _dll.openmc_tally_set_active(self._index, active)
 
     @property
     def id(self):

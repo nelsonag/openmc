@@ -368,7 +368,6 @@ set(LIBOPENMC_FORTRAN_SRC
   src/message_passing.F90
   src/mgxs_data.F90
   src/mgxs_header.F90
-  src/multipole.F90
   src/multipole_header.F90
   src/nuclide_header.F90
   src/output.F90
@@ -421,12 +420,17 @@ set(LIBOPENMC_FORTRAN_SRC
   src/tallies/tally_filter_distribcell.F90
   src/tallies/tally_filter_energy.F90
   src/tallies/tally_filter_energyfunc.F90
+  src/tallies/tally_filter_legendre.F90
   src/tallies/tally_filter_material.F90
   src/tallies/tally_filter_mesh.F90
+  src/tallies/tally_filter_meshsurface.F90
   src/tallies/tally_filter_mu.F90
   src/tallies/tally_filter_polar.F90
+  src/tallies/tally_filter_sph_harm.F90
+  src/tallies/tally_filter_sptl_legendre.F90
   src/tallies/tally_filter_surface.F90
   src/tallies/tally_filter_universe.F90
+  src/tallies/tally_filter_zernike.F90
   src/tallies/tally_header.F90
   src/tallies/trigger.F90
   src/tallies/trigger_header.F90
@@ -498,7 +502,8 @@ add_custom_command(TARGET libopenmc POST_BUILD
 
 install(TARGETS ${program} libopenmc
   RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib)
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib)
 install(DIRECTORY src/relaxng DESTINATION share/openmc)
 install(FILES man/man1/openmc.1 DESTINATION share/man/man1)
 install(FILES LICENSE DESTINATION "share/doc/${program}" RENAME copyright)

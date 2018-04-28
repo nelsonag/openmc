@@ -38,6 +38,9 @@ class Mesh(IDManagerMixin):
         are given, it is assumed that the mesh is an x-y mesh.
     width : Iterable of float
         The width of mesh cells in each direction.
+    indices : list of tuple
+        A list of mesh indices for each mesh element, e.g. [(1, 1, 1), (2, 1,
+        1), ...]
 
     """
 
@@ -81,6 +84,24 @@ class Mesh(IDManagerMixin):
     @property
     def num_mesh_cells(self):
         return np.prod(self._dimension)
+
+    @property
+    def indices(self):
+        ndim = len(self._dimension)
+        if ndim == 3:
+            nx, ny, nz = self.dimension
+            return ((x, y, z)
+                    for z in range(1, nz + 1)
+                    for y in range(1, ny + 1)
+                    for x in range(1, nx + 1))
+        elif ndim == 2:
+            nx, ny = self.dimension
+            return ((x, y)
+                    for y in range(1, ny + 1)
+                    for x in range(1, nx + 1))
+        else:
+            nx, = self.dimension
+            return ((x,) for x in range(1, nx + 1))
 
     @name.setter
     def name(self, name):

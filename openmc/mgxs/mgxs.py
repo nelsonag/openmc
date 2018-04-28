@@ -4,7 +4,6 @@ import warnings
 import os
 import copy
 from abc import ABCMeta
-import itertools
 
 import numpy as np
 import h5py
@@ -937,8 +936,7 @@ class MGXS(metaclass=ABCMeta):
         # NOTE: This is important if tally merging was used
         if self.domain_type == 'mesh':
             filters = [_DOMAIN_TO_FILTER[self.domain_type]]
-            xyz = [range(1, x + 1) for x in self.domain.dimension]
-            filter_bins = [tuple(itertools.product(*xyz))]
+            filter_bins = [tuple(self.domain.indices)]
         elif self.domain_type != 'distribcell':
             filters = [_DOMAIN_TO_FILTER[self.domain_type]]
             filter_bins = [(self.domain.id,)]
@@ -1166,12 +1164,14 @@ class MGXS(metaclass=ABCMeta):
                 if not isinstance(tally_filter, (openmc.EnergyFilter,
                                                  openmc.EnergyoutFilter)):
                     continue
-                elif len(tally_filter.bins) != len(fine_edges):
+                elif len(tally_filter.bins) != len(fine_edges) - 1:
                     continue
-                elif not np.allclose(tally_filter.bins, fine_edges):
+                elif not np.allclose(tally_filter.bins[:, 0], fine_edges[:-1]):
                     continue
                 else:
-                    tally_filter.bins = coarse_groups.group_edges
+                    cedge = coarse_groups.group_edges
+                    tally_filter.values = cedge
+                    tally_filter.bins = np.vstack((cedge[:-1], cedge[1:])).T
                     mean = np.add.reduceat(mean, energy_indices, axis=i)
                     std_dev = np.add.reduceat(std_dev**2, energy_indices,
                                               axis=i)
@@ -1531,8 +1531,7 @@ class MGXS(metaclass=ABCMeta):
         elif self.domain_type == 'distribcell':
             subdomains = np.arange(self.num_subdomains, dtype=np.int)
         elif self.domain_type == 'mesh':
-            xyz = [range(1, x + 1) for x in self.domain.dimension]
-            subdomains = list(itertools.product(*xyz))
+            subdomains = list(self.domain.indices)
         else:
             subdomains = [self.domain.id]
 
@@ -1702,8 +1701,7 @@ class MGXS(metaclass=ABCMeta):
             domain_filter = self.xs_tally.find_filter('sum(distribcell)')
             subdomains = domain_filter.bins
         elif self.domain_type == 'mesh':
-            xyz = [range(1, x+1) for x in self.domain.dimension]
-            subdomains = list(itertools.product(*xyz))
+            subdomains = list(self.domain.indices)
         else:
             subdomains = [self.domain.id]
 
@@ -2342,8 +2340,7 @@ class MatrixMGXS(MGXS):
         elif self.domain_type == 'distribcell':
             subdomains = np.arange(self.num_subdomains, dtype=np.int)
         elif self.domain_type == 'mesh':
-            xyz = [range(1, x + 1) for x in self.domain.dimension]
-            subdomains = list(itertools.product(*xyz))
+            subdomains = list(self.domain.indices)
         else:
             subdomains = [self.domain.id]
 
@@ -2743,7 +2740,7 @@ class TransportXS(MGXS):
         if self._rxn_rate_tally is None:
             # Switch EnergyoutFilter to EnergyFilter.
             old_filt = self.tallies['scatter-1'].filters[-1]
-            new_filt = openmc.EnergyFilter(old_filt.bins)
+            new_filt = openmc.EnergyFilter(old_filt.values)
             self.tallies['scatter-1'].filters[-1] = new_filt
 
             self._rxn_rate_tally = \
@@ -2762,7 +2759,7 @@ class TransportXS(MGXS):
 
             # Switch EnergyoutFilter to EnergyFilter.
             old_filt = self.tallies['scatter-1'].filters[-1]
-            new_filt = openmc.EnergyFilter(old_filt.bins)
+            new_filt = openmc.EnergyFilter(old_filt.values)
             self.tallies['scatter-1'].filters[-1] = new_filt
 
             # Compute total cross section
@@ -4530,8 +4527,7 @@ class ScatterMatrixXS(MatrixMGXS):
         elif self.domain_type == 'distribcell':
             subdomains = np.arange(self.num_subdomains, dtype=np.int)
         elif self.domain_type == 'mesh':
-            xyz = [range(1, x + 1) for x in self.domain.dimension]
-            subdomains = list(itertools.product(*xyz))
+            subdomains = list(self.domain.indices)
         else:
             subdomains = [self.domain.id]
 
