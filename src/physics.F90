@@ -1,5 +1,7 @@
 module physics
 
+  use, intrinsic :: ISO_C_BINDING
+
   use algorithm,              only: binary_search
   use constants
   use endf,                   only: reaction_name
@@ -23,6 +25,25 @@ module physics
   use tally_header
 
   implicit none
+
+  interface
+    subroutine inelastic_scatter(awr, rxn, p) bind(C)
+      import C_DOUBLE, C_PTR, Particle
+      real(C_DOUBLE), intent(in)     :: awr
+      type(C_PTR), value, intent(in) :: rxn
+      type(Particle), intent(inout)  :: p
+    end subroutine inelastic_scatter
+
+    subroutine sample_cxs_target_velocity(awr, E, uvw, kT, v_target) bind(C)
+      import C_DOUBLE
+      real(C_DOUBLE), intent(in)    :: awr
+      real(C_DOUBLE), intent(in)    :: E
+      real(C_DOUBLE), intent(in)    :: uvw(3)
+      real(C_DOUBLE), intent(in)    :: kT
+      real(C_DOUBLE), intent(inout) :: v_target(3)
+    end subroutine sample_cxs_target_velocity
+  end interface
+
 
 contains
 
@@ -763,7 +784,7 @@ contains
       end do
 
       ! Perform collision physics for inelastic scattering
-      call inelastic_scatter(nuc, nuc%reactions(i), p)
+      call inelastic_scatter(nuc % awr, nuc%reactions(i) % ptr, p)
       p % event_MT = nuc % reactions(i) % MT
 
     end if
@@ -905,15 +926,15 @@ contains
 
   subroutine sample_target_velocity(nuc, v_target, E, uvw, v_neut, wgt, xs_eff, kT)
     type(Nuclide), intent(in) :: nuc ! target nuclide at temperature T
-    real(8), intent(out)   :: v_target(3) ! target velocity
-    real(8), intent(in)    :: E           ! particle energy
-    real(8), intent(in)    :: uvw(3)      ! direction cosines
+    real(c_DOUBLE), intent(out)   :: v_target(3) ! target velocity
+    real(C_DOUBLE), intent(in)    :: E           ! particle energy
+    real(C_DOUBLE), intent(in)    :: uvw(3)      ! direction cosines
     real(8), intent(in)    :: v_neut(3)   ! neutron velocity
     real(8), intent(inout) :: wgt         ! particle weight
     real(8), intent(in)    :: xs_eff      ! effective elastic xs at temperature T
-    real(8), intent(in)    :: kT          ! equilibrium temperature of target in eV
+    real(C_DOUBLE), intent(in)    :: kT          ! equilibrium temperature of target in eV
 
-    real(8) :: awr     ! target/neutron mass ratio
+    real(C_DOUBLE) :: awr     ! target/neutron mass ratio
     real(8) :: E_rel   ! trial relative energy
     real(8) :: xs_0K   ! 0K xs at E_rel
     real(8) :: wcf     ! weight correction factor
@@ -971,12 +992,12 @@ contains
     case (RES_SCAT_CXS)
 
       ! sample target velocity with the constant cross section (cxs) approx.
-      call sample_cxs_target_velocity(nuc, v_target, E, uvw, kT)
+      call sample_cxs_target_velocity(nuc % awr, E, uvw, kT, v_target)
 
     case (RES_SCAT_WCM)
 
       ! sample target velocity with the constant cross section (cxs) approx.
-      call sample_cxs_target_velocity(nuc, v_target, E, uvw, kT)
+      call sample_cxs_target_velocity(nuc % awr, E, uvw, kT, v_target)
 
       ! adjust weight as prescribed by the weight correction method (wcm)
       E_rel = dot_product((v_neut - v_target), (v_neut - v_target))
@@ -1012,7 +1033,7 @@ contains
       if (i_E_up == i_E_low) then
         ! Handle degenerate case -- if the upper/lower bounds occur for the same
         ! index, then using cxs is probably a good approximation
-        call sample_cxs_target_velocity(nuc, v_target, E, uvw, kT)
+        call sample_cxs_target_velocity(nuc % awr, E, uvw, kT, v_target)
 
       else
         if (sampling_method == RES_SCAT_DBRC) then
@@ -1033,7 +1054,7 @@ contains
           DBRC_REJECT_LOOP: do
             TARGET_ENERGY_LOOP: do
               ! sample target velocity with the constant cross section (cxs) approx.
-              call sample_cxs_target_velocity(nuc, v_target, E, uvw, kT)
+              call sample_cxs_target_velocity(nuc % awr, E, uvw, kT, v_target)
               E_rel = dot_product((v_neut - v_target), (v_neut - v_target))
               if (E_rel < E_up) exit TARGET_ENERGY_LOOP
             end do TARGET_ENERGY_LOOP
@@ -1091,80 +1112,6 @@ contains
     end select
 
   end subroutine sample_target_velocity
-
-!===============================================================================
-! SAMPLE_CXS_TARGET_VELOCITY samples a target velocity based on the free gas
-! scattering formulation, used by most Monte Carlo codes, in which cross section
-! is assumed to be constant in energy. Excellent documentation for this method
-! can be found in FRA-TM-123.
-!===============================================================================
-
-  subroutine sample_cxs_target_velocity(nuc, v_target, E, uvw, kT)
-    type(Nuclide), intent(in) :: nuc ! target nuclide at temperature
-    real(8), intent(out)         :: v_target(3)
-    real(8), intent(in)          :: E
-    real(8), intent(in)          :: uvw(3)
-    real(8), intent(in)          :: kT      ! equilibrium temperature of target in eV
-
-    real(8) :: awr         ! target/neutron mass ratio
-    real(8) :: alpha       ! probability of sampling f2 over f1
-    real(8) :: mu          ! cosine of angle between neutron and target vel
-    real(8) :: r1, r2      ! pseudo-random numbers
-    real(8) :: c           ! cosine used in maxwell sampling
-    real(8) :: accept_prob ! probability of accepting combination of vt and mu
-    real(8) :: beta_vn     ! beta * speed of neutron
-    real(8) :: beta_vt     ! beta * speed of target
-    real(8) :: beta_vt_sq  ! (beta * speed of target)^2
-    real(8) :: vt          ! speed of target
-
-    awr = nuc % awr
-
-    beta_vn = sqrt(awr * E / kT)
-    alpha = ONE/(ONE + sqrt(pi)*beta_vn/TWO)
-
-    do
-      ! Sample two random numbers
-      r1 = prn()
-      r2 = prn()
-
-      if (prn() < alpha) then
-        ! With probability alpha, we sample the distribution p(y) =
-        ! y*e^(-y). This can be done with sampling scheme C45 frmo the Monte
-        ! Carlo sampler
-
-        beta_vt_sq = -log(r1*r2)
-
-      else
-        ! With probability 1-alpha, we sample the distribution p(y) = y^2 *
-        ! e^(-y^2). This can be done with sampling scheme C61 from the Monte
-        ! Carlo sampler
-
-        c = cos(PI/TWO * prn())
-        beta_vt_sq = -log(r1) - log(r2)*c*c
-      end if
-
-      ! Determine beta * vt
-      beta_vt = sqrt(beta_vt_sq)
-
-      ! Sample cosine of angle between neutron and target velocity
-      mu = TWO*prn() - ONE
-
-      ! Determine rejection probability
-      accept_prob = sqrt(beta_vn*beta_vn + beta_vt_sq - 2*beta_vn*beta_vt*mu) &
-           /(beta_vn + beta_vt)
-
-      ! Perform rejection sampling on vt and mu
-      if (prn() < accept_prob) exit
-    end do
-
-    ! Determine speed of target nucleus
-    vt = sqrt(beta_vt_sq*kT/awr)
-
-    ! Determine velocity vector of target nucleus based on neutron's velocity
-    ! and the sampled angle between them
-    v_target = vt * rotate_angle(uvw, mu)
-
-  end subroutine sample_cxs_target_velocity
 
 !===============================================================================
 ! CREATE_FISSION_SITES determines the average total, prompt, and delayed
@@ -1381,71 +1328,6 @@ contains
     end if
 
   end subroutine sample_fission_neutron
-
-!===============================================================================
-! INELASTIC_SCATTER handles all reactions with a single secondary neutron (other
-! than fission), i.e. level scattering, (n,np), (n,na), etc.
-!===============================================================================
-
-  subroutine inelastic_scatter(nuc, rxn, p)
-    type(Nuclide), intent(in)    :: nuc
-    type(Reaction),   intent(in)    :: rxn
-    type(Particle),   intent(inout) :: p
-
-    integer :: i      ! loop index
-    real(8) :: E      ! energy in lab (incoming/outgoing)
-    real(8) :: mu     ! cosine of scattering angle in lab
-    real(8) :: A      ! atomic weight ratio of nuclide
-    real(8) :: E_in   ! incoming energy
-    real(8) :: E_cm   ! outgoing energy in center-of-mass
-    real(8) :: yield  ! neutron yield
-
-    ! copy energy of neutron
-    E_in = p % E
-
-    ! sample outgoing energy and scattering cosine
-    call rxn % product_sample(1, E_in, E, mu)
-
-    ! if scattering system is in center-of-mass, transfer cosine of scattering
-    ! angle and outgoing energy from CM to LAB
-    if (rxn % scatter_in_cm) then
-      E_cm = E
-
-      ! determine outgoing energy in lab
-      A = nuc%awr
-      E = E_cm + (E_in + TWO * mu * (A+ONE) * sqrt(E_in * E_cm)) &
-           / ((A+ONE)*(A+ONE))
-
-      ! determine outgoing angle in lab
-      mu = mu * sqrt(E_cm/E) + ONE/(A+ONE) * sqrt(E_in/E)
-    end if
-
-    ! Because of floating-point roundoff, it may be possible for mu to be
-    ! outside of the range [-1,1). In these cases, we just set mu to exactly -1
-    ! or 1
-    if (abs(mu) > ONE) mu = sign(ONE,mu)
-
-    ! Set outgoing energy and scattering angle
-    p % E = E
-    p % mu = mu
-
-    ! change direction of particle
-    p % coord(1) % uvw = rotate_angle(p % coord(1) % uvw, mu)
-
-    ! evaluate yield
-    yield = rxn % product_yield(1, E_in)
-    if (mod(yield, ONE) == ZERO) then
-      ! If yield is integral, create exactly that many secondary particles
-      do i = 1, nint(yield) - 1
-        call particle_create_secondary(p, p % coord(1) % uvw, p % E, &
-             NEUTRON, run_CE=.true._C_BOOL)
-      end do
-    else
-      ! Otherwise, change weight of particle based on yield
-      p % wgt = yield * p % wgt
-    end if
-
-  end subroutine inelastic_scatter
 
 !===============================================================================
 ! SAMPLE_SECONDARY_PHOTONS

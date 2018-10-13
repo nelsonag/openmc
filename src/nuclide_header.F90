@@ -53,12 +53,12 @@ module nuclide_header
 
   type :: Nuclide
     ! Nuclide meta-data
-    character(20) :: name    ! name of nuclide, e.g. U235.71c
-    integer       :: Z       ! atomic number
-    integer       :: A       ! mass number
-    integer       :: metastable ! metastable state
-    real(8)       :: awr     ! Atomic Weight Ratio
-    integer       :: i_nuclide ! The nuclides index in the nuclides array
+    character(20)  :: name    ! name of nuclide, e.g. U235.71c
+    integer        :: Z       ! atomic number
+    integer        :: A       ! mass number
+    integer        :: metastable ! metastable state
+    real(C_DOUBLE) :: awr     ! Atomic Weight Ratio
+    integer        :: i_nuclide ! The nuclides index in the nuclides array
     real(8), allocatable :: kTs(:) ! temperature in eV (k*T)
 
     ! Fission information
