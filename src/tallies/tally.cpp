@@ -210,6 +210,7 @@ Tally::Tally(pugi::xml_node node)
         case SCORE_DELAYED_NU_FISSION:
         case SCORE_PROMPT_NU_FISSION:
         case SCORE_DECAY_RATE:
+        case SCORE_PHOTON_PRODUCTION:
           warning("You are tallying the '" + reaction_name(score) +
                   "' score and haven't used a particle filter. This score will "
                   "include contributions from all particles.");
@@ -585,6 +586,17 @@ void Tally::set_scores(const vector<std::string>& scores)
         }
       }
 
+      break;
+
+    case SCORE_PHOTON_PRODUCTION:
+      if (settings::run_CE) {
+        // TODO: Can we do deterministic scoring with a TL estimator if no energyout or legendre filter is present?
+        // for now we start with the simplest analog case
+        estimator_ = TallyEstimator::ANALOG;
+      } else {
+        if (energyout_present || legendre_present)
+          estimator_ = TallyEstimator::ANALOG;
+      }
       break;
     }
 

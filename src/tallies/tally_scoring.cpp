@@ -1297,6 +1297,43 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
       }
       break;
 
+    case SCORE_PHOTON_PRODUCTION: {
+        // Only analog estimators are available.
+
+        // For photon production, we need to use the pre-collision weight
+        // times the yield as the estimate for the number of photons exiting a
+        // reaction with photon in the exit channel
+        score = (p.wgt_last() - wgt_absorb) * flux;
+
+        
+        // Get yield of the photon product and apply to score
+        auto m =
+          data::nuclides[p.event_nuclide()]->reaction_index_[p.event_mt()];
+        const auto& rxn {*data::nuclides[p.event_nuclide()]->reactions_[m]};
+        for (int j = 0; j < rxn.products_.size(); ++j) {
+          if (rxn.products_[j].particle_ == ParticleType::photon) {
+            // For fission, artificially increase the photon yield to account
+            // for delayed photons
+            double f = 1.0;
+            if (settings::delayed_photon_scaling) {
+              if (is_fission(rxn.mt_)) {
+                if (data::nuclides[p.event_nuclide()]->prompt_photons_ && data::nuclides[p.event_nuclide()]->delayed_photons_) {
+                  double energy_prompt = (*data::nuclides[p.event_nuclide()]->prompt_photons_)(p.E());
+                  double energy_delayed = (*data::nuclides[p.event_nuclide()]->delayed_photons_)(p.E());
+                  f = (energy_prompt + energy_delayed) / (energy_prompt);
+                }
+              }
+            }
+
+            // add to cumulative probability
+            score *= f * (*rxn.products_[j].yield_)(p.E());
+            break;
+          }
+        }
+      }
+
+      break;
+
     case SCORE_DECAY_RATE:
       if (p.macro_xs().fission == 0)
         continue;
