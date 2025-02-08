@@ -138,7 +138,7 @@ def test_tallies():
                     'inverse-velocity', 'kappa-fission', '(n,2n)', '(n,n1)',
                     '(n,gamma)', 'nu-fission', 'scatter', 'elastic',
                     'total', 'prompt-nu-fission', 'fission-q-prompt',
-                    'fission-q-recoverable', 'decay-rate']
+                    'fission-q-recoverable', 'decay-rate', 'photon-production']
     for t in score_tallies[0:2]: t.estimator = 'tracklength'
     for t in score_tallies[2:4]: t.estimator = 'analog'
     for t in score_tallies[4:6]: t.estimator = 'collision'
