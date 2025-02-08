@@ -240,6 +240,9 @@ The following tables show all valid scores:
     +----------------------+---------------------------------------------------+
     |He4-production        |Total production of He4 (alpha particles).         |
     +----------------------+---------------------------------------------------+
+    |photon-production     |Total production of photons                        |
+    +----------------------+---------------------------------------------------+
+
 
 .. table:: **Miscellaneous scores: units are indicated for each.**
 
