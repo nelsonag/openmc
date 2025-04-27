@@ -135,6 +135,11 @@ Material::Material(pugi::xml_node node)
   // Get pointer list of XML <macroscopic>
   auto node_macros = node.children("macroscopic");
   int num_macros = std::distance(node_macros.begin(), node_macros.end());
+  if (num_macros > 0) {
+    warning(
+      "The usage of macroscopic data in materials.xml has been deprecated."
+      " Nuclides should be used instead.");
+  }
 
   vector<std::string> names;
   vector<double> densities;
